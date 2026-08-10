@@ -34,10 +34,10 @@ export default function AccessDeniedPage() {
             <a className="iipe-btn" href={`${MAIN_BASE_URL}/my-apps`}>
               Go to My Apps
             </a>
-            <a className="iipe-btn secondary" href="/">
+            <a className="iipe-btn secondary" href={apiPath("/")}>
               Try again
             </a>
-            <a className="iipe-btn ghost" href="/api/logout" style={{ color: "var(--iipe-danger)" }}>
+            <a className="iipe-btn ghost" href={apiPath("/api/logout")} style={{ color: "var(--iipe-danger)" }}>
               Sign out
             </a>
           </div>

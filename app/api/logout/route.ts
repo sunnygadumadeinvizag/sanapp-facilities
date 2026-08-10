@@ -19,6 +19,13 @@ export async function GET(request: NextRequest) {
   }
   if (!isLocalPath(returnTo)) returnTo = "/";
 
+  // The referer path already carries the base path (/app1, /main ...) — strip
+  // it so APP_BASE_URL + returnTo does not double-prefix.
+  const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "";
+  if (BASE_PATH && (returnTo === BASE_PATH || returnTo.startsWith(BASE_PATH + "/"))) {
+    returnTo = returnTo.slice(BASE_PATH.length) || "/";
+  }
+
   const target = new URL(process.env.APP_BASE_URL! + returnTo);
   const ssoLogout = new URL(process.env.SSO_BASE_URL! + "/logout");
   ssoLogout.searchParams.set("post_logout_redirect_uri", target.toString());

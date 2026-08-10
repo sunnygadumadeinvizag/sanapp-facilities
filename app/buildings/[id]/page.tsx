@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { verifyAppSession } from "@/lib/session";
+import { apiPath } from "iipe-common-ui";
 import { AppShell } from "../../components/AppShell";
 import { BookingClient, type SlotItem } from "../../components/BookingClient";
 import { istDateKey, istMinute } from "@/lib/ist";
@@ -66,7 +67,7 @@ export default async function BuildingPage({
       ]}
     >
       <nav className="iipe-breadcrumb">
-        <a href="/">Facilities</a> <span>/</span> <span>{building.name}</span>
+        <a href={apiPath("/")}>Facilities</a> <span>/</span> <span>{building.name}</span>
       </nav>
 
       <h1 className="iipe-page-title">{building.name}</h1>

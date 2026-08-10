@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { verifyAppSession } from "@/lib/session";
+import { apiPath } from "iipe-common-ui";
 import { AppShell } from "./components/AppShell";
 import { istDateKey, fmtMin } from "@/lib/ist";
 
@@ -64,7 +65,7 @@ export default async function DashboardPage({
       ) : (
         <div className="iipe-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
           {buildings.map((b) => (
-            <a key={b.id} href={`/buildings/${b.id}`} style={{ textDecoration: "none" }}>
+            <a key={b.id} href={apiPath(`/buildings/${b.id}`)} style={{ textDecoration: "none" }}>
               <div className="iipe-card" style={{ height: "100%", display: "flex", flexDirection: "column", gap: 8 }}>
                 <div className="iipe-row" style={{ alignItems: "flex-start" }}>
                   <div style={{ minWidth: 0 }}>
