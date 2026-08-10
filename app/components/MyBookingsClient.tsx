@@ -5,7 +5,7 @@ import { FileText, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { fmtSlotRange } from "@/lib/ist";
+import { fmtIstDateTime, fmtSlotRange } from "@/lib/ist";
 
 export type MyBooking = {
   id: string;
@@ -17,6 +17,9 @@ export type MyBooking = {
   endMin: number;
   purpose: string | null;
   pdf: boolean;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  cancelledBy: { id: string; username: string; name: string } | null;
   facility: { id: string; name: string; building: { id: string; name: string } };
   forUser: { id: string; username: string; name: string } | null;
 };
@@ -41,9 +44,10 @@ export function MyBookingsClient({ today }: { today: string }) {
   }, []);
 
   async function cancel(id: string) {
-    if (!confirm("Cancel this booking?")) return;
+    const reason = window.prompt("Reason for cancelling (optional):") ?? null;
+    if (reason === null) return; // user dismissed the prompt
     try {
-      const res = await fetch(apiPath(`/api/bookings?id=${id}`), { method: "DELETE" });
+      const res = await fetch(apiPath(`/api/bookings?id=${id}&reason=${encodeURIComponent(reason)}`), { method: "DELETE" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not cancel");
       await load();
@@ -84,6 +88,13 @@ export function MyBookingsClient({ today }: { today: string }) {
                   </div>
                 )}
                 {b.purpose && <p className="mt-1 text-sm">{b.purpose}</p>}
+                {b.status === "CANCELLED" && (
+                  <div className="mt-1 text-xs text-red-600">
+                    Cancelled{b.cancelledBy ? ` by ${b.cancelledBy.name} (@${b.cancelledBy.username})` : ""}
+                    {b.cancelledAt ? ` on ${fmtIstDateTime(b.cancelledAt)}` : ""}
+                    {b.cancelReason ? ` — ${b.cancelReason}` : ""}
+                  </div>
+                )}
               </div>
               <div className="flex flex-col items-end gap-2">
                 <Badge variant={b.type === "LONG" ? "destructive" : "secondary"}>

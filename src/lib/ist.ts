@@ -24,6 +24,17 @@ export function istMinute(d: Date = istNow()): number {
 }
 
 /** Format minutes-from-midnight as HH:MM (24h). */
+
+/** Format a UTC ISO timestamp as an IST wall-clock string (YYYY-MM-DD HH:MM). */
+export function fmtIstDateTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const ist = new Date(d.getTime() + IST_OFFSET_MS);
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${ist.toISOString().slice(0, 10)} ${pad(ist.getUTCHours())}:${pad(ist.getUTCMinutes())} IST`;
+}
+
 export function fmtMin(m: number): string {
   const h = Math.floor(m / 60)
     .toString()

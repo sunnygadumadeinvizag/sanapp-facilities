@@ -54,6 +54,7 @@ model AppUser {
   updatedAt   DateTime  @updatedAt
   bookings    Booking[] @relation("Booker")
   onBehalf    Booking[] @relation("ForUser")
+  cancellations Booking[] @relation("CancelledBy")
 }
 
 model Building {
@@ -108,7 +109,11 @@ model Booking {
   pdf        Bytes?
   pdfName    String?
   createdAt  DateTime      @default(now())
-
+  // Cancellation history — who cancelled, when, and why (set on cancel).
+  cancelledAt   DateTime?
+  cancelledById String?
+  cancelledBy   AppUser?      @relation("CancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
+  cancelReason  String?
   @@index([facilityId, date, status])
   @@index([userId, date])
 }

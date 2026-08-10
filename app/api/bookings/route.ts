@@ -42,6 +42,7 @@ const BOOKING_LIST_SELECT = {
   },
   user: { select: { id: true, username: true, name: true } },
   forUser: { select: { id: true, username: true, name: true } },
+  cancelledBy: { select: { id: true, username: true, name: true } },
 };
 
 async function hasConflict(
@@ -99,7 +100,7 @@ export async function GET(request: NextRequest) {
 
   if (mine) {
     const rows = await prisma.booking.findMany({
-      where: { userId: user.id },
+      where: { OR: [{ userId: user.id }, { forUserId: user.id }] },
       orderBy: [{ date: "asc" }, { startMin: "asc" }],
       select: BOOKING_LIST_SELECT,
     });
@@ -349,28 +350,41 @@ export async function DELETE(request: NextRequest) {
   const user = await currentUser();
   if (!user) return bad("unauthorized", 401);
 
+  // Reason travels as a query param (DELETE bodies are unreliable).
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
+  const reason = (searchParams.get("reason") ?? "").trim().slice(0, 500) || null;
   if (!id) return bad("id is required");
 
   const booking = await prisma.booking.findUnique({ where: { id } });
   if (!booking) return bad("Booking not found", 404);
+  if (booking.status === "CANCELLED") return bad("This booking is already cancelled", 409);
 
+  // Who may cancel: the booker, the user the slot is blocked FOR (their own
+  // blocked slot), or an app ADMIN. Everyone else is refused.
   const canCancel =
-    booking.userId === user.id || user.role === "ADMIN" || user.isApprover || user.isPoc;
+    booking.userId === user.id || booking.forUserId === user.id || user.role === "ADMIN";
   if (!canCancel) {
-    return bad("You can only cancel your own bookings", 403);
+    return bad("Only the booker, the user it is blocked for, or an app admin can cancel this booking", 403);
   }
 
   // Only future slots can be cancelled.
-  const endDay = endDayOf(booking.date, booking.endDate);
   if (slotIndex(booking.date, booking.startMin) <= slotIndex(istDateKey(), istMinute())) {
     return bad("A slot that has already started cannot be cancelled");
   }
 
-  await prisma.booking.update({
+  const updated = await prisma.booking.update({
     where: { id },
-    data: { status: "CANCELLED" },
+    data: {
+      status: "CANCELLED",
+      cancelledAt: new Date(),
+      cancelledById: user.id,
+      cancelReason: reason,
+    },
+    select: BOOKING_LIST_SELECT,
   });
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({
+    booking: { ...updated, pdf: Boolean(updated.pdfName) },
+    message: "Booking cancelled",
+  });
 }

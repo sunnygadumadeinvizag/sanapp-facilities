@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { fmtSlotRange } from "@/lib/ist";
+import { fmtIstDateTime, fmtSlotRange } from "@/lib/ist";
 import { PRIMARY_ROLE_LABELS } from "@/lib/labels";
 
 const PRIMARY_ROLES = ["STAFF_TEACHING", "STAFF_NON_TEACHING", "STUDENT", "SCHOLAR", "GUEST"];
@@ -61,6 +61,9 @@ type AdminBooking = {
   facility: { name: string; building: { name: string } };
   user: { name: string; username: string };
   forUser: { name: string; username: string } | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  cancelledBy: { name: string; username: string } | null;
 };
 
 export function AdminClient({ isAdmin }: { isAdmin: boolean }) {
@@ -399,6 +402,7 @@ function UsersTab({ onError }: { onError: (s: string | null) => void }) {
 
 function BookingsTab({ onError }: { onError: (s: string | null) => void }) {
   const [bookings, setBookings] = useState<AdminBooking[]>([]);
+  const [statusFilter, setStatusFilter] = useState("ALL");
 
   const load = useCallback(async () => {
     const res = await fetch(apiPath("/api/bookings?all=1"), { cache: "no-store" });
@@ -411,19 +415,36 @@ function BookingsTab({ onError }: { onError: (s: string | null) => void }) {
   }, [load]);
 
   async function cancel(id: string) {
-    if (!confirm("Cancel this booking?")) return;
-    const res = await fetch(apiPath(`/api/bookings?id=${id}`), { method: "DELETE" });
+    const reason = window.prompt("Reason for cancelling (optional):") ?? null;
+    if (reason === null) return; // user dismissed the prompt
+    const res = await fetch(apiPath(`/api/bookings?id=${id}&reason=${encodeURIComponent(reason)}`), { method: "DELETE" });
     const data = await res.json();
     if (!res.ok) return onError(data.error ?? "Could not cancel");
     onError(null);
     await load();
   }
 
+  const visible = statusFilter === "ALL" ? bookings : bookings.filter((b) => b.status === statusFilter);
+
   if (bookings.length === 0) return <p className="text-muted-foreground">No bookings yet.</p>;
 
   return (
     <div className="grid gap-3">
-      {bookings.map((b) => (
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-muted-foreground">Status:</span>
+        {["ALL", "CONFIRMED", "CANCELLED"].map((st) => (
+          <Button
+            key={st}
+            size="sm"
+            variant={statusFilter === st ? "default" : "outline"}
+            onClick={() => setStatusFilter(st)}
+          >
+            {st === "ALL" ? "All" : st === "CONFIRMED" ? "Confirmed" : "Cancelled"}
+          </Button>
+        ))}
+      </div>
+      {visible.length === 0 && <p className="text-muted-foreground">Nothing here.</p>}
+      {visible.map((b) => (
         <Card key={b.id}>
           <CardContent className="p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -434,6 +455,13 @@ function BookingsTab({ onError }: { onError: (s: string | null) => void }) {
                   {b.forUser ? ` → for ${b.forUser.name}` : ""}
                 </div>
                 {b.purpose && <p className="mt-1 text-sm">{b.purpose}</p>}
+                {b.status === "CANCELLED" && (
+                  <div className="mt-1 text-xs text-red-600">
+                    Cancelled{b.cancelledBy ? ` by ${b.cancelledBy.name} (@${b.cancelledBy.username})` : ""}
+                    {b.cancelledAt ? ` on ${fmtIstDateTime(b.cancelledAt)}` : ""}
+                    {b.cancelReason ? ` — ${b.cancelReason}` : ""}
+                  </div>
+                )}
               </div>
               <div className="flex flex-col items-end gap-2">
                 <Badge variant={b.type === "LONG" ? "destructive" : "secondary"}>
