@@ -41,14 +41,14 @@ export async function GET(request: NextRequest) {
         name: user.name,
         email: user.email,
         // Keep the primary role fresh from the SSO — eligibility depends on it.
-        primaryRole: user.role ?? undefined,
+        primaryRole: user.primaryRole ?? user.role ?? undefined,
       },
       create: {
         ssoUserId: user.sub,
         username: user.username,
         name: user.name,
         email: user.email,
-        primaryRole: user.role ?? null,
+        primaryRole: user.primaryRole ?? user.role ?? null,
         role: "USER",
       },
     });

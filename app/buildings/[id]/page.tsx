@@ -93,7 +93,9 @@ export default async function BuildingPage({
               bookerName: b.user.name,
               forName: b.forUser?.name ?? null,
             }));
+            // ADMINs can book any facility (the server bypasses restrictions).
             const eligible =
+              me.role === "ADMIN" ||
               f.allowedRoles.length === 0 ||
               (me.primaryRole ? f.allowedRoles.includes(me.primaryRole) : false);
             return (

@@ -46,7 +46,8 @@ export async function fetchUserInfo(accessToken: string): Promise<{
   username: string;
   name: string;
   email: string;
-  role?: string; // primary role from the SSO (STAFF_TEACHING, STUDENT, ...)
+  role?: string; // SSO internal role (SUPER_ADMIN | USER)
+  primaryRole?: string | null; // SSO PrimaryRole (STAFF_TEACHING, STUDENT, ...)
 }> {
   const res = await fetch(`${SSO_BASE_URL}/api/oidc/userinfo`, {
     headers: { authorization: `Bearer ${accessToken}` },
