@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { currentUser } from "@/lib/auth";
+import { currentUser, listSsoUsers } from "@/lib/auth";
 import {
   PDF_MAX_BYTES,
   SLOT_MAX_MINUTES,
@@ -249,10 +249,43 @@ export async function POST(request: NextRequest) {
   // Eligibility — which SSO primary roles may book this facility.
   // ADMINs can book any facility regardless of their own primary role.
   // ON_BEHALF bookings check the FOR-user's eligibility, not the booker's.
+  // The on-behalf picker sends the central SSO user id; resolve it to the
+  // local app user and auto-provision a local row for users who have not
+  // signed in to this app yet (their identity lives in the SSO registry).
+  let resolvedForUserId: string | null = null;
+  if (type === "ON_BEHALF" && forUserId) {
+    let forUser = await prisma.appUser.findFirst({
+      where: { OR: [{ ssoUserId: forUserId }, { id: forUserId }, { username: forUserId }] },
+    });
+    if (!forUser) {
+      const ssoUsers = await listSsoUsers();
+      const ssoUser = ssoUsers.find((u) => u.id === forUserId || u.username === forUserId);
+      if (!ssoUser) return bad("The user this slot is being blocked for was not found", 400);
+      forUser = await prisma.appUser.upsert({
+        where: { username: ssoUser.username },
+        update: {
+          ssoUserId: ssoUser.id,
+          name: ssoUser.name,
+          email: ssoUser.email,
+          primaryRole: ssoUser.primaryRole || null,
+        },
+        create: {
+          ssoUserId: ssoUser.id,
+          username: ssoUser.username,
+          name: ssoUser.name,
+          email: ssoUser.email,
+          primaryRole: ssoUser.primaryRole || null,
+          role: "USER",
+        },
+      });
+    }
+    resolvedForUserId = forUser.id;
+  }
+
   if (facility.allowedRoles.length > 0 && user.role !== "ADMIN") {
     let eligibleRole: string | null = null;
-    if (type === "ON_BEHALF" && forUserId) {
-      const forUser = await prisma.appUser.findUnique({ where: { id: forUserId } });
+    if (type === "ON_BEHALF" && resolvedForUserId) {
+      const forUser = await prisma.appUser.findUnique({ where: { id: resolvedForUserId } });
       if (!forUser) return bad("The user this slot is being blocked for was not found", 400);
       eligibleRole = forUser.primaryRole ?? null;
     } else {
@@ -287,7 +320,7 @@ export async function POST(request: NextRequest) {
     data: {
       facilityId,
       userId: user.id,
-      forUserId: type === "ON_BEHALF" ? forUserId : null,
+      forUserId: resolvedForUserId,
       type,
       status: "CONFIRMED",
       date: startDate,
