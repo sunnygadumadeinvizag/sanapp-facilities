@@ -94,9 +94,12 @@ model Booking {
   forUser    AppUser?      @relation("ForUser", fields: [forUserId], references: [id], onDelete: SetNull)
   type       BookingType   @default(SELF)
   status     BookingStatus @default(CONFIRMED)
-  // Slot — IST. date is a plain YYYY-MM-DD; startMin/endMin are minutes
-  // from midnight IST (0..1440). endMin - startMin is the duration.
+  // Slot — IST. date is the START day and endDate the END day (both plain
+  // YYYY-MM-DD); startMin/endMin are minutes from midnight IST (0..1440).
+  // A same-day slot has endDate === date. Multi-day/overnight slots (e.g.
+  // 23:30 on day D → 01:00 on day D+1) span across endDate.
   date       String
+  endDate    String   @default("")
   startMin   Int
   endMin     Int
   purpose    String? // required for ON_BEHALF and LONG bookings

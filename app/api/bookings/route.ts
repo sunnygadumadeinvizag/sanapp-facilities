@@ -8,6 +8,8 @@ import {
   fmtMin,
   istDateKey,
   istMinute,
+  slotDurationMin,
+  slotIndex,
 } from "@/lib/ist";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -16,30 +18,57 @@ function bad(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status });
 }
 
-function isPastSlot(date: string, startMin: number): boolean {
-  // A slot on an earlier day, or today with a start time already reached, is in the past.
-  return date < istDateKey() || (date === istDateKey() && startMin <= istMinute());
+/** Effective end day of a booking (multi-day support: "" means same day). */
+function endDayOf(date: string, endDate: string): string {
+  return endDate && endDate >= date ? endDate : date;
 }
 
-/** Overlap test: any CONFIRMED booking on the same facility+date intersecting [start,end). */
+const BOOKING_LIST_SELECT = {
+  id: true,
+  type: true,
+  status: true,
+  date: true,
+  endDate: true,
+  startMin: true,
+  endMin: true,
+  purpose: true,
+  pdfName: true,
+  facility: {
+    select: {
+      id: true,
+      name: true,
+      building: { select: { id: true, name: true } },
+    },
+  },
+  user: { select: { id: true, username: true, name: true } },
+  forUser: { select: { id: true, username: true, name: true } },
+};
+
 async function hasConflict(
   facilityId: string,
-  date: string,
+  startDate: string,
+  endDate: string,
   startMin: number,
   endMin: number,
   excludeId?: string
 ) {
-  const overlapping = await prisma.booking.findFirst({
+  const startIdx = slotIndex(startDate, startMin);
+  const endIdx = slotIndex(endDate, endMin);
+  const overlapping = await prisma.booking.findMany({
     where: {
       facilityId,
-      date,
       status: "CONFIRMED",
       NOT: excludeId ? { id: excludeId } : undefined,
-      startMin: { lt: endMin },
-      endMin: { gt: startMin },
     },
+    select: { id: true, date: true, endDate: true, startMin: true, endMin: true },
   });
-  return overlapping !== null;
+  for (const b of overlapping) {
+    const bEnd = endDayOf(b.date, b.endDate);
+    const bStartIdx = slotIndex(b.date, b.startMin);
+    const bEndIdx = slotIndex(bEnd, b.endMin);
+    if (startIdx < bEndIdx && endIdx > bStartIdx) return true;
+  }
+  return false;
 }
 
 export async function GET(request: NextRequest) {
@@ -49,6 +78,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const facilityId = searchParams.get("facilityId");
   const date = searchParams.get("date");
+  const from = searchParams.get("from");
+  const to = searchParams.get("to");
   const mine = searchParams.get("mine") === "1";
   const all = searchParams.get("all") === "1";
 
@@ -56,21 +87,13 @@ export async function GET(request: NextRequest) {
     if (user.role !== "ADMIN") return bad("forbidden", 403);
     const rows = await prisma.booking.findMany({
       orderBy: [{ date: "desc" }, { startMin: "desc" }],
-      select: {
-        id: true,
-        type: true,
-        status: true,
-        date: true,
-        startMin: true,
-        endMin: true,
-        purpose: true,
-        pdfName: true,
-        facility: { select: { id: true, name: true, building: { select: { id: true, name: true } } } },
-        user: { select: { id: true, username: true, name: true } },
-        forUser: { select: { id: true, username: true, name: true } },
-      },
+      select: BOOKING_LIST_SELECT,
     });
-    const bookings = rows.map(({ pdfName, ...rest }) => ({ ...rest, pdf: Boolean(pdfName) }));
+    const bookings = rows.map(({ pdfName, ...rest }) => ({
+      ...rest,
+      endDate: endDayOf(rest.date, rest.endDate),
+      pdf: Boolean(pdfName),
+    }));
     return NextResponse.json({ bookings });
   }
 
@@ -78,34 +101,52 @@ export async function GET(request: NextRequest) {
     const rows = await prisma.booking.findMany({
       where: { userId: user.id },
       orderBy: [{ date: "asc" }, { startMin: "asc" }],
-      select: {
-        id: true,
-        type: true,
-        status: true,
-        date: true,
-        startMin: true,
-        endMin: true,
-        purpose: true,
-        pdfName: true,
-        facility: { select: { id: true, name: true, building: { select: { id: true, name: true } } } },
-        forUser: { select: { id: true, username: true, name: true } },
-      },
+      select: BOOKING_LIST_SELECT,
     });
-    const bookings = rows.map(({ pdfName, ...rest }) => ({ ...rest, pdf: Boolean(pdfName) }));
+    const bookings = rows.map(({ pdfName, ...rest }) => ({
+      ...rest,
+      endDate: endDayOf(rest.date, rest.endDate),
+      pdf: Boolean(pdfName),
+    }));
     return NextResponse.json({ bookings });
   }
 
-  if (!facilityId || !date || !DATE_RE.test(date)) {
-    return bad("facilityId and date (YYYY-MM-DD) are required");
+  if (!facilityId) return bad("facilityId is required");
+
+  // Calendar range query: bookings overlapping [from, to] (both inclusive).
+  if (from && to && DATE_RE.test(from) && DATE_RE.test(to)) {
+    const rows = await prisma.booking.findMany({
+      where: { facilityId, status: "CONFIRMED" },
+      orderBy: [{ date: "asc" }, { startMin: "asc" }],
+      select: BOOKING_LIST_SELECT,
+    });
+    const fromIdx = slotIndex(from, 0);
+    const toIdx = slotIndex(to, 1440);
+    const bookings = rows
+      .filter((b) => {
+        const bEnd = endDayOf(b.date, b.endDate);
+        return slotIndex(b.date, b.startMin) < toIdx && slotIndex(bEnd, b.endMin) > fromIdx;
+      })
+      .map(({ pdfName, ...rest }) => ({
+        ...rest,
+        endDate: endDayOf(rest.date, rest.endDate),
+        pdf: Boolean(pdfName),
+      }));
+    return NextResponse.json({ bookings });
   }
-  const bookings = await prisma.booking.findMany({
+
+  // Single-day query (kept for compatibility): exact day.
+  if (!date || !DATE_RE.test(date)) return bad("date (YYYY-MM-DD), from/to, or mine is required");
+  const rows = await prisma.booking.findMany({
     where: { facilityId, date, status: "CONFIRMED" },
     orderBy: { startMin: "asc" },
-    include: {
-      user: { select: { id: true, username: true, name: true } },
-      forUser: { select: { id: true, username: true, name: true } },
-    },
+    select: BOOKING_LIST_SELECT,
   });
+  const bookings = rows.map(({ pdfName, ...rest }) => ({
+    ...rest,
+    endDate: endDayOf(rest.date, rest.endDate),
+    pdf: Boolean(pdfName),
+  }));
   return NextResponse.json({ bookings });
 }
 
@@ -122,7 +163,7 @@ export async function POST(request: NextRequest) {
 
   if (ct.includes("multipart/form-data")) {
     const form = await request.formData();
-    for (const key of ["facilityId", "date", "startMin", "endMin", "purpose", "forUserId"]) {
+    for (const key of ["facilityId", "date", "endDate", "startDate", "startMin", "endMin", "purpose", "forUserId"]) {
       const v = form.get(key);
       if (v !== null && v !== undefined && typeof v === "string") body[key] = v;
     }
@@ -145,20 +186,33 @@ export async function POST(request: NextRequest) {
   }
 
   const facilityId = String(body.facilityId ?? "").trim();
-  const date = String(body.date ?? "").trim();
+  const startDate = String(body.startDate ?? body.date ?? "").trim();
+  let endDate = String(body.endDate ?? "").trim();
   const startMin = Number(body.startMin);
   const endMin = Number(body.endMin);
   const purpose = String(body.purpose ?? "").trim();
   const forUserId = String(body.forUserId ?? "").trim();
 
-  if (!facilityId || !date || !DATE_RE.test(date)) {
-    return bad("facilityId and date (YYYY-MM-DD) are required");
+  if (!facilityId || !startDate || !DATE_RE.test(startDate)) {
+    return bad("facilityId and start date (YYYY-MM-DD) are required");
   }
-  if (!Number.isInteger(startMin) || !Number.isInteger(endMin) || startMin < 0 || endMin > 1440 || endMin <= startMin) {
+  if (endDate && !DATE_RE.test(endDate)) {
+    return bad("end date (YYYY-MM-DD) is invalid");
+  }
+  if (!endDate) endDate = startDate; // single-day booking
+  if (endDate < startDate) {
+    return bad("The end date cannot be before the start date");
+  }
+  if (!Number.isInteger(startMin) || !Number.isInteger(endMin) || startMin < 0 || endMin > 1440) {
     return bad("Invalid slot times");
   }
 
-  const duration = endMin - startMin;
+  const startIdx = slotIndex(startDate, startMin);
+  const endIdx = slotIndex(endDate, endMin);
+  if (endIdx <= startIdx) {
+    return bad("The slot end must be after its start");
+  }
+  const duration = endIdx - startIdx;
   if (duration < SLOT_MIN_MINUTES) {
     return bad(`Minimum booking duration is ${SLOT_MIN_MINUTES} minutes`);
   }
@@ -213,7 +267,8 @@ export async function POST(request: NextRequest) {
   }
 
   // The slot must not be in the past (server time is IST).
-  if (isPastSlot(date, startMin)) {
+  const nowIdx = slotIndex(istDateKey(), istMinute());
+  if (startIdx <= nowIdx) {
     return bad("You cannot book a slot that has already started (times are Indian Standard Time)");
   }
 
@@ -221,9 +276,9 @@ export async function POST(request: NextRequest) {
     return bad("A description is required for this type of booking");
   }
 
-  if (await hasConflict(facilityId, date, startMin, endMin)) {
+  if (await hasConflict(facilityId, startDate, endDate, startMin, endMin)) {
     return bad(
-      `That slot is already booked (${fmtMin(startMin)} – ${fmtMin(endMin)} IST overlaps an existing booking)`,
+      "That time range is already booked — please pick a free range in the calendar",
       409
     );
   }
@@ -235,7 +290,8 @@ export async function POST(request: NextRequest) {
       forUserId: type === "ON_BEHALF" ? forUserId : null,
       type,
       status: "CONFIRMED",
-      date,
+      date: startDate,
+      endDate,
       startMin,
       endMin,
       purpose: purpose || null,
@@ -274,7 +330,8 @@ export async function DELETE(request: NextRequest) {
   }
 
   // Only future slots can be cancelled.
-  if (isPastSlot(booking.date, booking.startMin)) {
+  const endDay = endDayOf(booking.date, booking.endDate);
+  if (slotIndex(booking.date, booking.startMin) <= slotIndex(istDateKey(), istMinute())) {
     return bad("A slot that has already started cannot be cancelled");
   }
 

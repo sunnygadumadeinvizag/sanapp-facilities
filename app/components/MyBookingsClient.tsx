@@ -1,13 +1,18 @@
 "use client";
 import { apiPath } from "iipe-common-ui";
 import { useEffect, useState } from "react";
-import { fmtSlot } from "@/lib/ist";
+import { FileText, Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { fmtSlotRange } from "@/lib/ist";
 
 export type MyBooking = {
   id: string;
   type: "SELF" | "ON_BEHALF" | "LONG";
   status: "CONFIRMED" | "CANCELLED";
   date: string;
+  endDate: string;
   startMin: number;
   endMin: number;
   purpose: string | null;
@@ -47,67 +52,74 @@ export function MyBookingsClient({ today }: { today: string }) {
     }
   }
 
-  if (error) return <div className="iipe-alert danger">{error}</div>;
-  if (!bookings) return <p className="iipe-muted">Loading your bookings…</p>;
+  if (error) return <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>;
+  if (!bookings) {
+    return (
+      <p className="flex items-center gap-2 text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading your bookings…
+      </p>
+    );
+  }
 
   const upcoming = bookings.filter((b) => b.status === "CONFIRMED" && b.date >= today);
   const past = bookings.filter((b) => b.status === "CANCELLED" || b.date < today);
 
   function renderList(list: MyBooking[], emptyText: string) {
-    if (list.length === 0) return <p className="iipe-muted">{emptyText}</p>;
+    if (list.length === 0) return <p className="text-muted-foreground">{emptyText}</p>;
     return (
-      <div style={{ display: "grid", gap: 10 }}>
+      <div className="grid gap-3">
         {list.map((b) => (
-          <div key={b.id} className="iipe-card" style={{ padding: 12 }}>
-            <div className="iipe-row" style={{ alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 600 }}>
+          <Card key={b.id} className="p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-semibold">
                   {b.facility.building.name} — {b.facility.name}
                 </div>
-                <div className="iipe-muted" style={{ fontSize: "0.9rem" }}>
-                  {b.date} · {fmtSlot(b.startMin, b.endMin)}
+                <div className="text-sm text-muted-foreground">
+                  {fmtSlotRange(b.date, b.startMin, b.endDate, b.endMin)}
                 </div>
                 {b.forUser && (
-                  <div className="iipe-muted" style={{ fontSize: "0.85rem" }}>
+                  <div className="text-xs text-muted-foreground">
                     Blocked for {b.forUser.name} (@{b.forUser.username})
                   </div>
                 )}
-                {b.purpose && <div style={{ fontSize: "0.9rem", marginTop: 4 }}>{b.purpose}</div>}
+                {b.purpose && <p className="mt-1 text-sm">{b.purpose}</p>}
               </div>
-              <span className="iipe-spacer" />
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
-                <span className="iipe-badge">
+              <div className="flex flex-col items-end gap-2">
+                <Badge variant={b.type === "LONG" ? "destructive" : "secondary"}>
                   {b.type === "SELF" ? "Self" : b.type === "ON_BEHALF" ? "Blocked" : "Long"}
-                </span>
-                {b.status === "CANCELLED" && <span className="iipe-badge" style={{ background: "var(--iipe-danger-light)" }}>Cancelled</span>}
-                <div style={{ display: "flex", gap: 6 }}>
+                </Badge>
+                {b.status === "CANCELLED" && <Badge variant="outline">Cancelled</Badge>}
+                <div className="flex gap-2">
                   {b.pdf && (
-                    <a className="iipe-btn ghost" href={apiPath(`/api/bookings/${b.id}/pdf`)} target="_blank" rel="noreferrer">
-                      PDF
-                    </a>
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={apiPath(`/api/bookings/${b.id}/pdf`)} target="_blank" rel="noreferrer">
+                        <FileText className="h-3 w-3" /> PDF
+                      </a>
+                    </Button>
                   )}
                   {b.status === "CONFIRMED" && b.date >= today && (
-                    <button className="iipe-btn ghost" style={{ color: "var(--iipe-danger)" }} onClick={() => cancel(b.id)}>
+                    <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700" onClick={() => cancel(b.id)}>
                       Cancel
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
             </div>
-          </div>
+          </Card>
         ))}
       </div>
     );
   }
 
   return (
-    <div style={{ display: "grid", gap: 20 }}>
+    <div className="grid gap-6">
       <section>
-        <h2 className="iipe-page-title" style={{ fontSize: "1.1rem" }}>Upcoming</h2>
+        <h2 className="mb-3 text-lg font-semibold">Upcoming</h2>
         {renderList(upcoming, "No upcoming bookings.")}
       </section>
       <section>
-        <h2 className="iipe-page-title" style={{ fontSize: "1.1rem" }}>Past &amp; cancelled</h2>
+        <h2 className="mb-3 text-lg font-semibold">Past &amp; cancelled</h2>
         {renderList(past, "Nothing here yet.")}
       </section>
     </div>

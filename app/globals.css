@@ -1,8 +1,88 @@
-html,
-body {
-  min-height: 100%;
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------
+   shadcn/ui theme — tokens reference the IIPE design system variables
+   (defined by iipe-common-ui/styles.css), so the super-admin-chosen
+   brand colors and light/dark/system modes keep working.
+   ------------------------------------------------------------------ */
+:root {
+  --background: var(--iipe-bg);
+  --foreground: var(--iipe-text);
+  --card: var(--iipe-surface);
+  --card-foreground: var(--iipe-text);
+  --popover: var(--iipe-surface);
+  --popover-foreground: var(--iipe-text);
+  --primary: var(--iipe-primary);
+  --primary-foreground: #ffffff;
+  --secondary: var(--iipe-primary-light);
+  --secondary-foreground: var(--iipe-primary);
+  --muted: var(--iipe-primary-light);
+  --muted-foreground: var(--iipe-muted);
+  --accent: var(--iipe-accent);
+  --accent-foreground: #1c2b28;
+  --destructive: var(--iipe-danger);
+  --destructive-foreground: #ffffff;
+  --border: var(--iipe-border);
+  --input: var(--iipe-border);
+  --ring: var(--iipe-primary);
+  --radius: 0.5rem;
 }
-body {
+
+/* Preflight (Tailwind base) resets heading sizes to inherit — restore sane
+   defaults for headings used outside the common-ui classes. */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-size: revert;
+  font-weight: revert;
+}
+
+/* Booking calendar grid */
+.fb-grid {
+  position: relative;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.fb-cell {
+  position: absolute;
+  border-right: 1px solid var(--iipe-border);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  cursor: crosshair;
+}
+.fb-cell:hover {
+  background: color-mix(in srgb, var(--iipe-primary) 12%, transparent);
+}
+.fb-selection {
+  position: absolute;
+  background: color-mix(in srgb, var(--iipe-primary) 28%, transparent);
+  border: 1.5px solid var(--iipe-primary);
+  border-radius: 6px;
+  z-index: 5;
+  pointer-events: none;
+}
+.fb-booked {
+  position: absolute;
+  background: color-mix(in srgb, var(--iipe-danger) 16%, var(--iipe-surface));
+  border: 1px solid color-mix(in srgb, var(--iipe-danger) 35%, transparent);
+  border-radius: 6px;
+  z-index: 4;
+  pointer-events: none;
+  overflow: hidden;
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
+  padding: 2px 6px;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--iipe-text);
+}
+.fb-booked-label {
+  pointer-events: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
 }

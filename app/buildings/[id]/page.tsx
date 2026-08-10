@@ -2,9 +2,10 @@ import { notFound } from "next/navigation";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { verifyAppSession } from "@/lib/session";
-import { apiPath } from "iipe-common-ui";
 import { AppShell } from "../../components/AppShell";
 import { BookingClient, type SlotItem } from "../../components/BookingClient";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import { istDateKey, istMinute } from "@/lib/ist";
 import { primaryRoleLabel } from "@/lib/labels";
 
@@ -66,8 +67,9 @@ export default async function BuildingPage({
         { label: "Main (access)", href: process.env.MAIN_BASE_URL!, active: false },
       ]}
     >
-      <nav className="iipe-breadcrumb">
-        <a href={apiPath("/")}>Facilities</a> <span>/</span> <span>{building.name}</span>
+      <nav className="text-sm text-muted-foreground mb-3">
+        <a href="/" className="text-primary hover:underline">Facilities</a> <span className="mx-1">/</span>
+        <span className="font-medium text-foreground">{building.name}</span>
       </nav>
 
       <h1 className="iipe-page-title">{building.name}</h1>
@@ -78,16 +80,14 @@ export default async function BuildingPage({
       </p>
 
       {building.facilities.length === 0 ? (
-        <div className="iipe-card">
-          <p className="iipe-muted" style={{ margin: 0 }}>
-            No facilities have been added to this building yet.
-          </p>
-        </div>
+        <Card className="p-6 text-muted-foreground">No facilities have been added to this building yet.</Card>
       ) : (
-        <div style={{ display: "grid", gap: 16 }}>
+        <div className="grid gap-4">
           {building.facilities.map((f) => {
             const slots: SlotItem[] = f.bookings.map((b) => ({
               id: b.id,
+              startDate: b.date,
+              endDate: b.endDate || b.date,
               startMin: b.startMin,
               endMin: b.endMin,
               bookerName: b.user.name,
@@ -99,24 +99,23 @@ export default async function BuildingPage({
               f.allowedRoles.length === 0 ||
               (me.primaryRole ? f.allowedRoles.includes(me.primaryRole) : false);
             return (
-              <div key={f.id} className="iipe-card">
-                <div className="iipe-row" style={{ alignItems: "flex-start" }}>
-                  <div style={{ minWidth: 0 }}>
-                    <h3 style={{ margin: 0 }}>{f.name}</h3>
+              <Card key={f.id} className="p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-lg font-semibold">{f.name}</h3>
                     {f.capacity ? (
-                      <div className="iipe-muted" style={{ fontSize: "0.85rem" }}>Capacity: {f.capacity}</div>
+                      <p className="text-xs text-muted-foreground">Capacity: {f.capacity}</p>
                     ) : null}
                     {f.description && (
-                      <p className="iipe-muted" style={{ margin: "6px 0 0", fontSize: "0.92rem" }}>{f.description}</p>
+                      <p className="mt-1 text-sm text-muted-foreground">{f.description}</p>
                     )}
                   </div>
-                  <span className="iipe-spacer" />
                   {f.allowedRoles.length > 0 ? (
-                    <span className="iipe-badge" title="Restricted to these primary roles">
+                    <Badge variant="secondary" className="whitespace-normal text-right">
                       {f.allowedRoles.map((r) => primaryRoleLabel(r)).join(" · ")}
-                    </span>
+                    </Badge>
                   ) : (
-                    <span className="iipe-badge">Open to all</span>
+                    <Badge>Open to all</Badge>
                   )}
                 </div>
                 <BookingClient
@@ -132,16 +131,18 @@ export default async function BuildingPage({
                     isPoc: local?.isPoc ?? false,
                   }}
                   eligible={eligible}
+                  nowMin={nowMin}
                 />
-              </div>
+              </Card>
             );
           })}
         </div>
       )}
 
-      <p className="iipe-muted" style={{ fontSize: "0.85rem", marginTop: 16 }}>
-        Slots shown for {today} (IST). Use the date picker inside a facility card to view other
-        days. Current IST time: {nowMin >= 720 ? `${Math.floor(nowMin / 60)}:${String(nowMin % 60).padStart(2, "0")}` : `${Math.floor(nowMin / 60)}:${String(nowMin % 60).padStart(2, "0")}`}.
+      <p className="mt-4 text-xs text-muted-foreground">
+        Slots shown for {today} (IST). Use the calendar in a facility card to view other days and
+        book — drag to select a range, including overnight and multi-day blocks. Current IST time:{" "}
+        {`${String(Math.floor(nowMin / 60)).padStart(2, "0")}:${String(nowMin % 60).padStart(2, "0")}`}.
       </p>
     </AppShell>
   );

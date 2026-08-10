@@ -37,9 +37,60 @@ export function fmtSlot(startMin: number, endMin: number): string {
   return `${fmtMin(startMin)} – ${fmtMin(endMin)} IST`;
 }
 
-/** Duration of a slot in minutes. */
-export function slotDuration(startMin: number, endMin: number): number {
-  return endMin - startMin;
+/**
+ * Comparable absolute minute index of a wall-clock point (IST). The date key
+ * is already an IST wall date, so parsing it as UTC keeps the arithmetic
+ * consistent — only relative ordering matters for overlap/duration checks.
+ */
+export function slotIndex(dateKey: string, minuteOfDay: number): number {
+  return Math.floor(Date.parse(`${dateKey}T00:00:00Z`) / 60000) + minuteOfDay;
+}
+
+/** Duration of a slot in minutes, including multi-day spans. */
+export function slotDurationMin(
+  startDate: string,
+  startMin: number,
+  endDate: string,
+  endMin: number
+): number {
+  return slotIndex(endDate, endMin) - slotIndex(startDate, startMin);
+}
+
+/** Effective end day of a booking ("" endDate means same-day). */
+export function endDayOf(date: string, endDate: string | null | undefined): string {
+  return endDate && endDate >= date ? endDate : date;
+}
+
+/** Add N days to a YYYY-MM-DD key, returning a new YYYY-MM-DD key. */
+export function addDays(dateKey: string, days: number): string {
+  const d = new Date(`${dateKey}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Range of inclusive day keys from startDate to endDate (IST). */
+export function dayRange(startDate: string, endDate: string): string[] {
+  const out: string[] = [];
+  let d = startDate;
+  let guard = 0;
+  while (d <= endDate && guard < 400) {
+    out.push(d);
+    d = addDays(d, 1);
+    guard += 1;
+  }
+  return out;
+}
+
+/** Human label for a possibly multi-day slot: "23:30 D – 01:00 D+1 IST". */
+export function fmtSlotRange(
+  startDate: string,
+  startMin: number,
+  endDate: string,
+  endMin: number
+): string {
+  const s = `${fmtMin(startMin)} ${startDate}`;
+  if (endDate === startDate) return `${fmtMin(startMin)} – ${fmtMin(endMin)} IST (${startDate})`;
+  return `${s} → ${fmtMin(endMin)} ${endDate} IST`;
 }
 
 // Slot policy (minutes).

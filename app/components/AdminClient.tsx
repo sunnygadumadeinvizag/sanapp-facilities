@@ -1,7 +1,17 @@
 "use client";
 import { apiPath } from "iipe-common-ui";
 import { useCallback, useEffect, useState } from "react";
-import { fmtSlot } from "@/lib/ist";
+import { Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { fmtSlotRange } from "@/lib/ist";
 import { PRIMARY_ROLE_LABELS } from "@/lib/labels";
 
 const PRIMARY_ROLES = ["STAFF_TEACHING", "STAFF_NON_TEACHING", "STUDENT", "SCHOLAR", "GUEST"];
@@ -43,6 +53,7 @@ type AdminBooking = {
   type: "SELF" | "ON_BEHALF" | "LONG";
   status: "CONFIRMED" | "CANCELLED";
   date: string;
+  endDate: string;
   startMin: number;
   endMin: number;
   purpose: string | null;
@@ -52,53 +63,36 @@ type AdminBooking = {
   forUser: { name: string; username: string } | null;
 };
 
-function msg(s: string) {
-  return s.trim() ? s : undefined;
-}
-
 export function AdminClient({ isAdmin }: { isAdmin: boolean }) {
-  const [tab, setTab] = useState<"buildings" | "facilities" | "users" | "bookings">("buildings");
   const [error, setError] = useState<string | null>(null);
 
   if (!isAdmin) {
     return (
-      <div className="iipe-card">
-        <h2>Administrator access required</h2>
-        <p className="iipe-muted">
+      <Card className="p-6">
+        <h2 className="text-lg font-semibold">Administrator access required</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
           Only an app administrator can manage buildings, facilities, user designations and
           bookings. Please contact the app administrator if you believe this is a mistake.
         </p>
-      </div>
+      </Card>
     );
   }
 
   return (
     <div>
-      <div className="iipe-row" style={{ gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
-        {(
-          [
-            ["buildings", "Buildings"],
-            ["facilities", "Facilities"],
-            ["users", "Users & designations"],
-            ["bookings", "All bookings"],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            className={`iipe-btn ${tab === key ? "" : "ghost"}`}
-            onClick={() => setTab(key)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {error && <div className="iipe-alert danger">{error}</div>}
-
-      {tab === "buildings" && <BuildingsTab onError={setError} />}
-      {tab === "facilities" && <FacilitiesTab onError={setError} />}
-      {tab === "users" && <UsersTab onError={setError} />}
-      {tab === "bookings" && <BookingsTab onError={setError} />}
+      {error && <div className="mb-4 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      <Tabs defaultValue="buildings">
+        <TabsList className="flex-wrap h-auto">
+          <TabsTrigger value="buildings">Buildings</TabsTrigger>
+          <TabsTrigger value="facilities">Facilities</TabsTrigger>
+          <TabsTrigger value="users">Users &amp; designations</TabsTrigger>
+          <TabsTrigger value="bookings">All bookings</TabsTrigger>
+        </TabsList>
+        <TabsContent value="buildings"><BuildingsTab onError={setError} /></TabsContent>
+        <TabsContent value="facilities"><FacilitiesTab onError={setError} /></TabsContent>
+        <TabsContent value="users"><UsersTab onError={setError} /></TabsContent>
+        <TabsContent value="bookings"><BookingsTab onError={setError} /></TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -126,59 +120,73 @@ function BuildingsTab({ onError }: { onError: (s: string | null) => void }) {
     const res = await fetch(apiPath("/api/buildings"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, code: msg(code), description: msg(description), location: msg(location) }),
+      body: JSON.stringify({ name, code: code.trim() || null, description: description.trim() || null, location: location.trim() || null }),
     });
     const data = await res.json();
     if (!res.ok) return onError(data.error ?? "Could not create building");
-    setName("");
-    setCode("");
-    setDescription("");
-    setLocation("");
+    setName(""); setCode(""); setDescription(""); setLocation("");
     onError(null);
     await load();
   }
 
-  async function patch(b: Building, fields: Record<string, unknown>) {
+  async function deactivate(b: Building) {
     const res = await fetch(apiPath("/api/buildings"), {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id: b.id, ...fields }),
+      body: JSON.stringify({ id: b.id, active: false }),
     });
     const data = await res.json();
-    if (!res.ok) return onError(data.error ?? "Could not update building");
+    if (!res.ok) return onError(data.error ?? "Could not deactivate building");
     onError(null);
     await load();
   }
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
-      <form className="iipe-card" onSubmit={create}>
-        <h3 style={{ marginTop: 0 }}>Add a building</h3>
-        <div className="iipe-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
-          <div className="iipe-field"><label>Name *</label><input value={name} onChange={(e) => setName(e.target.value)} required /></div>
-          <div className="iipe-field"><label>Code</label><input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. LIB" /></div>
-        </div>
-        <div className="iipe-field"><label>Description</label><textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} /></div>
-        <div className="iipe-field"><label>Location</label><input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Main Campus, Block A" /></div>
-        <div className="iipe-form-actions"><button className="iipe-btn" type="submit">Add building</button></div>
-      </form>
-
-      {buildings.map((b) => (
-        <div key={b.id} className="iipe-card">
-          <div className="iipe-row" style={{ alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ minWidth: 0 }}>
-              <h3 style={{ margin: 0 }}>{b.name} {b.code ? `(${b.code})` : ""}</h3>
-              <div className="iipe-muted" style={{ fontSize: "0.85rem" }}>
-                {b.facilities.length} facilities · {b.location ?? "no location"}
+    <div className="grid gap-4">
+      <Card>
+        <CardContent className="p-5">
+          <h3 className="mb-3 font-semibold">Add a building</h3>
+          <form onSubmit={create} className="grid gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label>Name *</Label>
+                <Input value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Hostel Block" />
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Code</Label>
+                <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. HB" />
               </div>
             </div>
-            <span className="iipe-spacer" />
-            <button className="iipe-btn ghost" style={{ color: "var(--iipe-danger)" }} onClick={() => patch(b, { active: false })}>
-              Deactivate
-            </button>
-          </div>
-          {b.description && <p className="iipe-muted" style={{ fontSize: "0.92rem", margin: "8px 0 0" }}>{b.description}</p>}
-        </div>
+            <div className="grid gap-1.5">
+              <Label>Description</Label>
+              <Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Location</Label>
+              <Input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="e.g. Main Campus, Block A" />
+            </div>
+            <div><Button type="submit">Add building</Button></div>
+          </form>
+        </CardContent>
+      </Card>
+
+      {buildings.map((b) => (
+        <Card key={b.id}>
+          <CardContent className="p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="font-semibold">{b.name} {b.code ? `(${b.code})` : ""}</h3>
+                <p className="text-sm text-muted-foreground">
+                  {b.facilities.length} facilities · {b.location ?? "no location"}
+                </p>
+                {b.description && <p className="mt-1 text-sm text-muted-foreground">{b.description}</p>}
+              </div>
+              <Button variant="outline" size="sm" className="text-red-600" onClick={() => deactivate(b)}>
+                Deactivate
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       ))}
     </div>
   );
@@ -200,7 +208,7 @@ function FacilitiesTab({ onError }: { onError: (s: string | null) => void }) {
     const data = await res.json();
     if (res.ok) {
       setBuildings(data.buildings);
-      if (!buildingId && data.buildings.length > 0) setBuildingId(data.buildings[0].id);
+      if (data.buildings.length > 0) setBuildingId((prev) => prev || data.buildings[0].id);
     }
   }
   async function loadFacilities(bid: string) {
@@ -225,93 +233,96 @@ function FacilitiesTab({ onError }: { onError: (s: string | null) => void }) {
     const res = await fetch(apiPath("/api/facilities"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        buildingId,
-        name,
-        description: msg(description),
-        capacity: capacity ? Number(capacity) : null,
-        allowedRoles,
-      }),
+      body: JSON.stringify({ buildingId, name, description: description.trim() || null, capacity: capacity ? Number(capacity) : null, allowedRoles }),
     });
     const data = await res.json();
     if (!res.ok) return onError(data.error ?? "Could not create facility");
-    setName("");
-    setDescription("");
-    setCapacity("");
-    setAllowedRoles([]);
+    setName(""); setDescription(""); setCapacity(""); setAllowedRoles([]);
     onError(null);
     await loadFacilities(buildingId);
   }
 
-  async function patch(f: Facility, fields: Record<string, unknown>) {
+  async function deactivate(f: Facility) {
     const res = await fetch(apiPath("/api/facilities"), {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id: f.id, ...fields }),
+      body: JSON.stringify({ id: f.id, active: false }),
     });
     const data = await res.json();
-    if (!res.ok) return onError(data.error ?? "Could not update facility");
+    if (!res.ok) return onError(data.error ?? "Could not deactivate facility");
     onError(null);
     await loadFacilities(buildingId);
   }
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
-      <form className="iipe-card" onSubmit={create}>
-        <h3 style={{ marginTop: 0 }}>Add a facility</h3>
-        <div className="iipe-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
-          <div className="iipe-field">
-            <label>Building *</label>
-            <select value={buildingId} onChange={(e) => setBuildingId(e.target.value)} required>
-              {buildings.map((b) => (
-                <option key={b.id} value={b.id}>{b.name}</option>
-              ))}
-            </select>
-          </div>
-          <div className="iipe-field"><label>Facility name *</label><input value={name} onChange={(e) => setName(e.target.value)} required /></div>
-          <div className="iipe-field"><label>Capacity</label><input type="number" min={1} value={capacity} onChange={(e) => setCapacity(e.target.value)} /></div>
-        </div>
-        <div className="iipe-field"><label>Description</label><textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} /></div>
-        <div className="iipe-field">
-          <label>Who may book (primary roles — none selected means everyone)</label>
-          <div className="iipe-row" style={{ gap: 10, flexWrap: "wrap" }}>
-            {PRIMARY_ROLES.map((r) => (
-              <label key={r} className="iipe-check">
-                <input type="checkbox" checked={allowedRoles.includes(r)} onChange={() => toggleRole(r)} />{" "}
-                {PRIMARY_ROLE_LABELS[r] ?? r}
-              </label>
-            ))}
-          </div>
-        </div>
-        <div className="iipe-form-actions"><button className="iipe-btn" type="submit">Add facility</button></div>
-      </form>
+    <div className="grid gap-4">
+      <Card>
+        <CardContent className="p-5">
+          <h3 className="mb-3 font-semibold">Add a facility</h3>
+          <form onSubmit={create} className="grid gap-3">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-1.5">
+                <Label>Building *</Label>
+                <Select value={buildingId} onValueChange={setBuildingId}>
+                  <SelectTrigger><SelectValue placeholder="Select building" /></SelectTrigger>
+                  <SelectContent>
+                    {buildings.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Facility name *</Label>
+                <Input value={name} onChange={(e) => setName(e.target.value)} required />
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Capacity</Label>
+                <Input type="number" min={1} value={capacity} onChange={(e) => setCapacity(e.target.value)} />
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Description</Label>
+              <Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Who may book (primary roles — none selected means everyone)</Label>
+              <div className="flex flex-wrap gap-4">
+                {PRIMARY_ROLES.map((r) => (
+                  <label key={r} className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={allowedRoles.includes(r)} onCheckedChange={() => toggleRole(r)} />
+                    {PRIMARY_ROLE_LABELS[r] ?? r}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div><Button type="submit">Add facility</Button></div>
+          </form>
+        </CardContent>
+      </Card>
 
       {facilities.map((f) => (
-        <div key={f.id} className="iipe-card">
-          <div className="iipe-row" style={{ alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <h3 style={{ margin: 0 }}>{f.name}</h3>
-              <div className="iipe-muted" style={{ fontSize: "0.85rem" }}>
-                {f.building.name}{f.capacity ? ` · capacity ${f.capacity}` : ""}
+        <Card key={f.id}>
+          <CardContent className="p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <h3 className="font-semibold">{f.name}</h3>
+                <p className="text-sm text-muted-foreground">
+                  {f.building.name}{f.capacity ? ` · capacity ${f.capacity}` : ""}
+                </p>
+                {f.description && <p className="mt-1 text-sm text-muted-foreground">{f.description}</p>}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {f.allowedRoles.length === 0 ? (
+                    <Badge>Open to all</Badge>
+                  ) : (
+                    f.allowedRoles.map((r) => <Badge key={r} variant="secondary">{PRIMARY_ROLE_LABELS[r] ?? r}</Badge>)
+                  )}
+                </div>
               </div>
-              {f.description && <p className="iipe-muted" style={{ fontSize: "0.9rem", margin: "6px 0 0" }}>{f.description}</p>}
-              <div className="iipe-row" style={{ gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-                {f.allowedRoles.length === 0 ? (
-                  <span className="iipe-badge">Open to all</span>
-                ) : (
-                  f.allowedRoles.map((r) => (
-                    <span key={r} className="iipe-badge">{PRIMARY_ROLE_LABELS[r] ?? r}</span>
-                  ))
-                )}
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 6, flexDirection: "column" }}>
-              <button className="iipe-btn ghost" style={{ color: "var(--iipe-danger)" }} onClick={() => patch(f, { active: false })}>
+              <Button variant="outline" size="sm" className="text-red-600" onClick={() => deactivate(f)}>
                 Deactivate
-              </button>
+              </Button>
             </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       ))}
     </div>
   );
@@ -343,34 +354,42 @@ function UsersTab({ onError }: { onError: (s: string | null) => void }) {
     await load();
   }
 
+  if (users.length === 0) {
+    return (
+      <p className="flex items-center gap-2 text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading users…
+      </p>
+    );
+  }
+
   return (
-    <div style={{ display: "grid", gap: 8 }}>
-      {users.length === 0 && <p className="iipe-muted">No users have signed in yet.</p>}
+    <div className="grid gap-3">
       {users.map((u) => (
-        <div key={u.id} className="iipe-card" style={{ padding: 12 }}>
-          <div className="iipe-row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontWeight: 600 }}>{u.name} <span className="iipe-muted">@{u.username}</span></div>
-              <div className="iipe-muted" style={{ fontSize: "0.85rem" }}>
-                {PRIMARY_ROLE_LABELS[u.primaryRole ?? ""] ?? u.primaryRole ?? "No primary role"} · {u.email ?? ""}
+        <Card key={u.id}>
+          <CardContent className="p-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold">{u.name} <span className="font-normal text-muted-foreground">@{u.username}</span></div>
+                <div className="text-sm text-muted-foreground">
+                  {PRIMARY_ROLE_LABELS[u.primaryRole ?? ""] ?? u.primaryRole ?? "No primary role"} · {u.email ?? ""}
+                </div>
               </div>
+              <Select value={u.role} onValueChange={(v) => patch(u, { role: v })}>
+                <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="USER">User</SelectItem>
+                  <SelectItem value="ADMIN">App Admin</SelectItem>
+                </SelectContent>
+              </Select>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={u.isApprover} onCheckedChange={(v) => patch(u, { isApprover: v === true })} /> Approver
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={u.isPoc} onCheckedChange={(v) => patch(u, { isPoc: v === true })} /> POC
+              </label>
             </div>
-            <select
-              value={u.role}
-              onChange={(e) => patch(u, { role: e.target.value })}
-              style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid var(--iipe-border)" }}
-            >
-              <option value="USER">User</option>
-              <option value="ADMIN">App Admin</option>
-            </select>
-            <label className="iipe-check">
-              <input type="checkbox" checked={u.isApprover} onChange={(e) => patch(u, { isApprover: e.target.checked })} /> Approver
-            </label>
-            <label className="iipe-check">
-              <input type="checkbox" checked={u.isPoc} onChange={(e) => patch(u, { isPoc: e.target.checked })} /> POC
-            </label>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       ))}
     </div>
   );
@@ -400,41 +419,43 @@ function BookingsTab({ onError }: { onError: (s: string | null) => void }) {
     await load();
   }
 
-  if (bookings.length === 0) return <p className="iipe-muted">No bookings yet.</p>;
+  if (bookings.length === 0) return <p className="text-muted-foreground">No bookings yet.</p>;
 
   return (
-    <div style={{ display: "grid", gap: 8 }}>
+    <div className="grid gap-3">
       {bookings.map((b) => (
-        <div key={b.id} className="iipe-card" style={{ padding: 12 }}>
-          <div className="iipe-row" style={{ gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontWeight: 600 }}>
-                {b.facility.building.name} — {b.facility.name}
+        <Card key={b.id}>
+          <CardContent className="p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold">{b.facility.building.name} — {b.facility.name}</div>
+                <div className="text-sm text-muted-foreground">
+                  {fmtSlotRange(b.date, b.startMin, b.endDate, b.endMin)} · {b.user.name} (@{b.user.username})
+                  {b.forUser ? ` → for ${b.forUser.name}` : ""}
+                </div>
+                {b.purpose && <p className="mt-1 text-sm">{b.purpose}</p>}
               </div>
-              <div className="iipe-muted" style={{ fontSize: "0.9rem" }}>
-                {b.date} · {fmtSlot(b.startMin, b.endMin)} · {b.user.name} (@{b.user.username})
-                {b.forUser ? ` → for ${b.forUser.name}` : ""}
+              <div className="flex flex-col items-end gap-2">
+                <Badge variant={b.type === "LONG" ? "destructive" : "secondary"}>
+                  {b.type === "SELF" ? "Self" : b.type === "ON_BEHALF" ? "Blocked" : "Long"}
+                  {b.status === "CANCELLED" ? " · Cancelled" : ""}
+                </Badge>
+                <div className="flex gap-2">
+                  {b.pdf && (
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={apiPath(`/api/bookings/${b.id}/pdf`)} target="_blank" rel="noreferrer">PDF</a>
+                    </Button>
+                  )}
+                  {b.status === "CONFIRMED" && (
+                    <Button variant="outline" size="sm" className="text-red-600" onClick={() => cancel(b.id)}>
+                      Cancel
+                    </Button>
+                  )}
+                </div>
               </div>
-              {b.purpose && <div style={{ fontSize: "0.9rem", marginTop: 2 }}>{b.purpose}</div>}
             </div>
-            <div style={{ display: "flex", gap: 6, alignItems: "center", flexDirection: "column" }}>
-              <span className="iipe-badge">
-                {b.type === "SELF" ? "Self" : b.type === "ON_BEHALF" ? "Blocked" : "Long"}
-                {b.status === "CANCELLED" ? " · Cancelled" : ""}
-              </span>
-              {b.status === "CONFIRMED" && (
-                <button className="iipe-btn ghost" style={{ color: "var(--iipe-danger)" }} onClick={() => cancel(b.id)}>
-                  Cancel
-                </button>
-              )}
-              {b.pdf && (
-                <a className="iipe-btn ghost" href={apiPath(`/api/bookings/${b.id}/pdf`)} target="_blank" rel="noreferrer">
-                  PDF
-                </a>
-              )}
-            </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       ))}
     </div>
   );

@@ -1,10 +1,12 @@
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
+import { apiPath } from "iipe-common-ui";
 import { prisma } from "@/lib/prisma";
 import { verifyAppSession } from "@/lib/session";
-import { apiPath } from "iipe-common-ui";
 import { AppShell } from "./components/AppShell";
-import { istDateKey, fmtMin } from "@/lib/ist";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { istDateKey } from "@/lib/ist";
 
 export const dynamic = "force-dynamic";
 
@@ -48,39 +50,42 @@ export default async function DashboardPage({
       <h1 className="iipe-page-title">Facilities Booking</h1>
       <p className="iipe-page-sub">
         Book institute facilities — buildings, rooms and slots. All times are{" "}
-        <strong>Indian Standard Time (IST)</strong>, server time. Slots run from
-        15 minutes up to 3 hours; longer blocks are made by designated POCs.
+        <strong>Indian Standard Time (IST)</strong>, server time. Drag on the calendar to pick a
+        range — 15 minutes up to 3 hours (self), longer blocks by designated POCs.
       </p>
 
       {params.error && (
-        <div className="iipe-alert danger">Sign-in error: {params.error}</div>
+        <div className="mb-4 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+          Sign-in error: {params.error}
+        </div>
       )}
 
       {buildings.length === 0 ? (
-        <div className="iipe-card">
-          <p className="iipe-muted" style={{ margin: 0 }}>
-            No buildings have been added yet. An app administrator can add them.
-          </p>
-        </div>
+        <Card className="p-6 text-muted-foreground">
+          No buildings have been added yet. An app administrator can add them.
+        </Card>
       ) : (
-        <div className="iipe-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {buildings.map((b) => (
-            <a key={b.id} href={apiPath(`/buildings/${b.id}`)} style={{ textDecoration: "none" }}>
-              <div className="iipe-card" style={{ height: "100%", display: "flex", flexDirection: "column", gap: 8 }}>
-                <div className="iipe-row" style={{ alignItems: "flex-start" }}>
-                  <div style={{ minWidth: 0 }}>
-                    <h3 style={{ margin: 0 }}>{b.name}</h3>
-                    {b.code && <div className="iipe-muted" style={{ fontSize: "0.85rem" }}>{b.code}</div>}
+            <a key={b.id} href={apiPath(`/buildings/${b.id}`)} className="block no-underline">
+              <Card className="h-full p-5 transition-shadow hover:shadow-md">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-base font-semibold">{b.name}</h3>
+                    {b.code && <p className="text-xs text-muted-foreground">{b.code}</p>}
                   </div>
-                  <span className="iipe-spacer" />
-                  <span className="iipe-badge">{b.facilities.length} facility{b.facilities.length === 1 ? "" : "ies"}</span>
+                  <Badge variant="secondary" className="shrink-0">
+                    {b.facilities.length} facility{b.facilities.length === 1 ? "" : "ies"}
+                  </Badge>
                 </div>
-                {b.description && <p className="iipe-muted" style={{ margin: 0, fontSize: "0.92rem" }}>{b.description}</p>}
-                {b.location && <div className="iipe-muted" style={{ fontSize: "0.85rem" }}>📍 {b.location}</div>}
-                <div className="iipe-muted" style={{ fontSize: "0.82rem", marginTop: "auto" }}>
-                  Today (IST): {istDateKey()} · open from {fmtMin(0)} IST
-                </div>
-              </div>
+                {b.description && (
+                  <p className="mt-2 text-sm text-muted-foreground">{b.description}</p>
+                )}
+                {b.location && <p className="mt-2 text-xs text-muted-foreground">📍 {b.location}</p>}
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Today (IST): {istDateKey()}
+                </p>
+              </Card>
             </a>
           ))}
         </div>

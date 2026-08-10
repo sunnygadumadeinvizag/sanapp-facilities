@@ -1,16 +1,36 @@
 "use client";
 import { apiPath } from "iipe-common-ui";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, Loader2, Paperclip } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { TimeGrid, type BookingBlock, type RangeSelection } from "./TimeGrid";
 import {
   PDF_MAX_BYTES,
   SLOT_MAX_MINUTES,
-  SLOT_MIN_MINUTES,
+  addDays,
   fmtMin,
-  fmtSlot,
+  fmtSlotRange,
+  slotDurationMin,
 } from "@/lib/ist";
 
 export type SlotItem = {
   id: string;
+  startDate: string;
+  endDate: string;
   startMin: number;
   endMin: number;
   bookerName: string;
@@ -25,30 +45,7 @@ export type BookingMe = {
   isPoc: boolean;
 };
 
-// Booking window: 06:00 – 24:00 IST (start times in 15-minute steps).
-const OPEN_MIN = 6 * 60;
-const LAST_START = 24 * 60 - SLOT_MIN_MINUTES; // 23:45
-
-const NORMAL_DURATIONS = [15, 30, 45, 60, 90, 120, 150, 180];
-const LONG_DURATIONS = [
-  210, 240, 270, 300, 360, 420, 480, 540, 600, 660, 720, 840, 960, 1080, 1200, 1320, 1440,
-];
-
-function clientIstNowMin(): number {
-  try {
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: "Asia/Kolkata",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).formatToParts(new Date());
-    const h = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
-    const m = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
-    return h * 60 + m;
-  } catch {
-    return 0;
-  }
-}
+const WEEK_DAYS = 7;
 
 export function BookingClient({
   facility,
@@ -71,11 +68,10 @@ export function BookingClient({
   const canPoc = me.isPoc || me.role === "ADMIN";
 
   const [open, setOpen] = useState(false);
-  const [date, setDate] = useState(today);
-  const [slots, setSlots] = useState<SlotItem[]>(todaySlots);
-  const [startMin, setStartMin] = useState(OPEN_MIN);
-  const [duration, setDuration] = useState(60);
-  const [longMode, setLongMode] = useState(false);
+  const [weekStart, setWeekStart] = useState(today);
+  const [bookings, setBookings] = useState<BookingBlock[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [selection, setSelection] = useState<RangeSelection | null>(null);
   const [forOther, setForOther] = useState(false);
   const [forQuery, setForQuery] = useState("");
   const [forResults, setForResults] = useState<{ id: string; username: string; name: string }[]>([]);
@@ -87,39 +83,57 @@ export function BookingClient({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const effectiveDurations = longMode ? LONG_DURATIONS : NORMAL_DURATIONS;
+  const days = useMemo(
+    () => Array.from({ length: WEEK_DAYS }, (_, i) => addDays(weekStart, i)),
+    [weekStart]
+  );
 
-  const startOptions = useMemo(() => {
-    const opts: number[] = [];
-    for (let m = OPEN_MIN; m <= LAST_START; m += SLOT_MIN_MINUTES) opts.push(m);
-    return opts;
-  }, []);
-
-  const nowM = date === today ? (nowMin > 0 ? nowMin : clientIstNowMin()) : 0;
-
-  function overlap(m: number, d: number): boolean {
-    return slots.some((s) => m < s.endMin && m + d > s.startMin);
-  }
-
-  function validStart(m: number, d: number): boolean {
-    if (m < nowM) return false;
-    if (m + d > 24 * 60) return false;
-    return !overlap(m, d);
-  }
-
-  async function refreshSlots(forDate: string) {
-    try {
-      const res = await fetch(
-        apiPath(`/api/bookings?facilityId=${facility.id}&date=${forDate}`),
-        { cache: "no-store" }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        setSlots(data.bookings);
+  const loadBookings = useCallback(
+    async (start: string) => {
+      const end = addDays(start, WEEK_DAYS - 1);
+      try {
+        setLoading(true);
+        const res = await fetch(apiPath(`/api/bookings?facilityId=${facility.id}&from=${start}&to=${end}`), {
+          cache: "no-store",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setBookings(
+            (data.bookings ?? []).map((b: any) => ({
+              id: b.id,
+              startDate: b.date,
+              endDate: b.endDate || b.date,
+              startMin: b.startMin,
+              endMin: b.endMin,
+              label: `${fmtMin(b.startMin)}–${fmtMin(b.endMin)} · ${b.forUser?.name ?? b.user?.name ?? ""}`,
+            }))
+          );
+        }
+      } catch {
+        /* keep current */
+      } finally {
+        setLoading(false);
       }
-    } catch {
-      /* keep current slots */
-    }
+    },
+    [facility.id]
+  );
+
+  useEffect(() => {
+    if (open) void loadBookings(weekStart);
+  }, [open, weekStart, loadBookings]);
+
+  function openDialog() {
+    setError(null);
+    setSuccess(null);
+    setSelection(null);
+    setWeekStart(today);
+    setForOther(false);
+    setForUserId("");
+    setForQuery("");
+    setPurpose("");
+    setPdf(null);
+    setPdfName("");
+    setOpen(true);
   }
 
   async function searchUsers(q: string) {
@@ -135,41 +149,6 @@ export function BookingClient({
       }
     } catch {
       setForResults([]);
-    }
-  }
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    setSuccess(null);
-
-    const endMin = startMin + duration;
-    const form = new FormData();
-    form.set("facilityId", facility.id);
-    form.set("date", date);
-    form.set("startMin", String(startMin));
-    form.set("endMin", String(endMin));
-    if (purpose.trim()) form.set("purpose", purpose.trim());
-    if (forOther && forUserId) form.set("forUserId", forUserId);
-    if (pdf) form.set("pdf", pdf, pdf.name);
-
-    try {
-      const res = await fetch(apiPath("/api/bookings"), { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Could not create the booking");
-      setSuccess(`${fmtSlot(startMin, endMin)} confirmed.`);
-      setPurpose("");
-      setPdf(null);
-      setPdfName("");
-      setForUserId("");
-      setForQuery("");
-      setForResults([]);
-      await refreshSlots(date);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create the booking");
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -192,210 +171,232 @@ export function BookingClient({
     setPdfName(f.name);
   }
 
-  const needPurpose = forOther || longMode;
+  const duration = selection ? slotDurationMin(selection.startDate, selection.startMin, selection.endDate, selection.endMin) : 0;
+  const isLong = duration > SLOT_MAX_MINUTES;
+  const isOnBehalf = forOther;
+  const needPurpose = isLong || isOnBehalf;
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selection) return;
+    setBusy(true);
+    setError(null);
+    setSuccess(null);
+
+    const form = new FormData();
+    form.set("facilityId", facility.id);
+    form.set("startDate", selection.startDate);
+    form.set("endDate", selection.endDate);
+    form.set("startMin", String(selection.startMin));
+    form.set("endMin", String(selection.endMin));
+    if (purpose.trim()) form.set("purpose", purpose.trim());
+    if (isOnBehalf && forUserId) form.set("forUserId", forUserId);
+    if (pdf) form.set("pdf", pdf, pdf.name);
+
+    try {
+      const res = await fetch(apiPath("/api/bookings"), { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not create the booking");
+      setSuccess("Booking confirmed.");
+      setPurpose("");
+      setPdf(null);
+      setPdfName("");
+      setForUserId("");
+      setForQuery("");
+      setForResults([]);
+      await loadBookings(weekStart);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create the booking");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div style={{ marginTop: 12 }}>
-      {/* Day's schedule */}
-      <div className="iipe-row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <label className="iipe-muted" style={{ fontSize: "0.85rem" }}>
-          Day:
-        </label>
-        <input
-          type="date"
-          value={date}
-          min={today}
-          onChange={async (e) => {
-            const d = e.target.value;
-            setDate(d);
-            setStartMin(OPEN_MIN);
-            if (d !== today) await refreshSlots(d);
-          }}
-          style={{ padding: "4px 8px", border: "1px solid var(--iipe-border)", borderRadius: 6 }}
-        />
-        <span className="iipe-muted" style={{ fontSize: "0.85rem" }}>
-          {slots.length} booked
-        </span>
-      </div>
-
-      {slots.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-          {slots.map((s) => (
-            <span
+      {/* Day's schedule chips */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="secondary" className="gap-1">
+          <span>{today}</span>
+        </Badge>
+        {todaySlots.length > 0 ? (
+          todaySlots.map((s) => (
+            <Badge
               key={s.id}
-              className="iipe-badge"
-              style={{ background: "var(--iipe-danger-light)", color: "var(--iipe-text)" }}
+              variant="outline"
+              className="gap-1 text-red-700 border-red-300 bg-red-50"
               title={s.forName ? `Blocked for ${s.forName}` : undefined}
             >
-              {fmtSlot(s.startMin, s.endMin)} · {s.forName ?? s.bookerName}
-            </span>
-          ))}
-        </div>
-      )}
+              {fmtMin(s.startMin)}–{fmtMin(s.endMin)} IST · {s.forName ?? s.bookerName}
+            </Badge>
+          ))
+        ) : (
+          <span className="text-xs text-muted-foreground">No bookings today</span>
+        )}
+      </div>
 
       {!eligible && (
-        <div className="iipe-alert" style={{ marginTop: 10 }}>
-          This facility is restricted to specific primary roles. Your role (
-          {me.primaryRole || "not set"}) is not in the allowed list.
+        <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          This facility is restricted to specific primary roles. Your role ({me.primaryRole || "not set"}) is not
+          in the allowed list.
           {canApprover ? " You can still block a slot for an eligible user using approval access." : ""}
         </div>
       )}
 
-      {open && (
-        <form onSubmit={submit} style={{ marginTop: 12, borderTop: "1px solid var(--iipe-border)", paddingTop: 12 }}>
-          <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-            <div className="iipe-field">
-              <label>Start time (IST)</label>
-              <select
-                value={startMin}
-                onChange={(e) => setStartMin(Number(e.target.value))}
-                style={{ width: "100%" }}
-              >
-                {startOptions.map((m) => (
-                  <option key={m} value={m} disabled={!validStart(m, duration)}>
-                    {fmtMin(m)}
-                  </option>
-                ))}
-              </select>
+      <div className="mt-3">
+        <Button size="sm" onClick={openDialog} disabled={!eligible && !canApprover}>
+          Book a slot
+        </Button>
+        <span className="ml-2 text-xs text-muted-foreground">
+          {buildingName} · {facility.name}
+        </span>
+      </div>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Book {facility.name}</DialogTitle>
+            <DialogDescription>
+              {buildingName} · Drag on the calendar to choose a time range — from 15 minutes up to 3 hours
+              (self / on-behalf). Longer blocks (POC) are allowed for designated users. All times are IST.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Week navigation */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="icon" onClick={() => setWeekStart((w) => addDays(w, -WEEK_DAYS))}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button variant="outline" size="icon" onClick={() => setWeekStart((w) => addDays(w, WEEK_DAYS))}>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setWeekStart(today)}>
+                Today
+              </Button>
             </div>
-            <div className="iipe-field">
-              <label>Duration</label>
-              <select value={duration} onChange={(e) => setDuration(Number(e.target.value))} style={{ width: "100%" }}>
-                {effectiveDurations.map((d) => (
-                  <option key={d} value={d} disabled={startMin + d > 24 * 60}>
-                    {d < 60 ? `${d} min` : d % 60 === 0 ? `${d / 60} hour${d / 60 > 1 ? "s" : ""}` : `${Math.floor(d / 60)}h ${d % 60}m`}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <span className="text-sm font-medium">
+              {days[0]} — {days[days.length - 1]}
+            </span>
+            {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
           </div>
 
-          <div className="iipe-muted" style={{ fontSize: "0.85rem", marginTop: 6 }}>
-            {longMode
-              ? "Long booking (POC) — more than 3 hours, booked on your own name."
-              : forOther
-                ? "Blocking for another user (approval access) — 15 min to 3 hours."
-                : `Self booking — ${SLOT_MIN_MINUTES} min to ${SLOT_MAX_MINUTES / 60} hours.`}
-          </div>
+          <TimeGrid
+            days={days}
+            bookings={bookings}
+            selection={selection}
+            onSelect={setSelection}
+            nowMin={nowMin}
+            todayKey={today}
+          />
 
-          {(canApprover || canPoc) && (
-            <div className="iipe-row" style={{ gap: 16, marginTop: 8, flexWrap: "wrap" }}>
-              {canApprover && (
-                <label className="iipe-check">
-                  <input
-                    type="checkbox"
-                    checked={forOther}
-                    onChange={(e) => {
-                      setForOther(e.target.checked);
-                      if (e.target.checked) setLongMode(false);
-                    }}
-                  />{" "}
-                  Block for another user
-                </label>
-              )}
-              {canPoc && (
-                <label className="iipe-check">
-                  <input
-                    type="checkbox"
-                    checked={longMode}
-                    onChange={(e) => {
-                      setLongMode(e.target.checked);
-                      if (e.target.checked) setForOther(false);
-                    }}
-                  />{" "}
-                  Long booking (&gt; 3 hours)
-                </label>
-              )}
-            </div>
-          )}
-
-          {forOther && (
-            <div className="iipe-field" style={{ marginTop: 8 }}>
-              <label>Book for (search by name or username)</label>
-              <input
-                type="text"
-                value={forQuery}
-                placeholder="e.g. sanyasi or Sanyasi Naidu"
-                onChange={(e) => {
-                  setForQuery(e.target.value);
-                  setForUserId("");
-                  void searchUsers(e.target.value);
-                }}
-              />
-              {forResults.length > 0 && (
-                <div className="iipe-card" style={{ marginTop: 6, padding: 8 }}>
-                  {forResults.map((u) => (
-                    <button
-                      key={u.id}
-                      type="button"
-                      className="iipe-btn ghost"
-                      style={{ display: "block", width: "100%", textAlign: "left", marginBottom: 4 }}
-                      onClick={() => {
-                        setForUserId(u.id);
-                        setForQuery(`${u.name} (@${u.username})`);
-                        setForResults([]);
-                      }}
-                    >
-                      {u.name} (@{u.username})
-                    </button>
-                  ))}
+          {selection && (
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <Badge variant={isLong ? "destructive" : "default"}>
+                    {fmtSlotRange(selection.startDate, selection.startMin, selection.endDate, selection.endMin)}
+                  </Badge>
+                  <span className="text-sm text-muted-foreground">
+                    {duration < 60 ? `${duration} min` : `${(duration / 60).toFixed(duration % 60 ? 1 : 0)} h`}
+                  </span>
+                  <Badge variant="secondary">
+                    {isLong ? "Long (POC)" : forOther ? "On-behalf block" : "Self"}
+                  </Badge>
+                  {isLong && !canPoc && (
+                    <span className="text-xs text-red-600">
+                      Longer than 3 hours requires POC designation.
+                    </span>
+                  )}
                 </div>
-              )}
-              {forQuery && !forUserId && forResults.length === 0 && (
-                <div className="iipe-muted" style={{ fontSize: "0.85rem" }}>No matching users.</div>
-              )}
-            </div>
+
+                {canApprover && !isLong && (
+                  <label className="mt-3 flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={forOther}
+                      onCheckedChange={(v) => setForOther(v === true)}
+                    />
+                    Block this slot for another user (approval access)
+                  </label>
+                )}
+
+                {forOther && (
+                  <div className="mt-3">
+                    <Label>Book for (search name or username)</Label>
+                    <Input
+                      value={forQuery}
+                      placeholder="e.g. sanyasi or Sanyasi Naidu"
+                      onChange={(e) => {
+                        setForQuery(e.target.value);
+                        setForUserId("");
+                        void searchUsers(e.target.value);
+                      }}
+                    />
+                    {forResults.length > 0 && (
+                      <div className="mt-2 flex flex-col gap-1">
+                        {forResults.map((u) => (
+                          <Button
+                            key={u.id}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="justify-start"
+                            onClick={() => {
+                              setForUserId(u.id);
+                              setForQuery(`${u.name} (@${u.username})`);
+                              setForResults([]);
+                            }}
+                          >
+                            {u.name} (@{u.username})
+                          </Button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-3">
+                  <Label htmlFor={`purpose-${facility.id}`}>
+                    Description {needPurpose ? "(required)" : "(optional)"}
+                  </Label>
+                  <Textarea
+                    id={`purpose-${facility.id}`}
+                    rows={2}
+                    placeholder={needPurpose ? "Describe the purpose of this booking" : "Optional — e.g. weekly staff meeting"}
+                    value={purpose}
+                    onChange={(e) => setPurpose(e.target.value)}
+                  />
+                </div>
+
+                <div className="mt-3">
+                  <Label>Attachment (PDF, max 1 MB, optional)</Label>
+                  <div className="mt-1 flex items-center gap-2">
+                    <Input type="file" accept="application/pdf,.pdf" onChange={(e) => pickFile(e.target.files?.[0] ?? null)} />
+                    {pdfName && (
+                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        <Paperclip className="h-3 w-3" /> {pdfName}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {error && <div className="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+                {success && <div className="mt-3 rounded-md border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">{success}</div>}
+
+                <DialogFooter className="mt-4">
+                  <Button
+                    type="submit"
+                    onClick={submit}
+                    disabled={busy || !selection || (forOther && !forUserId) || (needPurpose && !purpose.trim()) || (isLong && !canPoc)}
+                  >
+                    {busy ? "Booking…" : isLong ? "Book long slot" : forOther ? "Block slot" : "Book slot"}
+                  </Button>
+                </DialogFooter>
+              </CardContent>
+            </Card>
           )}
-
-          <div className="iipe-field" style={{ marginTop: 8 }}>
-            <label htmlFor={`purpose-${facility.id}`}>
-              Description {needPurpose ? "(required)" : "(optional)"}
-            </label>
-            <textarea
-              id={`purpose-${facility.id}`}
-              value={purpose}
-              rows={2}
-              placeholder={needPurpose ? "Describe the purpose of this booking" : "Optional — e.g. weekly staff meeting"}
-              onChange={(e) => setPurpose(e.target.value)}
-            />
-          </div>
-
-          <div className="iipe-field" style={{ marginTop: 8 }}>
-            <label>Attachment (PDF, max 1 MB, optional)</label>
-            <input type="file" accept="application/pdf,.pdf" onChange={(e) => pickFile(e.target.files?.[0] ?? null)} />
-            {pdfName && (
-              <div className="iipe-muted" style={{ fontSize: "0.85rem" }}>📎 {pdfName}</div>
-            )}
-          </div>
-
-          {error && <div className="iipe-alert danger" style={{ marginTop: 8 }}>{error}</div>}
-          {success && <div className="iipe-alert" style={{ marginTop: 8 }}>{success}</div>}
-
-          <div className="iipe-form-actions" style={{ marginTop: 10 }}>
-            <button
-              type="submit"
-              className="iipe-btn"
-              disabled={busy || (forOther && !forUserId) || (needPurpose && !purpose.trim()) || !validStart(startMin, duration)}
-            >
-              {busy ? "Booking…" : longMode ? "Book long slot" : forOther ? "Block slot" : "Book slot"}
-            </button>
-            <button type="button" className="iipe-btn ghost" onClick={() => setOpen(false)}>
-              Close
-            </button>
-          </div>
-        </form>
-      )}
-
-      {!open && (
-        <div className="iipe-form-actions" style={{ marginTop: 10 }}>
-          <button className="iipe-btn" onClick={() => setOpen(true)} disabled={!eligible && !canApprover}>
-            {longMode ? "Book long slot" : "Book a slot"}
-          </button>
-          <span className="iipe-muted" style={{ fontSize: "0.85rem" }}>
-            {buildingName} · {facility.name}
-          </span>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
