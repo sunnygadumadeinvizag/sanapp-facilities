@@ -131,7 +131,11 @@ export function TimeGrid({
     if (!cell || isDisabled(cell.date, cell.min)) return;
     dragFrom.current = cell;
     setDrag({ startDate: cell.date, startMin: cell.min, endDate: cell.date, endMin: cell.min + CELL_MIN });
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* pointer capture is optional — drag still works via move events */
+    }
   }
 
   function handlePointerMove(e: React.PointerEvent) {
