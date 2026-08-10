@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { cookies } from "next/headers";
+import { Breadcrumb } from "iipe-common-ui";
 import { prisma } from "@/lib/prisma";
 import { verifyAppSession } from "@/lib/session";
 import { AppShell } from "../../components/AppShell";
@@ -67,10 +68,14 @@ export default async function BuildingPage({
         { label: "Main (access)", href: process.env.MAIN_BASE_URL!, active: false },
       ]}
     >
-      <nav className="text-sm text-muted-foreground mb-3">
-        <a href="/" className="text-primary hover:underline">Facilities</a> <span className="mx-1">/</span>
-        <span className="font-medium text-foreground">{building.name}</span>
-      </nav>
+      <div className="mb-3">
+        <Breadcrumb
+          items={[
+            { label: "Facilities", href: "/" },
+            { label: building.name },
+          ]}
+        />
+      </div>
 
       <h1 className="iipe-page-title">{building.name}</h1>
       <p className="iipe-page-sub">
