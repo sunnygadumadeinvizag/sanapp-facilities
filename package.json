@@ -33,5 +33,12 @@
     "tsx": "^4.20.0",
     "typescript": "^5"
   },
-  "author": "Mr. Sanyasi Naidu Paila - EMPID: NTS1023"
+  "author": "Mr. Sanyasi Naidu Paila - EMPID: NTS1023",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/engines",
+      "esbuild",
+      "prisma"
+    ]
+  }
 }
