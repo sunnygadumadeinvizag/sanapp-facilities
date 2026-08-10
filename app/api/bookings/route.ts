@@ -193,12 +193,16 @@ export async function POST(request: NextRequest) {
   }
 
   // Eligibility — which SSO primary roles may book this facility.
-  if (facility.allowedRoles.length > 0) {
-    let eligibleRole: string | null = user.primaryRole;
+  // ADMINs can book any facility regardless of their own primary role.
+  // ON_BEHALF bookings check the FOR-user's eligibility, not the booker's.
+  if (facility.allowedRoles.length > 0 && user.role !== "ADMIN") {
+    let eligibleRole: string | null = null;
     if (type === "ON_BEHALF" && forUserId) {
       const forUser = await prisma.appUser.findUnique({ where: { id: forUserId } });
-      eligibleRole = forUser?.primaryRole ?? null;
       if (!forUser) return bad("The user this slot is being blocked for was not found", 400);
+      eligibleRole = forUser.primaryRole ?? null;
+    } else {
+      eligibleRole = user.primaryRole;
     }
     if (!eligibleRole || !facility.allowedRoles.includes(eligibleRole)) {
       return bad(
