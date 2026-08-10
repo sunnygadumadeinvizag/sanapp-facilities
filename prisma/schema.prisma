@@ -1,0 +1,111 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ------------------------------------------------------------------
+// IIPE App4 (Facilities Booking) — app4_db
+// Fully independent: its own users (provisioned from SSO identity),
+// its own roles, and its own business data.
+//
+// Time handling: ALL times are Indian Standard Time (IST, UTC+5:30).
+// Bookings store a plain calendar date (YYYY-MM-DD) plus start/end as
+// minutes-from-midnight IST. There is no DateTime arithmetic across
+// timezones anywhere — the server derives the current IST date/minute
+// with a fixed UTC+5:30 offset and compares integers only.
+// ------------------------------------------------------------------
+
+enum Role {
+  ADMIN // app-admin: manages buildings, facilities, eligibility, approvers, POCs
+  USER // regular user: self-service bookings of 15 min – 3 hours
+}
+
+enum BookingType {
+  SELF // user books for themselves (15 min – 3 hours)
+  ON_BEHALF // an APPROVER blocks a slot for someone else (15 min – 3 hours, description + optional PDF)
+  LONG // a POC blocks a slot longer than 3 hours on their own name (description + optional PDF)
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CANCELLED
+}
+
+model AppUser {
+  id          String    @id @default(uuid())
+  ssoUserId   String?   @unique // subject from the central SSO (set on first login)
+  username    String    @unique
+  name        String
+  email       String?
+  // Primary role from the central SSO (STAFF_TEACHING, STAFF_NON_TEACHING,
+  // STUDENT, SCHOLAR, GUEST). Stored at login so facility eligibility
+  // (which primary roles may book) can be enforced locally.
+  primaryRole String?
+  role        Role      @default(USER)
+  // Approval access — may block slots (≤ 3 hours) for other users.
+  isApprover  Boolean   @default(false)
+  // POC — may block slots longer than 3 hours on their own name.
+  isPoc       Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  bookings    Booking[] @relation("Booker")
+  onBehalf    Booking[] @relation("ForUser")
+}
+
+model Building {
+  id          String     @id @default(uuid())
+  name        String
+  code        String? // short code, e.g. "LIB", "MB"
+  description String?
+  location    String? // e.g. "Main Campus, Block A"
+  order       Int        @default(0)
+  active      Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  facilities  Facility[]
+}
+
+model Facility {
+  id           String    @id @default(uuid())
+  buildingId   String
+  building     Building  @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?
+  capacity     Int?
+  // Which SSO primary roles may book this facility. Empty = everyone.
+  allowedRoles String[]  @default([])
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  bookings     Booking[]
+}
+
+model Booking {
+  id         String        @id @default(uuid())
+  facilityId String
+  facility   Facility      @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  // The user who made the booking.
+  userId     String
+  user       AppUser       @relation("Booker", fields: [userId], references: [id], onDelete: Cascade)
+  // For ON_BEHALF bookings: the user the slot is blocked FOR (null for SELF/LONG).
+  forUserId  String?
+  forUser    AppUser?      @relation("ForUser", fields: [forUserId], references: [id], onDelete: SetNull)
+  type       BookingType   @default(SELF)
+  status     BookingStatus @default(CONFIRMED)
+  // Slot — IST. date is a plain YYYY-MM-DD; startMin/endMin are minutes
+  // from midnight IST (0..1440). endMin - startMin is the duration.
+  date       String
+  startMin   Int
+  endMin     Int
+  purpose    String? // required for ON_BEHALF and LONG bookings
+  // Optional PDF attachment (max 1 MB) — stored in the DB so it survives
+  // redeploys and stays inside the application's own database.
+  pdf        Bytes?
+  pdfName    String?
+  createdAt  DateTime      @default(now())
+
+  @@index([facilityId, date, status])
+  @@index([userId, date])
+}

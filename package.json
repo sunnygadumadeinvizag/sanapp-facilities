@@ -1,0 +1,37 @@
+{
+  "name": "iipe-app4",
+  "version": "0.1.0",
+  "private": true,
+  "description": "IIPE Facilities Booking — independent application #4 (own database, own roles). SSO for identity, Main for application access.",
+  "scripts": {
+    "dev": "next dev -p 3005",
+    "build": "next build",
+    "start": "next start -p 3005",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.9.1",
+    "@prisma/client": "7.9.1",
+    "dotenv": "^17.0.0",
+    "iipe-common-ui": "file:../iipe-common-ui",
+    "jose": "^6.0.11",
+    "next": "16.3.0",
+    "pg": "^8.16.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/pg": "^8.15.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "prisma": "7.9.1",
+    "tsx": "^4.20.0",
+    "typescript": "^5"
+  },
+  "author": "Mr. Sanyasi Naidu Paila - EMPID: NTS1023"
+}
