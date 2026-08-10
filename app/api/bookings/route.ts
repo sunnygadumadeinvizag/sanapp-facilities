@@ -42,6 +42,8 @@ const BOOKING_LIST_SELECT = {
   },
   user: { select: { id: true, username: true, name: true } },
   forUser: { select: { id: true, username: true, name: true } },
+  cancelledAt: true,
+  cancelReason: true,
   cancelledBy: { select: { id: true, username: true, name: true } },
 };
 
