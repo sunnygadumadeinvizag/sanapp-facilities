@@ -63,6 +63,9 @@ model Building {
   code        String? // short code, e.g. "LIB", "MB"
   description String?
   location    String? // e.g. "Main Campus, Block A"
+  // Default maximum booking duration (minutes) for every facility in this
+  // building. NULL = no building cap (facility/platform caps apply).
+  maxMinutes  Int?
   order       Int        @default(0)
   active      Boolean    @default(true)
   createdAt   DateTime   @default(now())
@@ -78,6 +81,11 @@ model Facility {
   capacity     Int?
   // Which SSO primary roles may book this facility. Empty = everyone.
   allowedRoles String[]  @default([])
+  // Maximum booking duration (minutes) for this facility, overriding the
+  // building cap. NULL = use the building cap / platform default.
+  maxMinutes   Int?
+  // Per-primary-role maximums (role -> maxMinutes), overriding maxMinutes.
+  roleLimits   FacilityRoleLimit[]
   active       Boolean   @default(true)
   createdAt    DateTime  @default(now())
   bookings     Booking[]
@@ -116,4 +124,14 @@ model Booking {
   cancelReason  String?
   @@index([facilityId, date, status])
   @@index([userId, date])
+}
+
+// Per-facility, per-primary-role maximum booking duration (minutes).
+model FacilityRoleLimit {
+  id         String   @id @default(uuid())
+  facilityId String
+  facility   Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  role       String // SSO primary role (STAFF_TEACHING, STUDENT, ...)
+  maxMinutes Int
+  @@unique([facilityId, role])
 }

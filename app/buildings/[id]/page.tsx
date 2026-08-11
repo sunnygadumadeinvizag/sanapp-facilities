@@ -7,7 +7,8 @@ import { AppShell } from "../../components/AppShell";
 import { BookingClient, type SlotItem } from "../../components/BookingClient";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { istDateKey, istMinute } from "@/lib/ist";
+import { istDateKey, istMinute, SLOT_MAX_MINUTES } from "@/lib/ist";
+import { capLabel } from "@/lib/limits";
 import { primaryRoleLabel } from "@/lib/labels";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +37,7 @@ export default async function BuildingPage({
         where: { active: true },
         orderBy: { name: "asc" },
         include: {
+          roleLimits: { select: { role: true, maxMinutes: true } },
           bookings: {
             where: { date: istDateKey(), status: "CONFIRMED" },
             orderBy: { startMin: "asc" },
@@ -114,6 +116,11 @@ export default async function BuildingPage({
                     {f.description && (
                       <p className="mt-1 text-sm text-muted-foreground">{f.description}</p>
                     )}
+                    {capLabel(f.maxMinutes ?? building.maxMinutes ?? SLOT_MAX_MINUTES) && (
+                      <p className="mt-1 text-xs font-medium text-primary">
+                        Max {capLabel(f.maxMinutes ?? building.maxMinutes ?? SLOT_MAX_MINUTES)} per booking
+                      </p>
+                    )}
                   </div>
                   {f.allowedRoles.length > 0 ? (
                     <Badge variant="secondary" className="whitespace-normal text-right">
@@ -137,6 +144,9 @@ export default async function BuildingPage({
                   }}
                   eligible={eligible}
                   nowMin={nowMin}
+                  maxMinutes={f.maxMinutes}
+                  buildingMaxMinutes={building.maxMinutes}
+                  roleLimits={(f as any).roleLimits ?? []}
                 />
               </Card>
             );

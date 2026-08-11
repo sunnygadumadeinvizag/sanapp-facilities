@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { verifyAppSession } from "@/lib/session";
+import { istDateKey } from "@/lib/ist";
 import { AppShell } from "../components/AppShell";
 import { AdminClient } from "../components/AdminClient";
 
@@ -34,7 +35,7 @@ export default async function AdminPage() {
         Manage buildings, facilities, who may book them (by primary role), and
         the users with approval access / POC designation.
       </p>
-      <AdminClient isAdmin={isAdmin} />
+      <AdminClient isAdmin={isAdmin} today={istDateKey()} />
     </AppShell>
   );
 }

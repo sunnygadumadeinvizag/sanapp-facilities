@@ -34,6 +34,12 @@ export async function POST(request: NextRequest) {
       description: body.description ? String(body.description).trim() : null,
       location: body.location ? String(body.location).trim() : null,
       order: Number.isInteger(body.order) ? Number(body.order) : 0,
+      maxMinutes:
+        body.maxMinutes === null || body.maxMinutes === ""
+          ? null
+          : Number.isInteger(body.maxMinutes) && Number(body.maxMinutes) > 0
+            ? Number(body.maxMinutes)
+            : null,
     },
   });
   return NextResponse.json({ building }, { status: 201 });
@@ -54,6 +60,11 @@ export async function PATCH(request: NextRequest) {
   if (typeof body.location === "string") data.location = body.location.trim() || null;
   if (Number.isInteger(body.order)) data.order = body.order;
   if (typeof body.active === "boolean") data.active = body.active;
+  if (body.maxMinutes === null || body.maxMinutes === "") {
+    data.maxMinutes = null;
+  } else if (Number.isInteger(body.maxMinutes) && Number(body.maxMinutes) > 0) {
+    data.maxMinutes = Number(body.maxMinutes);
+  }
 
   const building = await prisma.building.update({ where: { id }, data });
   return NextResponse.json({ building });

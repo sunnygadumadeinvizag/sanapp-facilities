@@ -28,6 +28,13 @@ function idx(date: string, min: number): number {
   return Math.floor(Date.parse(`${date}T00:00:00Z`) / 60000) + min;
 }
 
+function rangesOverlap(a: RangeSelection, b: RangeSelection): boolean {
+  return (
+    idx(a.startDate, a.startMin) < idx(b.endDate, b.endMin) &&
+    idx(a.endDate, a.endMin) > idx(b.startDate, b.startMin)
+  );
+}
+
 function dayName(dateKey: string): string {
   const d = new Date(`${dateKey}T00:00:00Z`);
   return d.toLocaleDateString("en-IN", { weekday: "short" });
@@ -40,7 +47,7 @@ function fmtDay(dateKey: string): string {
 
 /** Per-day fragments of a range that intersect the visible days. */
 function fragments(
-  range: { startDate: string; startMin: number; endDate: string; endMin: number },
+  range: RangeSelection,
   days: string[]
 ): { date: string; topMin: number; bottomMin: number }[] {
   const out: { date: string; topMin: number; bottomMin: number }[] = [];
@@ -60,15 +67,19 @@ function fragments(
 export function TimeGrid({
   days,
   bookings,
-  selection,
-  onSelect,
+  committed,
+  draft,
+  onDraft,
   nowMin,
   todayKey,
 }: {
   days: string[];
   bookings: BookingBlock[];
-  selection: RangeSelection | null;
-  onSelect: (sel: RangeSelection | null) => void;
+  /** Ranges the user has already locked in (blue overlays). */
+  committed: RangeSelection[];
+  /** The range currently being dragged / the latest drag result (can be null). */
+  draft: RangeSelection | null;
+  onDraft: (sel: RangeSelection | null) => void;
   nowMin: number;
   todayKey: string;
 }) {
@@ -76,12 +87,19 @@ export function TimeGrid({
   const [drag, setDrag] = useState<RangeSelection | null>(null);
   const dragFrom = useRef<{ date: string; min: number } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [overlap, setOverlap] = useState(false);
 
   const bookedFragments = useMemo(
     () => bookings.flatMap((b) => fragments(b, days).map((f) => ({ ...f, label: b.label, id: b.id }))),
     [bookings, days]
   );
+
+  /** True when a range conflicts with a booking, the past, or another committed range. */
+  function conflict(range: RangeSelection): boolean {
+    const inPast = idx(range.startDate, range.startMin) <= idx(todayKey, nowMin);
+    if (inPast) return true;
+    if (bookings.some((b) => rangesOverlap(range, b))) return true;
+    return committed.some((c) => c !== range && rangesOverlap(range, c));
+  }
 
   function cellFromEvent(e: React.PointerEvent): { date: string; min: number } | null {
     const el = containerRef.current;
@@ -102,10 +120,6 @@ export function TimeGrid({
     return bookings.some((b) => t >= idx(b.startDate, b.startMin) && t < idx(b.endDate, b.endMin));
   }
 
-  function rangesOverlap(r: RangeSelection, b: BookingBlock): boolean {
-    return idx(r.startDate, r.startMin) < idx(b.endDate, b.endMin) && idx(r.endDate, r.endMin) > idx(b.startDate, b.startMin);
-  }
-
   function normalizeAndCommit(a: { date: string; min: number }, b: { date: string; min: number }) {
     const ai = idx(a.date, a.min);
     const bi = idx(b.date, b.min);
@@ -119,10 +133,7 @@ export function TimeGrid({
       endMin: end.min + CELL_MIN, // include the whole end cell
     };
     if (idx(range.endDate, range.endMin) <= idx(range.startDate, range.startMin)) return;
-    const conflicts = bookings.some((bk) => rangesOverlap(range, bk));
-    const past = idx(range.startDate, range.startMin) <= idx(todayKey, nowMin);
-    setOverlap(conflicts || past);
-    onSelect(range);
+    onDraft(range);
   }
 
   function handlePointerDown(e: React.PointerEvent) {
@@ -167,12 +178,16 @@ export function TimeGrid({
   }
 
   const hours = Array.from({ length: 24 }, (_, h) => h * 60);
+  const live = drag ?? draft;
 
   return (
     <div>
       <p className="text-xs text-muted-foreground mb-2">
         <span className="inline-flex items-center gap-1.5 mr-3">
           <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary/25" /> Drag to select
+        </span>
+        <span className="inline-flex items-center gap-1.5 mr-3">
+          <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary" /> Selected
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span className="inline-block h-3 w-3 rounded-sm bg-red-500/20 border border-red-400" /> Already booked
@@ -257,15 +272,13 @@ export function TimeGrid({
               </div>
             ))}
 
-            {/* Selection overlay */}
-            {(drag ?? selection) && (
-              <SelectionOverlay
-                range={drag ?? selection!}
-                days={days}
-                colHeight={colHeight}
-                conflict={overlap}
-              />
-            )}
+            {/* Committed selection overlays */}
+            {committed.map((r, i) => (
+              <SelectionOverlay key={i} range={r} days={days} colHeight={colHeight} conflict={conflict(r)} solid />
+            ))}
+
+            {/* Current drag / draft overlay */}
+            {live && <SelectionOverlay range={live} days={days} colHeight={colHeight} conflict={conflict(live)} />}
           </div>
         </div>
       </div>
@@ -278,11 +291,13 @@ function SelectionOverlay({
   days,
   colHeight,
   conflict,
+  solid = false,
 }: {
   range: RangeSelection;
   days: string[];
   colHeight: number;
   conflict: boolean;
+  solid?: boolean;
 }) {
   const frags = fragments(range, days);
   return (
@@ -296,6 +311,9 @@ function SelectionOverlay({
             width: COL_W - 2,
             top: (f.topMin / (24 * 60)) * colHeight + 1,
             height: Math.max(12, ((f.bottomMin - f.topMin) / (24 * 60)) * colHeight - 2),
+            ...(solid
+              ? { borderColor: "var(--iipe-primary)", background: "color-mix(in srgb, var(--iipe-primary) 45%, transparent)" }
+              : {}),
             ...(conflict
               ? { borderColor: "var(--iipe-danger)", background: "color-mix(in srgb, var(--iipe-danger) 22%, transparent)" }
               : {}),

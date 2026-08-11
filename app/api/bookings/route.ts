@@ -11,6 +11,7 @@ import {
   slotDurationMin,
   slotIndex,
 } from "@/lib/ist";
+import { effectiveMaxMinutes } from "@/lib/limits";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -222,7 +223,7 @@ export async function POST(request: NextRequest) {
 
   const facility = await prisma.facility.findUnique({
     where: { id: facilityId },
-    include: { building: true },
+    include: { building: true, roleLimits: true },
   });
   if (!facility || !facility.active || !facility.building.active) {
     return bad("This facility is not available for booking");
@@ -302,6 +303,29 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // --- Configurable maximum duration (building / facility / role caps) ---
+  // For ON_BEHALF bookings the FOR-user's role limit applies (like eligibility).
+  let capRole = user.primaryRole ?? null;
+  if (type === "ON_BEHALF" && resolvedForUserId) {
+    const forUser = await prisma.appUser.findUnique({ where: { id: resolvedForUserId } });
+    capRole = forUser?.primaryRole ?? null;
+  }
+  const effMax = effectiveMaxMinutes(
+    facility,
+    facility.building,
+    facility.roleLimits.map((r) => ({ role: r.role, maxMinutes: r.maxMinutes })),
+    capRole
+  );
+  if (duration > effMax && user.role !== "ADMIN") {
+    const fmtMax =
+      effMax % 60 === 0
+        ? `${effMax / 60} hour${effMax === 60 ? "" : "s"}`
+        : `${effMax} minutes`;
+    return bad(
+      `The maximum booking duration for this facility is ${fmtMax}. Please pick a shorter range — or ask the app administrator to raise the limit.`
+    );
+  }
+
   // The slot must not be in the past (server time is IST).
   const nowIdx = slotIndex(istDateKey(), istMinute());
   if (startIdx <= nowIdx) {
@@ -348,45 +372,158 @@ export async function POST(request: NextRequest) {
   );
 }
 
-export async function DELETE(request: NextRequest) {
+
+/**
+ * PATCH — edit a future booking: change the time range and/or description.
+ * Allowed for the booker or an app ADMIN. Re-validates duration limits and
+ * conflicts (ignoring this booking itself).
+ */
+export async function PATCH(request: NextRequest) {
   const user = await currentUser();
   if (!user) return bad("unauthorized", 401);
 
-  // Reason travels as a query param (DELETE bodies are unreliable).
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get("id");
-  const reason = (searchParams.get("reason") ?? "").trim().slice(0, 500) || null;
+  const body = await request.json().catch(() => ({}));
+  const id = String(body.id ?? "").trim();
   if (!id) return bad("id is required");
 
   const booking = await prisma.booking.findUnique({ where: { id } });
   if (!booking) return bad("Booking not found", 404);
-  if (booking.status === "CANCELLED") return bad("This booking is already cancelled", 409);
+  if (booking.status === "CANCELLED") return bad("A cancelled booking cannot be edited", 409);
 
-  // Who may cancel: the booker, the user the slot is blocked FOR (their own
-  // blocked slot), or an app ADMIN. Everyone else is refused.
-  const canCancel =
-    booking.userId === user.id || booking.forUserId === user.id || user.role === "ADMIN";
-  if (!canCancel) {
-    return bad("Only the booker, the user it is blocked for, or an app admin can cancel this booking", 403);
+  const canEdit = booking.userId === user.id || user.role === "ADMIN";
+  if (!canEdit) {
+    return bad("Only the booker or an app admin can edit this booking", 403);
   }
 
-  // Only future slots can be cancelled.
   if (slotIndex(booking.date, booking.startMin) <= slotIndex(istDateKey(), istMinute())) {
-    return bad("A slot that has already started cannot be cancelled");
+    return bad("A slot that has already started cannot be edited");
+  }
+
+  // New slot range (defaults to the current one).
+  const startDate = String(body.startDate ?? booking.date).trim();
+  let endDate = String(body.endDate ?? (booking.endDate || booking.date)).trim();
+  const startMin = body.startMin === undefined ? booking.startMin : Number(body.startMin);
+  const endMin = body.endMin === undefined ? booking.endMin : Number(body.endMin);
+  const purpose =
+    body.purpose === undefined ? booking.purpose : String(body.purpose ?? "").trim() || null;
+
+  if (!DATE_RE.test(startDate)) return bad("start date (YYYY-MM-DD) is invalid");
+  if (!endDate) endDate = startDate;
+  if (endDate < startDate) return bad("The end date cannot be before the start date");
+  if (!Number.isInteger(startMin) || !Number.isInteger(endMin) || startMin < 0 || endMin > 1440) {
+    return bad("Invalid slot times");
+  }
+
+  const startIdx = slotIndex(startDate, startMin);
+  const endIdx = slotIndex(endDate, endMin);
+  if (endIdx <= startIdx) return bad("The slot end must be after its start");
+  const duration = endIdx - startIdx;
+  if (duration < SLOT_MIN_MINUTES) {
+    return bad(`Minimum booking duration is ${SLOT_MIN_MINUTES} minutes`);
+  }
+  if (startIdx <= slotIndex(istDateKey(), istMinute())) {
+    return bad("You cannot move a booking into the past (times are Indian Standard Time)");
+  }
+
+  const facility = await prisma.facility.findUnique({
+    where: { id: booking.facilityId },
+    include: { building: true, roleLimits: true },
+  });
+  if (!facility || !facility.active || !facility.building.active) {
+    return bad("This facility is not available for booking");
+  }
+
+  // Duration limits use the FOR-user's role for on-behalf blocks.
+  let capRole = user.primaryRole ?? null;
+  if (booking.type === "ON_BEHALF" && booking.forUserId) {
+    const forUser = await prisma.appUser.findUnique({ where: { id: booking.forUserId } });
+    capRole = forUser?.primaryRole ?? null;
+  }
+  const effMax = effectiveMaxMinutes(
+    facility,
+    facility.building,
+    facility.roleLimits.map((r) => ({ role: r.role, maxMinutes: r.maxMinutes })),
+    capRole
+  );
+  if (duration > effMax && user.role !== "ADMIN") {
+    const fmtMax =
+      effMax % 60 === 0
+        ? `${effMax / 60} hour${effMax === 60 ? "" : "s"}`
+        : `${effMax} minutes`;
+    return bad(
+      `The maximum booking duration for this facility is ${fmtMax}. Please pick a shorter range — or ask the app administrator to raise the limit.`
+    );
+  }
+
+  if (await hasConflict(facility.id, startDate, endDate, startMin, endMin, id)) {
+    return bad("That time range is already booked — please pick a free range", 409);
   }
 
   const updated = await prisma.booking.update({
     where: { id },
-    data: {
-      status: "CANCELLED",
-      cancelledAt: new Date(),
-      cancelledById: user.id,
-      cancelReason: reason,
-    },
+    data: { date: startDate, endDate, startMin, endMin, purpose },
     select: BOOKING_LIST_SELECT,
   });
   return NextResponse.json({
     booking: { ...updated, pdf: Boolean(updated.pdfName) },
-    message: "Booking cancelled",
+    message: "Booking updated",
+  });
+}
+
+export async function DELETE(request: NextRequest) {
+  const user = await currentUser();
+  if (!user) return bad("unauthorized", 401);
+
+  // Reason travels as a query param (DELETE bodies are unreliable). Accept
+  // one id, or several comma-separated ids for bulk cancellation.
+  const { searchParams } = new URL(request.url);
+  const idParam = searchParams.get("id");
+  const reason = (searchParams.get("reason") ?? "").trim().slice(0, 500) || null;
+  if (!idParam) return bad("id is required");
+  const ids = idParam.split(",").map((s) => s.trim()).filter(Boolean);
+
+  const rows = await prisma.booking.findMany({ where: { id: { in: ids } } });
+  if (rows.length === 0) return bad("No matching bookings found", 404);
+
+  const nowIdx = slotIndex(istDateKey(), istMinute());
+  const results = [];
+  const skipped = [];
+
+  for (const booking of rows) {
+    // Who may cancel: the booker, the user the slot is blocked FOR (their own
+    // blocked slot), or an app ADMIN.
+    const canCancel =
+      booking.userId === user.id || booking.forUserId === user.id || user.role === "ADMIN";
+    if (!canCancel) {
+      skipped.push({ id: booking.id, reason: "not authorized" });
+      continue;
+    }
+    if (booking.status === "CANCELLED") {
+      skipped.push({ id: booking.id, reason: "already cancelled" });
+      continue;
+    }
+    if (slotIndex(booking.date, booking.startMin) <= nowIdx) {
+      skipped.push({ id: booking.id, reason: "already started" });
+      continue;
+    }
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: {
+        status: "CANCELLED",
+        cancelledAt: new Date(),
+        cancelledById: user.id,
+        cancelReason: reason,
+      },
+    });
+    results.push(booking.id);
+  }
+
+  return NextResponse.json({
+    cancelled: results,
+    skipped,
+    message:
+      results.length === 0
+        ? "Nothing was cancelled"
+        : `${results.length} booking${results.length === 1 ? "" : "s"} cancelled`,
   });
 }

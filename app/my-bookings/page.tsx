@@ -31,7 +31,7 @@ export default async function MyBookingsPage() {
         Every slot is Indian Standard Time (IST). You can cancel a booking until
         its start time is reached.
       </p>
-      <MyBookingsClient today={istDateKey()} />
+      <MyBookingsClient today={istDateKey()} canEdit />
     </AppShell>
   );
 }

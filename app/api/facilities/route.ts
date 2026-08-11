@@ -11,7 +11,10 @@ export async function GET(request: NextRequest) {
   const facilities = await prisma.facility.findMany({
     where: buildingId ? { buildingId, active: true } : { active: true },
     orderBy: { name: "asc" },
-    include: { building: { select: { id: true, name: true } } },
+    include: {
+      building: { select: { id: true, name: true, maxMinutes: true } },
+      roleLimits: { select: { role: true, maxMinutes: true } },
+    },
   });
   return NextResponse.json({ facilities });
 }
@@ -36,6 +39,22 @@ export async function POST(request: NextRequest) {
     ? body.allowedRoles.map(String).filter(Boolean)
     : [];
 
+  const maxMinutes =
+    body.maxMinutes === null || body.maxMinutes === ""
+      ? null
+      : Number.isInteger(body.maxMinutes) && Number(body.maxMinutes) > 0
+        ? Number(body.maxMinutes)
+        : null;
+
+  const roleLimits = Array.isArray(body.roleLimits)
+    ? body.roleLimits
+        .map((r: any) => ({
+          role: String(r.role ?? "").trim(),
+          maxMinutes: Number(r.maxMinutes),
+        }))
+        .filter((r: { role: string; maxMinutes: number }) => r.role && Number.isInteger(r.maxMinutes) && r.maxMinutes > 0)
+    : [];
+
   const facility = await prisma.facility.create({
     data: {
       buildingId,
@@ -43,6 +62,8 @@ export async function POST(request: NextRequest) {
       description: body.description ? String(body.description).trim() : null,
       capacity: Number.isInteger(body.capacity) && Number(body.capacity) > 0 ? Number(body.capacity) : null,
       allowedRoles,
+      maxMinutes,
+      roleLimits: { create: roleLimits },
     },
   });
   return NextResponse.json({ facility }, { status: 201 });
@@ -65,9 +86,28 @@ export async function PATCH(request: NextRequest) {
   if (Array.isArray(body.allowedRoles)) {
     data.allowedRoles = body.allowedRoles.map(String).filter(Boolean);
   }
+  if (body.maxMinutes === null || body.maxMinutes === "") {
+    data.maxMinutes = null;
+  } else if (Number.isInteger(body.maxMinutes) && Number(body.maxMinutes) > 0) {
+    data.maxMinutes = Number(body.maxMinutes);
+  }
   if (typeof body.active === "boolean") data.active = body.active;
 
   const facility = await prisma.facility.update({ where: { id }, data });
+
+  // Replace per-role limits when provided: delete the old set, create the new.
+  if (Array.isArray(body.roleLimits)) {
+    const roleLimits = body.roleLimits
+      .map((r: any) => ({ role: String(r.role ?? "").trim(), maxMinutes: Number(r.maxMinutes) }))
+      .filter((r: { role: string; maxMinutes: number }) => r.role && Number.isInteger(r.maxMinutes) && r.maxMinutes > 0);
+    await prisma.$transaction([
+      prisma.facilityRoleLimit.deleteMany({ where: { facilityId: id } }),
+      ...roleLimits.map((r: { role: string; maxMinutes: number }) =>
+        prisma.facilityRoleLimit.create({ data: { facilityId: id, role: r.role, maxMinutes: r.maxMinutes } })
+      ),
+    ]);
+  }
+
   return NextResponse.json({ facility });
 }
 

@@ -1,7 +1,7 @@
 "use client";
 import { apiPath } from "iipe-common-ui";
 import { useCallback, useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { CalendarClock, FileText, Loader2, Pencil, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,10 +11,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { fmtIstDateTime, fmtSlotRange } from "@/lib/ist";
+import { EditBookingDialog } from "./EditBookingDialog";
+import { fmtIstDateTime, fmtMin, fmtSlotRange, slotDurationMin } from "@/lib/ist";
+import { capLabel } from "@/lib/limits";
 import { PRIMARY_ROLE_LABELS } from "@/lib/labels";
 
 const PRIMARY_ROLES = ["STAFF_TEACHING", "STAFF_NON_TEACHING", "STUDENT", "SCHOLAR", "GUEST"];
+
+type RoleLimit = { role: string; maxMinutes: number };
 
 type Building = {
   id: string;
@@ -24,6 +28,7 @@ type Building = {
   location: string | null;
   order: number;
   active: boolean;
+  maxMinutes: number | null;
   facilities: { id: string; name: string }[];
 };
 
@@ -33,8 +38,10 @@ type Facility = {
   description: string | null;
   capacity: number | null;
   allowedRoles: string[];
+  maxMinutes: number | null;
+  roleLimits: RoleLimit[];
   active: boolean;
-  building: { id: string; name: string };
+  building: { id: string; name: string; maxMinutes: number | null };
 };
 
 type LocalUser = {
@@ -58,7 +65,7 @@ type AdminBooking = {
   endMin: number;
   purpose: string | null;
   pdf: boolean;
-  facility: { name: string; building: { name: string } };
+  facility: { id: string; name: string; building: { name: string } };
   user: { name: string; username: string };
   forUser: { name: string; username: string } | null;
   cancelledAt: string | null;
@@ -66,7 +73,7 @@ type AdminBooking = {
   cancelledBy: { name: string; username: string } | null;
 };
 
-export function AdminClient({ isAdmin }: { isAdmin: boolean }) {
+export function AdminClient({ isAdmin, today }: { isAdmin: boolean; today: string }) {
   const [error, setError] = useState<string | null>(null);
 
   if (!isAdmin) {
@@ -94,7 +101,7 @@ export function AdminClient({ isAdmin }: { isAdmin: boolean }) {
         <TabsContent value="buildings"><BuildingsTab onError={setError} /></TabsContent>
         <TabsContent value="facilities"><FacilitiesTab onError={setError} /></TabsContent>
         <TabsContent value="users"><UsersTab onError={setError} /></TabsContent>
-        <TabsContent value="bookings"><BookingsTab onError={setError} /></TabsContent>
+        <TabsContent value="bookings"><BookingsTab onError={setError} today={today} /></TabsContent>
       </Tabs>
     </div>
   );
@@ -108,6 +115,9 @@ function BuildingsTab({ onError }: { onError: (s: string | null) => void }) {
   const [code, setCode] = useState("");
   const [description, setDescription] = useState("");
   const [location, setLocation] = useState("");
+  const [maxMinutes, setMaxMinutes] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editMax, setEditMax] = useState("");
 
   async function load() {
     const res = await fetch(apiPath("/api/buildings"), { cache: "no-store" });
@@ -123,23 +133,29 @@ function BuildingsTab({ onError }: { onError: (s: string | null) => void }) {
     const res = await fetch(apiPath("/api/buildings"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name, code: code.trim() || null, description: description.trim() || null, location: location.trim() || null }),
+      body: JSON.stringify({
+        name,
+        code: code.trim() || null,
+        description: description.trim() || null,
+        location: location.trim() || null,
+        maxMinutes: maxMinutes === "" ? null : Number(maxMinutes),
+      }),
     });
     const data = await res.json();
     if (!res.ok) return onError(data.error ?? "Could not create building");
-    setName(""); setCode(""); setDescription(""); setLocation("");
+    setName(""); setCode(""); setDescription(""); setLocation(""); setMaxMinutes("");
     onError(null);
     await load();
   }
 
-  async function deactivate(b: Building) {
+  async function patch(id: string, fields: Record<string, unknown>) {
     const res = await fetch(apiPath("/api/buildings"), {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id: b.id, active: false }),
+      body: JSON.stringify({ id, ...fields }),
     });
     const data = await res.json();
-    if (!res.ok) return onError(data.error ?? "Could not deactivate building");
+    if (!res.ok) return onError(data.error ?? "Could not update building");
     onError(null);
     await load();
   }
@@ -150,7 +166,7 @@ function BuildingsTab({ onError }: { onError: (s: string | null) => void }) {
         <CardContent className="p-5">
           <h3 className="mb-3 font-semibold">Add a building</h3>
           <form onSubmit={create} className="grid gap-3">
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-3">
               <div className="grid gap-1.5">
                 <Label>Name *</Label>
                 <Input value={name} onChange={(e) => setName(e.target.value)} required placeholder="e.g. Hostel Block" />
@@ -158,6 +174,10 @@ function BuildingsTab({ onError }: { onError: (s: string | null) => void }) {
               <div className="grid gap-1.5">
                 <Label>Code</Label>
                 <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. HB" />
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Default max booking (minutes)</Label>
+                <Input type="number" min={15} step={15} value={maxMinutes} onChange={(e) => setMaxMinutes(e.target.value)} placeholder="blank = 3 h (180)" />
               </div>
             </div>
             <div className="grid gap-1.5">
@@ -182,11 +202,43 @@ function BuildingsTab({ onError }: { onError: (s: string | null) => void }) {
                 <p className="text-sm text-muted-foreground">
                   {b.facilities.length} facilities · {b.location ?? "no location"}
                 </p>
+                <p className="mt-1 text-xs font-medium text-primary">
+                  Max {b.maxMinutes ? capLabel(b.maxMinutes) : "3 h (default)"} per booking per facility
+                </p>
                 {b.description && <p className="mt-1 text-sm text-muted-foreground">{b.description}</p>}
+                {editing === b.id && (
+                  <form
+                    className="mt-3 flex flex-wrap items-end gap-2"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void patch(b.id, { maxMinutes: editMax === "" ? null : Number(editMax) });
+                      setEditing(null);
+                    }}
+                  >
+                    <div className="grid gap-1">
+                      <Label className="text-xs">Default max booking (minutes)</Label>
+                      <Input type="number" min={15} step={15} className="w-44" value={editMax} onChange={(e) => setEditMax(e.target.value)} placeholder="blank = 3 h (180)" />
+                    </div>
+                    <Button size="sm">Save</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+                  </form>
+                )}
               </div>
-              <Button variant="outline" size="sm" className="text-red-600" onClick={() => deactivate(b)}>
-                Deactivate
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setEditing(editing === b.id ? null : b.id);
+                    setEditMax(b.maxMinutes ? String(b.maxMinutes) : "");
+                  }}
+                >
+                  <Pencil className="h-3.5 w-3.5" /> Duration
+                </Button>
+                <Button variant="outline" size="sm" className="text-red-600" onClick={() => patch(b.id, { active: false })}>
+                  Deactivate
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -205,6 +257,10 @@ function FacilitiesTab({ onError }: { onError: (s: string | null) => void }) {
   const [description, setDescription] = useState("");
   const [capacity, setCapacity] = useState("");
   const [allowedRoles, setAllowedRoles] = useState<string[]>([]);
+  const [maxMinutes, setMaxMinutes] = useState("");
+  const [roleLimits, setRoleLimits] = useState<Record<string, string>>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<Record<string, unknown>>({});
 
   async function loadBuildings() {
     const res = await fetch(apiPath("/api/buildings"), { cache: "no-store" });
@@ -236,25 +292,61 @@ function FacilitiesTab({ onError }: { onError: (s: string | null) => void }) {
     const res = await fetch(apiPath("/api/facilities"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ buildingId, name, description: description.trim() || null, capacity: capacity ? Number(capacity) : null, allowedRoles }),
+      body: JSON.stringify({
+        buildingId,
+        name,
+        description: description.trim() || null,
+        capacity: capacity ? Number(capacity) : null,
+        allowedRoles,
+        maxMinutes: maxMinutes === "" ? null : Number(maxMinutes),
+        roleLimits: Object.entries(roleLimits)
+          .filter(([, v]) => v !== "" && Number(v) > 0)
+          .map(([role, v]) => ({ role, maxMinutes: Number(v) })),
+      }),
     });
     const data = await res.json();
     if (!res.ok) return onError(data.error ?? "Could not create facility");
-    setName(""); setDescription(""); setCapacity(""); setAllowedRoles([]);
+    setName(""); setDescription(""); setCapacity(""); setAllowedRoles([]); setMaxMinutes(""); setRoleLimits({});
     onError(null);
     await loadFacilities(buildingId);
   }
 
-  async function deactivate(f: Facility) {
+  async function patchFacility(id: string, fields: Record<string, unknown>) {
     const res = await fetch(apiPath("/api/facilities"), {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id: f.id, active: false }),
+      body: JSON.stringify({ id, ...fields }),
     });
     const data = await res.json();
-    if (!res.ok) return onError(data.error ?? "Could not deactivate facility");
+    if (!res.ok) return onError(data.error ?? "Could not update facility");
     onError(null);
     await loadFacilities(buildingId);
+  }
+
+  function startEdit(f: Facility) {
+    setEditingId(f.id);
+    setEditForm({
+      name: f.name,
+      description: f.description ?? "",
+      capacity: f.capacity ? String(f.capacity) : "",
+      allowedRoles: f.allowedRoles,
+      maxMinutes: f.maxMinutes ? String(f.maxMinutes) : "",
+      roleLimits: Object.fromEntries(f.roleLimits.map((r) => [r.role, String(r.maxMinutes)])),
+    });
+  }
+
+  function saveEdit(f: Facility) {
+    void patchFacility(f.id, {
+      name: String(editForm.name ?? f.name).trim() || f.name,
+      description: String(editForm.description ?? "").trim() || null,
+      capacity: editForm.capacity === "" ? null : Number(editForm.capacity),
+      allowedRoles: Array.isArray(editForm.allowedRoles) ? editForm.allowedRoles : f.allowedRoles,
+      maxMinutes: editForm.maxMinutes === "" || editForm.maxMinutes === null ? null : Number(editForm.maxMinutes),
+      roleLimits: Object.entries((editForm.roleLimits as Record<string, string>) ?? {})
+        .filter(([, v]) => v !== "" && Number(v) > 0)
+        .map(([role, v]) => ({ role, maxMinutes: Number(v) })),
+    });
+    setEditingId(null);
   }
 
   return (
@@ -263,7 +355,7 @@ function FacilitiesTab({ onError }: { onError: (s: string | null) => void }) {
         <CardContent className="p-5">
           <h3 className="mb-3 font-semibold">Add a facility</h3>
           <form onSubmit={create} className="grid gap-3">
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-4">
               <div className="grid gap-1.5">
                 <Label>Building *</Label>
                 <Select value={buildingId} onValueChange={setBuildingId}>
@@ -281,6 +373,10 @@ function FacilitiesTab({ onError }: { onError: (s: string | null) => void }) {
                 <Label>Capacity</Label>
                 <Input type="number" min={1} value={capacity} onChange={(e) => setCapacity(e.target.value)} />
               </div>
+              <div className="grid gap-1.5">
+                <Label>Max booking (minutes)</Label>
+                <Input type="number" min={15} step={15} value={maxMinutes} onChange={(e) => setMaxMinutes(e.target.value)} placeholder="blank = building/3 h" />
+              </div>
             </div>
             <div className="grid gap-1.5">
               <Label>Description</Label>
@@ -297,36 +393,142 @@ function FacilitiesTab({ onError }: { onError: (s: string | null) => void }) {
                 ))}
               </div>
             </div>
+            <div className="grid gap-1.5">
+              <Label>Per-role max duration (minutes) — optional, overrides the facility max</Label>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                {PRIMARY_ROLES.map((r) => (
+                  <div key={r} className="grid gap-1">
+                    <Label className="text-xs">{PRIMARY_ROLE_LABELS[r] ?? r}</Label>
+                    <Input type="number" min={15} step={15} placeholder="blank = no cap"
+                      value={roleLimits[r] ?? ""}
+                      onChange={(e) => setRoleLimits((p) => ({ ...p, [r]: e.target.value }))} />
+                  </div>
+                ))}
+              </div>
+            </div>
             <div><Button type="submit">Add facility</Button></div>
           </form>
         </CardContent>
       </Card>
 
-      {facilities.map((f) => (
-        <Card key={f.id}>
-          <CardContent className="p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <h3 className="font-semibold">{f.name}</h3>
-                <p className="text-sm text-muted-foreground">
-                  {f.building.name}{f.capacity ? ` · capacity ${f.capacity}` : ""}
-                </p>
-                {f.description && <p className="mt-1 text-sm text-muted-foreground">{f.description}</p>}
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {f.allowedRoles.length === 0 ? (
-                    <Badge>Open to all</Badge>
-                  ) : (
-                    f.allowedRoles.map((r) => <Badge key={r} variant="secondary">{PRIMARY_ROLE_LABELS[r] ?? r}</Badge>)
+      {facilities.map((f) => {
+        const effMax = f.maxMinutes ?? f.building.maxMinutes;
+        return (
+          <Card key={f.id}>
+            <CardContent className="p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <h3 className="font-semibold">{f.name}</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {f.building.name}{f.capacity ? ` · capacity ${f.capacity}` : ""}
+                  </p>
+                  <p className="mt-1 text-xs font-medium text-primary">
+                    Max {effMax ? capLabel(effMax) : "3 h (default)"} per booking
+                    {f.maxMinutes && f.building.maxMinutes && f.maxMinutes !== f.building.maxMinutes
+                      ? ` (building default: ${capLabel(f.building.maxMinutes)})`
+                      : ""}
+                  </p>
+                  {f.roleLimits.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {f.roleLimits.map((rl) => (
+                        <Badge key={rl.role} variant="outline" className="text-primary">
+                          {PRIMARY_ROLE_LABELS[rl.role] ?? rl.role}: {capLabel(rl.maxMinutes)}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  {f.description && <p className="mt-1 text-sm text-muted-foreground">{f.description}</p>}
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {f.allowedRoles.length === 0 ? (
+                      <Badge>Open to all</Badge>
+                    ) : (
+                      f.allowedRoles.map((r) => <Badge key={r} variant="secondary">{PRIMARY_ROLE_LABELS[r] ?? r}</Badge>)
+                    )}
+                  </div>
+
+                  {editingId === f.id && (
+                    <div className="mt-3 grid gap-3 rounded-md border p-3">
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="grid gap-1">
+                          <Label className="text-xs">Name</Label>
+                          <Input value={String(editForm.name ?? "")} onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))} />
+                        </div>
+                        <div className="grid gap-1">
+                          <Label className="text-xs">Capacity</Label>
+                          <Input type="number" min={1} value={String(editForm.capacity ?? "")} onChange={(e) => setEditForm((p) => ({ ...p, capacity: e.target.value }))} />
+                        </div>
+                        <div className="grid gap-1">
+                          <Label className="text-xs">Max booking (minutes)</Label>
+                          <Input type="number" min={15} step={15} value={String(editForm.maxMinutes ?? "")} onChange={(e) => setEditForm((p) => ({ ...p, maxMinutes: e.target.value }))} placeholder="blank = building/3 h" />
+                        </div>
+                      </div>
+                      <div className="grid gap-1">
+                        <Label className="text-xs">Description</Label>
+                        <Textarea rows={2} value={String(editForm.description ?? "")} onChange={(e) => setEditForm((p) => ({ ...p, description: e.target.value }))} />
+                      </div>
+                      <div className="grid gap-1">
+                        <Label className="text-xs">Who may book</Label>
+                        <div className="flex flex-wrap gap-3">
+                          {PRIMARY_ROLES.map((r) => {
+                            const arr = (editForm.allowedRoles as string[]) ?? [];
+                            return (
+                              <label key={r} className="flex items-center gap-1.5 text-xs">
+                                <Checkbox
+                                  checked={arr.includes(r)}
+                                  onCheckedChange={(v) =>
+                                    setEditForm((p) => ({
+                                      ...p,
+                                      allowedRoles: v ? [...arr, r] : arr.filter((x) => x !== r),
+                                    }))
+                                  }
+                                />
+                                {PRIMARY_ROLE_LABELS[r] ?? r}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="grid gap-1">
+                        <Label className="text-xs">Per-role max (minutes)</Label>
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                          {PRIMARY_ROLES.map((r) => (
+                            <Input
+                              key={r}
+                              type="number"
+                              min={15}
+                              step={15}
+                              placeholder={PRIMARY_ROLE_LABELS[r] ?? r}
+                              value={String(((editForm.roleLimits as Record<string, string>) ?? {})[r] ?? "")}
+                              onChange={(e) =>
+                                setEditForm((p) => ({
+                                  ...p,
+                                  roleLimits: { ...((p.roleLimits as Record<string, string>) ?? {}), [r]: e.target.value },
+                                }))
+                              }
+                            />
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => saveEdit(f)}>Save changes</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>Cancel</Button>
+                      </div>
+                    </div>
                   )}
                 </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => (editingId === f.id ? setEditingId(null) : startEdit(f))}>
+                    <Pencil className="h-3.5 w-3.5" /> Edit
+                  </Button>
+                  <Button variant="outline" size="sm" className="text-red-600" onClick={() => patchFacility(f.id, { active: false })}>
+                    Deactivate
+                  </Button>
+                </div>
               </div>
-              <Button variant="outline" size="sm" className="text-red-600" onClick={() => deactivate(f)}>
-                Deactivate
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }
@@ -400,9 +602,11 @@ function UsersTab({ onError }: { onError: (s: string | null) => void }) {
 
 /* -------------------------------- Bookings -------------------------------- */
 
-function BookingsTab({ onError }: { onError: (s: string | null) => void }) {
+function BookingsTab({ onError, today }: { onError: (s: string | null) => void; today: string }) {
   const [bookings, setBookings] = useState<AdminBooking[]>([]);
   const [statusFilter, setStatusFilter] = useState("ALL");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [edit, setEdit] = useState<AdminBooking | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch(apiPath("/api/bookings?all=1"), { cache: "no-store" });
@@ -414,77 +618,150 @@ function BookingsTab({ onError }: { onError: (s: string | null) => void }) {
     void load();
   }, [load]);
 
-  async function cancel(id: string) {
-    const reason = window.prompt("Reason for cancelling (optional):") ?? null;
-    if (reason === null) return; // user dismissed the prompt
-    const res = await fetch(apiPath(`/api/bookings?id=${id}&reason=${encodeURIComponent(reason)}`), { method: "DELETE" });
+  async function cancelMany(ids: string[]) {
+    if (ids.length === 0) return;
+    const reason = window.prompt(`Reason for cancelling ${ids.length} booking(s) (optional):`) ?? null;
+    if (reason === null) return;
+    const res = await fetch(
+      apiPath(`/api/bookings?id=${ids.join(",")}&reason=${encodeURIComponent(reason)}`),
+      { method: "DELETE" }
+    );
     const data = await res.json();
     if (!res.ok) return onError(data.error ?? "Could not cancel");
     onError(null);
+    setSelected(new Set());
     await load();
   }
 
   const visible = statusFilter === "ALL" ? bookings : bookings.filter((b) => b.status === statusFilter);
+  const cancellableVisible = visible.filter((b) => b.status === "CONFIRMED");
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    const ids = cancellableVisible.map((b) => b.id);
+    setSelected((prev) => (prev.size === ids.length && ids.length > 0 ? new Set() : new Set(ids)));
+  }
 
   if (bookings.length === 0) return <p className="text-muted-foreground">No bookings yet.</p>;
 
   return (
     <div className="grid gap-3">
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="text-muted-foreground">Status:</span>
-        {["ALL", "CONFIRMED", "CANCELLED"].map((st) => (
-          <Button
-            key={st}
-            size="sm"
-            variant={statusFilter === st ? "default" : "outline"}
-            onClick={() => setStatusFilter(st)}
-          >
-            {st === "ALL" ? "All" : st === "CONFIRMED" ? "Confirmed" : "Cancelled"}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-muted-foreground">Status:</span>
+          {["ALL", "CONFIRMED", "CANCELLED"].map((st) => (
+            <Button
+              key={st}
+              size="sm"
+              variant={statusFilter === st ? "default" : "outline"}
+              onClick={() => setStatusFilter(st)}
+            >
+              {st === "ALL" ? "All" : st === "CONFIRMED" ? "Confirmed" : "Cancelled"}
+            </Button>
+          ))}
+        </div>
+        <span className="ml-auto" />
+        {selected.size > 0 && (
+          <Button variant="destructive" size="sm" onClick={() => cancelMany([...selected])}>
+            <Trash2 className="h-3.5 w-3.5" /> Cancel selected ({selected.size})
           </Button>
-        ))}
+        )}
       </div>
+
       {visible.length === 0 && <p className="text-muted-foreground">Nothing here.</p>}
-      {visible.map((b) => (
-        <Card key={b.id}>
-          <CardContent className="p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="font-semibold">{b.facility.building.name} — {b.facility.name}</div>
-                <div className="text-sm text-muted-foreground">
-                  {fmtSlotRange(b.date, b.startMin, b.endDate, b.endMin)} · {b.user.name} (@{b.user.username})
-                  {b.forUser ? ` → for ${b.forUser.name}` : ""}
-                </div>
-                {b.purpose && <p className="mt-1 text-sm">{b.purpose}</p>}
-                {b.status === "CANCELLED" && (
-                  <div className="mt-1 text-xs text-red-600">
-                    Cancelled{b.cancelledBy ? ` by ${b.cancelledBy.name} (@${b.cancelledBy.username})` : ""}
-                    {b.cancelledAt ? ` on ${fmtIstDateTime(b.cancelledAt)}` : ""}
-                    {b.cancelReason ? ` — ${b.cancelReason}` : ""}
+      {visible.length > 0 && (
+        <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+          <Checkbox
+            checked={selected.size === cancellableVisible.length && cancellableVisible.length > 0}
+            onCheckedChange={() => toggleAll()}
+          />
+          Select all confirmed — cancel several at once
+        </div>
+      )}
+
+      {visible.map((b) => {
+        const dur = slotDurationMin(b.date, b.startMin, b.endDate, b.endMin);
+        const cancellable = b.status === "CONFIRMED";
+        return (
+          <Card key={b.id}>
+            <CardContent className="p-4">
+              <div className="flex items-start gap-3">
+                <Checkbox
+                  checked={selected.has(b.id)}
+                  onCheckedChange={() => toggle(b.id)}
+                  disabled={!cancellable}
+                  aria-label={`Select ${b.facility.name} booking`}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold">{b.facility.building.name} — {b.facility.name}</span>
+                    <Badge variant={b.type === "LONG" ? "destructive" : "secondary"}>
+                      {b.type === "SELF" ? "Self" : b.type === "ON_BEHALF" ? "Blocked" : "Long"}
+                    </Badge>
+                    {b.status === "CANCELLED" && <Badge variant="outline">Cancelled</Badge>}
                   </div>
-                )}
-              </div>
-              <div className="flex flex-col items-end gap-2">
-                <Badge variant={b.type === "LONG" ? "destructive" : "secondary"}>
-                  {b.type === "SELF" ? "Self" : b.type === "ON_BEHALF" ? "Blocked" : "Long"}
-                  {b.status === "CANCELLED" ? " · Cancelled" : ""}
-                </Badge>
-                <div className="flex gap-2">
+                  <div className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <CalendarClock className="h-3.5 w-3.5" />
+                    {fmtSlotRange(b.date, b.startMin, b.endDate, b.endMin)}
+                    <span className="text-xs">
+                      · {dur < 60 ? `${dur} min` : `${(dur / 60).toFixed(dur % 60 ? 1 : 0)} h`}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {b.user.name} (@{b.user.username})
+                    {b.forUser ? ` → blocked for ${b.forUser.name} (@${b.forUser.username})` : ""}
+                  </div>
+                  {b.purpose && <p className="mt-1 text-sm">{b.purpose}</p>}
+                  {b.status === "CANCELLED" && (
+                    <div className="mt-1.5 rounded-md bg-red-50 px-2.5 py-1.5 text-xs text-red-700">
+                      Cancelled{b.cancelledBy ? ` by ${b.cancelledBy.name} (@${b.cancelledBy.username})` : ""}
+                      {b.cancelledAt ? ` on ${fmtIstDateTime(b.cancelledAt)}` : ""}
+                      {b.cancelReason ? ` — “${b.cancelReason}”` : ""}
+                    </div>
+                  )}
+                </div>
+                <div className="flex shrink-0 gap-1.5">
                   {b.pdf && (
-                    <Button variant="outline" size="sm" asChild>
-                      <a href={apiPath(`/api/bookings/${b.id}/pdf`)} target="_blank" rel="noreferrer">PDF</a>
+                    <Button variant="outline" size="icon" className="h-8 w-8" asChild title="Attachment">
+                      <a href={apiPath(`/api/bookings/${b.id}/pdf`)} target="_blank" rel="noreferrer">
+                        <FileText className="h-3.5 w-3.5" />
+                      </a>
                     </Button>
                   )}
-                  {b.status === "CONFIRMED" && (
-                    <Button variant="outline" size="sm" className="text-red-600" onClick={() => cancel(b.id)}>
-                      Cancel
+                  {cancellable && (
+                    <Button variant="outline" size="icon" className="h-8 w-8" title="Edit booking" onClick={() => setEdit(b)}>
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                  {cancellable && (
+                    <Button variant="outline" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700" title="Cancel booking" onClick={() => cancelMany([b.id])}>
+                      <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   )}
                 </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
+            </CardContent>
+          </Card>
+        );
+      })}
+
+      {edit && (
+        <EditBookingDialog
+          booking={edit}
+          today={today}
+          onClose={() => setEdit(null)}
+          onSaved={() => { setEdit(null); void load(); }}
+          onError={(s) => onError(s)}
+        />
+      )}
     </div>
   );
 }
