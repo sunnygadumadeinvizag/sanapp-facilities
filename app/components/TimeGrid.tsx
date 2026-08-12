@@ -97,6 +97,7 @@ export function TimeGrid({
   todayKey,
   maxHeight,
   focus,
+  onAutoAdvance,
 }: {
   days: string[];
   bookings: BookingBlock[];
@@ -117,6 +118,12 @@ export function TimeGrid({
   maxHeight?: string;
   /** When set (new nonce), the calendar scrolls so this range is visible. */
   focus?: FocusRequest | null;
+  /**
+   * Called while dragging on the last visible day column (no scroll room) so the
+   * caller can advance the week by +7/-7 days — lets a corner-day drag continue
+   * into the next/previous week even when all days fit in the viewport.
+   */
+  onAutoAdvance?: (deltaDays: number) => void;
 }) {
   const [zoomKey, setZoomKey] = useState("1h");
   const zoom = ZOOMS.find((z) => z.key === zoomKey) ?? ZOOMS[1];
@@ -130,6 +137,7 @@ export function TimeGrid({
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
   const scrollDirRef = useRef<{ h: -1 | 0 | 1; v: -1 | 0 | 1 }>({ h: 0, v: 0 });
   const autoScrollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastAdvanceRef = useRef(0);
 
   const bookedFragments = useMemo(
     () => bookings.flatMap((b) => fragments(b, days).map((f) => ({ ...f, label: b.label, id: b.id }))),
@@ -191,10 +199,43 @@ export function TimeGrid({
     const sc = scrollerRef.current;
     if (!sc) return { h: 0, v: 0 };
     const r = sc.getBoundingClientRect();
-    return {
-      h: clientX > r.right - EDGE_ZONE ? 1 : clientX < r.left + EDGE_ZONE ? -1 : 0,
-      v: clientY > r.bottom - EDGE_ZONE ? 1 : clientY < r.top + EDGE_ZONE ? -1 : 0,
-    };
+    let h: -1 | 0 | 1 = clientX > r.right - EDGE_ZONE ? 1 : clientX < r.left + EDGE_ZONE ? -1 : 0;
+    let v: -1 | 0 | 1 = clientY > r.bottom - EDGE_ZONE ? 1 : clientY < r.top + EDGE_ZONE ? -1 : 0;
+
+    // Corner days: dragging ON the last (or first) visible day column keeps
+    // auto-scrolling so the selection runs into the following (or previous)
+    // week even though the pointer never leaves the viewport.
+    if (h === 0 || v === 0) {
+      const cell = cellFromXY(clientX, clientY);
+      if (cell) {
+        if (h === 0) {
+          const firstVisible = Math.max(0, Math.floor(sc.scrollLeft / COL_W));
+          const lastVisible = Math.min(
+            days.length - 1,
+            Math.floor((sc.scrollLeft + sc.clientWidth - GUTTER_W - 24) / COL_W)
+          );
+          const dayIdx = days.indexOf(cell.date);
+          if (dayIdx >= lastVisible && sc.scrollLeft < sc.scrollWidth - sc.clientWidth - 4) h = 1;
+          else if (dayIdx <= firstVisible && sc.scrollLeft > 4) h = -1;
+        }
+        if (v === 0) {
+          const rowH = zoom.cellH;
+          const firstVisibleMin = Math.floor(sc.scrollTop / rowH) * CELL_MIN;
+          const lastVisibleMin = Math.floor((sc.scrollTop + sc.clientHeight) / rowH) * CELL_MIN;
+          if (cell.min >= lastVisibleMin - CELL_MIN && sc.scrollTop < sc.scrollHeight - sc.clientHeight - 4) v = 1;
+          else if (cell.min <= firstVisibleMin + CELL_MIN && sc.scrollTop > 4) v = -1;
+        }
+      }
+    }
+    return { h, v };
+  }
+
+  /** Advance the week while dragging on a corner day with no scroll room (cooldown-gated). */
+  function maybeAdvanceWeek(deltaDays: number) {
+    const now = Date.now();
+    if (now - lastAdvanceRef.current < 700) return;
+    lastAdvanceRef.current = now;
+    onAutoAdvance?.(deltaDays);
   }
 
   function startAutoScroll(dir: { h: -1 | 0 | 1; v: -1 | 0 | 1 }) {
@@ -282,6 +323,23 @@ export function TimeGrid({
     startAutoScroll(edgeDirFromPointer(e.clientX, e.clientY));
     const cell = cellFromEvent(e);
     if (!cell) return;
+
+    // Corner days with no scroll room: advance the week instead, so a drag on
+    // the last visible day (e.g. Sunday) can continue into the next week and a
+    // drag on the first visible day can reach back into the previous week.
+    const sc = scrollerRef.current;
+    if (sc && onAutoAdvance) {
+      const canScrollRight = sc.scrollLeft < sc.scrollWidth - sc.clientWidth - 4;
+      const canScrollLeft = sc.scrollLeft > 4;
+      const firstVisible = Math.max(0, Math.floor(sc.scrollLeft / COL_W));
+      const lastVisible = Math.min(
+        days.length - 1,
+        Math.floor((sc.scrollLeft + sc.clientWidth - GUTTER_W - 24) / COL_W)
+      );
+      const dayIdx = days.indexOf(cell.date);
+      if (!canScrollRight && dayIdx >= lastVisible) maybeAdvanceWeek(7);
+      else if (!canScrollLeft && dayIdx <= firstVisible) maybeAdvanceWeek(-7);
+    }
     const ai = idx(dragFrom.current.date, dragFrom.current.min);
     const bi = idx(cell.date, cell.min);
     const start = ai <= bi ? dragFrom.current : cell;

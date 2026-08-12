@@ -453,10 +453,8 @@ export function BookingClient({
         </div>
       )}
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-        {/* Left column — calendar + selected ranges */}
-        <div className="space-y-4">
-          <Card>
+      <div className="mt-4 space-y-4">
+        <Card>
             <CardContent className="p-4">
               {/* Week navigation */}
               <div className="mb-3 flex items-center justify-between gap-2">
@@ -492,6 +490,7 @@ export function BookingClient({
                 nowMin={nowMin}
                 todayKey={today}
                 maxHeight="60vh"
+                onAutoAdvance={(d) => setWeekStart((w) => addDays(w, d))}
                 focus={focusReq}
               />
             </CardContent>
@@ -537,10 +536,9 @@ export function BookingClient({
               </CardContent>
             </Card>
           )}
-        </div>
 
-        {/* Right column — booking details */}
-        <Card className="h-fit xl:sticky xl:top-4">
+          {/* Booking details */}
+          <Card>
           <CardContent className="p-4 space-y-4">
             {!editBooking && canApprover && (
               <label className="flex items-center gap-2 text-sm">
@@ -550,7 +548,7 @@ export function BookingClient({
             )}
 
             {forOther && (
-              <div>
+              <div className="max-w-md">
                 <Label>Book for (search name or username)</Label>
                 <Input
                   value={forQuery}
@@ -584,25 +582,32 @@ export function BookingClient({
               </div>
             )}
 
-            <div>
-              <Label htmlFor={`purpose-${facility.id}`}>
-                Description {needPurpose ? "(required)" : "(optional)"}
-              </Label>
-              <Textarea
-                id={`purpose-${facility.id}`}
-                rows={2}
-                placeholder={needPurpose ? "Describe the purpose of these bookings" : "Optional — e.g. weekly staff meeting"}
-                value={purpose}
-                onChange={(e) => setPurpose(e.target.value)}
-              />
-            </div>
-
-            <div>
-              <Label>
-                Attachment (PDF, max 1 MB, {editBooking ? "optional" : "optional — applies to all ranges"})
-              </Label>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <Input type="file" accept="application/pdf,.pdf" onChange={(e) => pickFile(e.target.files?.[0] ?? null)} />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <Label htmlFor={`purpose-${facility.id}`}>
+                  Description {needPurpose ? "(required)" : "(optional)"}
+                </Label>
+                <Textarea
+                  id={`purpose-${facility.id}`}
+                  rows={3}
+                  className="mt-1"
+                  placeholder={needPurpose ? "Describe the purpose of these bookings" : "Optional — e.g. weekly staff meeting"}
+                  value={purpose}
+                  onChange={(e) => setPurpose(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label>Attachment (PDF, max 1 MB)</Label>
+                <Input
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  className="mt-1"
+                  onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  {editBooking ? "Optional" : "Optional — applies to all ranges"}
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
                 {pdfName && (
                   <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                     <Paperclip className="h-3 w-3" /> {pdfName}
@@ -638,6 +643,7 @@ export function BookingClient({
                     Current attachment will be removed when you save.
                   </span>
                 )}
+                </div>
               </div>
             </div>
 
@@ -652,7 +658,7 @@ export function BookingClient({
 
             <Button
               type="submit"
-              className="w-full"
+              className="w-full sm:w-auto sm:min-w-[240px]"
               onClick={submit}
               disabled={
                 busy ||
