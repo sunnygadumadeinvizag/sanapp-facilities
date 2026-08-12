@@ -173,9 +173,12 @@ export function TimeGrid({
     const rect = el.getBoundingClientRect();
     const x = clientX - rect.left;
     const y = clientY - rect.top; // header is outside the grid container
-    if (x < GUTTER_W) return null;
-    const dayIdx = Math.floor((x - GUTTER_W) / COL_W);
-    if (dayIdx < 0 || dayIdx >= days.length) return null;
+    if (x < 0) return null;
+    // Clamp instead of returning null so a pointer dragged past the last (or
+    // first) day column — or over the time gutter — still resolves to that edge
+    // day; the corner-day auto-scroll/advance logic then keeps the drag moving
+    // into the next/previous week.
+    const dayIdx = Math.max(0, Math.min(days.length - 1, Math.floor((x - GUTTER_W) / COL_W)));
     const min = Math.max(0, Math.min(24 * 60 - CELL_MIN, Math.floor(y / zoom.cellH) * CELL_MIN));
     return { date: days[dayIdx], min };
   }
