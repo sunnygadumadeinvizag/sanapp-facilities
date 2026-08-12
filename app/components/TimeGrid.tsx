@@ -1,12 +1,10 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtMin, fmtSlotRange } from "@/lib/ist";
 import { Button } from "@/components/ui/button";
 
 const CELL_MIN = 15;
-const CELL_H_QUARTER = 24; // px per 15-min cell when zoomed in
-const CELL_H_HOUR = 14; // px per 15-min cell when zoomed out (hour labels)
 const COL_W = 150; // px per day column
 const GUTTER_W = 46;
 
@@ -26,7 +24,20 @@ export type RangeSelection = {
   endMin: number;
 };
 
-type Zoom = "hour" | "quarter";
+export type FocusRequest = {
+  range: RangeSelection;
+  /** Monotonic counter so repeated clicks on the same range re-trigger scrolling. */
+  nonce: number;
+};
+
+/** Zoom ladder: label, px per 15-min cell, minutes between gutter marks. */
+const ZOOMS: { key: string; label: string; cellH: number; mark: number }[] = [
+  { key: "15m", label: "15 min", cellH: 24, mark: 15 },
+  { key: "1h", label: "1 h", cellH: 14, mark: 60 },
+  { key: "2h", label: "2 h", cellH: 9, mark: 120 },
+  { key: "6h", label: "6 h", cellH: 4.5, mark: 360 },
+  { key: "1d", label: "1 d", cellH: 2.5, mark: 360 },
+];
 
 function idx(date: string, min: number): number {
   return Math.floor(Date.parse(`${date}T00:00:00Z`) / 60000) + min;
@@ -36,6 +47,14 @@ function rangesOverlap(a: RangeSelection, b: RangeSelection): boolean {
   return (
     idx(a.startDate, a.startMin) < idx(b.endDate, b.endMin) &&
     idx(a.endDate, a.endMin) > idx(b.startDate, b.startMin)
+  );
+}
+
+/** True when the two ranges overlap or are exactly adjacent (share a boundary). */
+function rangesTouch(a: RangeSelection, b: RangeSelection): boolean {
+  return (
+    idx(a.startDate, a.startMin) <= idx(b.endDate, b.endMin) &&
+    idx(a.endDate, a.endMin) >= idx(b.startDate, b.startMin)
   );
 }
 
@@ -77,23 +96,31 @@ export function TimeGrid({
   nowMin,
   todayKey,
   maxHeight,
+  focus,
 }: {
   days: string[];
   bookings: BookingBlock[];
   /** Ranges the user has already locked in (blue overlays). */
   committed: RangeSelection[];
-  /** Called when a completed drag produces a non-conflicting range. */
-  onCommit: (range: RangeSelection) => void;
-  /** Called when a completed drag conflicts and is therefore not added. */
+  /**
+   * Called when a completed drag produces a non-conflicting range.
+   * `mergeIndices` lists committed ranges the drag touched/overlapped —
+   * they are replaced by the merged union of this drag and those ranges
+   * (i.e. the selection is extended).
+   */
+  onCommit: (range: RangeSelection, mergeIndices?: number[]) => void;
+  /** Called when a completed drag conflicts (booking/past) and is rejected. */
   onReject?: () => void;
   nowMin: number;
   todayKey: string;
   /** Scroll-area max height (e.g. "52vh" in dialogs, "60vh" on full pages). */
   maxHeight?: string;
+  /** When set (new nonce), the calendar scrolls so this range is visible. */
+  focus?: FocusRequest | null;
 }) {
-  const [zoom, setZoom] = useState<Zoom>("hour");
-  const cellH = zoom === "quarter" ? CELL_H_QUARTER : CELL_H_HOUR;
-  const colHeight = (24 * 60) / CELL_MIN * cellH;
+  const [zoomKey, setZoomKey] = useState("1h");
+  const zoom = ZOOMS.find((z) => z.key === zoomKey) ?? ZOOMS[1];
+  const colHeight = (24 * 60) / CELL_MIN * zoom.cellH;
   const [drag, setDrag] = useState<RangeSelection | null>(null);
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const dragFrom = useRef<{ date: string; min: number } | null>(null);
@@ -104,13 +131,22 @@ export function TimeGrid({
     [bookings, days]
   );
 
-  /** True when a range conflicts with a booking, the past, or another committed range. */
+  /** True when a range conflicts with a booking or the past (NOT committed — those merge). */
   function conflict(range: RangeSelection): boolean {
     const inPast = idx(range.startDate, range.startMin) <= idx(todayKey, nowMin);
     if (inPast) return true;
-    if (bookings.some((b) => rangesOverlap(range, b))) return true;
-    return committed.some((c) => c !== range && rangesOverlap(range, c));
+    return bookings.some((b) => rangesOverlap(range, b));
   }
+
+  // Scroll the calendar so a requested range is visible.
+  useEffect(() => {
+    if (!focus) return;
+    const el = containerRef.current?.parentElement;
+    if (!el) return;
+    const startY = (focus.range.startMin / 1440) * colHeight;
+    const max = el.scrollHeight - el.clientHeight;
+    el.scrollTop = Math.max(0, Math.min(startY - 80, max));
+  }, [focus, colHeight]);
 
   function cellFromEvent(e: React.PointerEvent): { date: string; min: number } | null {
     const el = containerRef.current;
@@ -121,7 +157,7 @@ export function TimeGrid({
     if (x < GUTTER_W) return null;
     const dayIdx = Math.floor((x - GUTTER_W) / COL_W);
     if (dayIdx < 0 || dayIdx >= days.length) return null;
-    const min = Math.max(0, Math.min(24 * 60 - CELL_MIN, Math.floor(y / cellH) * CELL_MIN));
+    const min = Math.max(0, Math.min(24 * 60 - CELL_MIN, Math.floor(y / zoom.cellH) * CELL_MIN));
     return { date: days[dayIdx], min };
   }
 
@@ -200,10 +236,28 @@ export function TimeGrid({
       onReject?.();
       return;
     }
+
+    // Extend: merge the drag with any committed range it touches or overlaps.
+    const mergeIdx = committed.map((c, i) => (rangesTouch(c, range) ? i : -1)).filter((i) => i >= 0);
+    if (mergeIdx.length > 0) {
+      const union = mergeIdx.reduce<RangeSelection>((u, i) => {
+        const c = committed[i];
+        const uS = idx(u.startDate, u.startMin);
+        const uE = idx(u.endDate, u.endMin);
+        const cS = idx(c.startDate, c.startMin);
+        const cE = idx(c.endDate, c.endMin);
+        const start = uS <= cS ? u : c;
+        const end = uE >= cE ? u : c;
+        return { startDate: start.startDate, startMin: start.startMin, endDate: end.endDate, endMin: end.endMin };
+      }, range);
+      onCommit(union, mergeIdx);
+      return;
+    }
+
     onCommit(range);
   }
 
-  const minutes = Array.from({ length: 24 * 60 / CELL_MIN }, (_, i) => i * CELL_MIN);
+  const marks = Array.from({ length: 24 * 60 / CELL_MIN }, (_, i) => i * CELL_MIN).filter((m) => m % zoom.mark === 0);
 
   return (
     <div>
@@ -220,26 +274,19 @@ export function TimeGrid({
           </span>
         </p>
         <div className="flex items-center gap-1">
-          <Button
-            type="button"
-            variant={zoom === "hour" ? "secondary" : "outline"}
-            size="sm"
-            className="h-7 px-2.5 text-xs"
-            onClick={() => setZoom("hour")}
-            title="Zoom out — show hour marks"
-          >
-            1 h
-          </Button>
-          <Button
-            type="button"
-            variant={zoom === "quarter" ? "secondary" : "outline"}
-            size="sm"
-            className="h-7 px-2.5 text-xs"
-            onClick={() => setZoom("quarter")}
-            title="Zoom in — show 15-minute marks"
-          >
-            15 min
-          </Button>
+          {ZOOMS.map((z) => (
+            <Button
+              key={z.key}
+              type="button"
+              variant={zoom.key === z.key ? "secondary" : "outline"}
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              onClick={() => setZoomKey(z.key)}
+              title={`Zoom: ${z.label} marks`}
+            >
+              {z.label}
+            </Button>
+          ))}
         </div>
       </div>
 
@@ -254,7 +301,7 @@ export function TimeGrid({
       )}
 
       <div className="overflow-auto rounded-lg border bg-card" style={{ maxHeight: maxHeight ?? "52vh" }}>
-        {/* Day header (sticky) */}
+        {/* Day header (sticky) — today is bold but not background-highlighted */}
         <div className="sticky top-0 z-20 flex bg-card border-b">
           <div style={{ width: GUTTER_W }} className="shrink-0" />
           {days.map((d) => (
@@ -262,14 +309,12 @@ export function TimeGrid({
               key={d}
               style={{ width: COL_W }}
               className={`shrink-0 px-2 py-1.5 text-center border-r ${
-                d === todayKey
-                  ? "bg-primary/10 text-primary font-semibold border-b-2 border-primary"
-                  : "text-muted-foreground"
+                d === todayKey ? "text-primary font-bold" : "text-muted-foreground"
               }`}
             >
               <div className="text-xs font-medium">
                 {dayName(d)}
-                {d === todayKey && <span className="ml-1 text-[9px] font-semibold uppercase tracking-wide">Today</span>}
+                {d === todayKey && <span className="ml-1 text-[9px] font-bold uppercase tracking-wide">Today</span>}
               </div>
               <div className="text-[10px]">{fmtDay(d)}</div>
             </div>
@@ -278,21 +323,17 @@ export function TimeGrid({
         <div className="flex">
           {/* Time gutter */}
           <div style={{ width: GUTTER_W, height: colHeight }} className="shrink-0 relative">
-            {minutes.map((m) => {
-              const isHour = m % 60 === 0;
-              if (zoom === "hour" && !isHour) return null;
-              return (
-                <div
-                  key={m}
-                  style={{ height: (CELL_MIN / (24 * 60)) * colHeight, top: (m / (24 * 60)) * colHeight }}
-                  className={`absolute right-1 -translate-y-1/2 text-muted-foreground ${
-                    isHour ? "text-[10px] font-semibold" : "text-[8px]"
-                  }`}
-                >
-                  {fmtMin(m)}
-                </div>
-              );
-            })}
+            {marks.map((m) => (
+              <div
+                key={m}
+                style={{ height: (CELL_MIN / (24 * 60)) * colHeight, top: (m / (24 * 60)) * colHeight }}
+                className={`absolute right-1 -translate-y-1/2 text-muted-foreground ${
+                  zoom.mark <= 15 ? "text-[8px]" : "text-[10px] font-semibold"
+                }`}
+              >
+                {fmtMin(m)}
+              </div>
+            ))}
           </div>
           {/* Day columns */}
           <div
@@ -309,26 +350,18 @@ export function TimeGrid({
             }}
           >
             {days.map((d) => (
-              <div
-                key={d}
-                className={`shrink-0 relative border-r ${d === todayKey ? "bg-primary/[0.04]" : ""}`}
-                style={{ width: COL_W, height: colHeight }}
-              >
-                {/* faint hour lines */}
-                {minutes.map((m) => {
-                  const isHour = m % 60 === 0;
-                  if (zoom === "hour" && !isHour) return null;
-                  return (
-                    <div
-                      key={m}
-                      className="absolute left-0 right-0 border-t"
-                      style={{
-                        top: (m / (24 * 60)) * colHeight,
-                        borderColor: isHour ? "var(--iipe-border)" : "rgba(0,0,0,0.04)",
-                      }}
-                    />
-                  );
-                })}
+              <div key={d} className="shrink-0 relative border-r" style={{ width: COL_W, height: colHeight }}>
+                {/* grid lines at the zoom's mark interval */}
+                {marks.map((m) => (
+                  <div
+                    key={m}
+                    className="absolute left-0 right-0 border-t"
+                    style={{
+                      top: (m / (24 * 60)) * colHeight,
+                      borderColor: m % 60 === 0 ? "var(--iipe-border)" : "rgba(0,0,0,0.04)",
+                    }}
+                  />
+                ))}
               </div>
             ))}
 

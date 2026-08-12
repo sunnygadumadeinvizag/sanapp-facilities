@@ -1,7 +1,7 @@
 "use client";
 import { apiPath } from "iipe-common-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Loader2, Paperclip, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Crosshair, Loader2, Paperclip, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -9,7 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { TimeGrid, type BookingBlock, type RangeSelection } from "./TimeGrid";
+import { TimeGrid, type BookingBlock, type FocusRequest, type RangeSelection } from "./TimeGrid";
 import { effectiveMaxMinutes, capLabel } from "@/lib/limits";
 import {
   PDF_MAX_BYTES,
@@ -19,6 +19,7 @@ import {
   fmtSlotRange,
   mondayOf,
   slotDurationMin,
+  slotIndex,
 } from "@/lib/ist";
 
 export type SlotItem = {
@@ -40,6 +41,47 @@ export type BookingMe = {
 };
 
 const WEEK_DAYS = 7;
+
+/** A pending selection with a stable id (survives merges/edits without key churn). */
+type PendingRange = { id: number; range: RangeSelection };
+
+/** Absolute minute index of a wall-clock point (same math as slotIndex). */
+function absMin(r: { startDate: string; startMin: number; endDate: string; endMin: number }): [number, number] {
+  return [
+    slotIndex(r.startDate, r.startMin),
+    slotIndex(r.endDate, r.endMin),
+  ];
+}
+
+/** Union of two ranges (min start, max end) — used when a drag/edit touches another range. */
+function unionRange(a: RangeSelection, b: RangeSelection): RangeSelection {
+  const [aS, aE] = absMin(a);
+  const [bS, bE] = absMin(b);
+  const s = new Date(Math.min(aS, bS) * 60000);
+  const e = new Date(Math.max(aE, bE) * 60000);
+  return {
+    startDate: s.toISOString().slice(0, 10),
+    startMin: s.getUTCHours() * 60 + s.getUTCMinutes(),
+    endDate: e.toISOString().slice(0, 10),
+    endMin: e.getUTCHours() * 60 + e.getUTCMinutes(),
+  };
+}
+
+/** True when two ranges overlap or are exactly adjacent (share a boundary). */
+function rangesTouch(a: RangeSelection, b: RangeSelection): boolean {
+  const [aS, aE] = absMin(a);
+  const [bS, bE] = absMin(b);
+  return aS <= bE && aE >= bS;
+}
+
+function parseTime(v: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const mm = Number(m[2]);
+  if (h < 0 || h > 23 || mm < 0 || mm > 59) return null;
+  return h * 60 + mm;
+}
 
 export function BookingClient({
   facility,
@@ -79,7 +121,10 @@ export function BookingClient({
   const [weekStart, setWeekStart] = useState(() => mondayOf(today));
   const [bookings, setBookings] = useState<BookingBlock[]>([]);
   const [loading, setLoading] = useState(false);
-  const [ranges, setRanges] = useState<RangeSelection[]>([]);
+  const [ranges, setRanges] = useState<PendingRange[]>([]);
+  const idRef = useRef(0);
+  const [focusReq, setFocusReq] = useState<FocusRequest | null>(null);
+  const focusNonce = useRef(0);
   const [rejectMsg, setRejectMsg] = useState<string | null>(null);
   const [forOther, setForOther] = useState(false);
   const [forQuery, setForQuery] = useState("");
@@ -167,24 +212,62 @@ export function BookingClient({
     setPdfName(f.name);
   }
 
-  /** Auto-commit a dragged range (called by TimeGrid on pointer release). */
-  function commitRange(range: RangeSelection) {
-    setRanges((prev) => [...prev, range]);
+  /**
+   * Auto-commit a dragged range (called by TimeGrid on pointer release).
+   * When the drag touched/overlapped existing selections, TimeGrid passes
+   * `mergeIndices` — those are replaced by the merged union (extend mode).
+   */
+  function commitRange(range: RangeSelection, mergeIndices?: number[]) {
+    setRanges((prev) => {
+      if (mergeIndices && mergeIndices.length > 0) {
+        const keep = prev.filter((_, i) => !mergeIndices.includes(i));
+        const id = prev[mergeIndices[0]]?.id ?? ++idRef.current;
+        return [{ id, range }, ...keep];
+      }
+      return [...prev, { id: ++idRef.current, range }];
+    });
   }
 
   function rejectRange() {
     setRejectMsg(
-      "That range overlaps an already-booked slot, another range you selected, or the past — nothing was added."
+      "That range overlaps an already-booked slot or the past — nothing was added."
     );
     if (rejectTimer.current) window.clearTimeout(rejectTimer.current);
     rejectTimer.current = window.setTimeout(() => setRejectMsg(null), 4000);
   }
 
-  function removeRange(i: number) {
-    setRanges((prev) => prev.filter((_, x) => x !== i));
+  function removeRange(id: number) {
+    setRanges((prev) => prev.filter((p) => p.id !== id));
   }
 
-  const anyLong = ranges.some((r) => slotDurationMin(r.startDate, r.startMin, r.endDate, r.endMin) > SLOT_MAX_MINUTES);
+  /** Validate and apply a From/To edit; merges any other selection it now touches. */
+  function updateRange(id: number, next: RangeSelection): string | null {
+    const dur = slotDurationMin(next.startDate, next.startMin, next.endDate, next.endMin);
+    if (dur < 15) return "End must be at least 15 minutes after start.";
+    if (slotIndex(next.startDate, next.startMin) <= slotIndex(today, nowMin)) {
+      return "Start must be in the future.";
+    }
+    const overlapsBooking = bookings.some((b) => {
+      const [s, e] = absMin(next);
+      return s < slotIndex(b.endDate, b.endMin) && e > slotIndex(b.startDate, b.startMin);
+    });
+    if (overlapsBooking) return "That range overlaps an already-booked slot.";
+    setRanges((prev) => {
+      let merged = next;
+      const absorbed = new Set<number>();
+      for (const p of prev) {
+        if (p.id === id) continue;
+        if (rangesTouch(merged, p.range)) {
+          merged = unionRange(merged, p.range);
+          absorbed.add(p.id);
+        }
+      }
+      return [{ id, range: merged }, ...prev.filter((p) => p.id !== id && !absorbed.has(p.id))];
+    });
+    return null;
+  }
+
+  const anyLong = ranges.some((p) => slotDurationMin(p.range.startDate, p.range.startMin, p.range.endDate, p.range.endMin) > SLOT_MAX_MINUTES);
   const isOnBehalf = forOther;
   const needPurpose = anyLong || isOnBehalf;
 
@@ -193,7 +276,7 @@ export function BookingClient({
     if (isAdmin) return false;
     return slotDurationMin(r.startDate, r.startMin, r.endDate, r.endMin) > effMax;
   }
-  const hasOverCap = ranges.some(overCap);
+  const hasOverCap = ranges.some((p) => overCap(p.range));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -204,7 +287,7 @@ export function BookingClient({
 
     const created: string[] = [];
     const failed: string[] = [];
-    for (const range of ranges) {
+    for (const { range } of ranges) {
       const form = new FormData();
       form.set("facilityId", facility.id);
       form.set("startDate", range.startDate);
@@ -309,12 +392,13 @@ export function BookingClient({
               <TimeGrid
                 days={days}
                 bookings={bookings}
-                committed={ranges}
+                committed={ranges.map((p) => p.range)}
                 onCommit={commitRange}
                 onReject={rejectRange}
                 nowMin={nowMin}
                 todayKey={today}
                 maxHeight="60vh"
+                focus={focusReq}
               />
             </CardContent>
           </Card>
@@ -330,44 +414,31 @@ export function BookingClient({
                   )}
                 </div>
                 <div className="flex flex-col gap-2">
-                  {ranges.map((r, i) => {
-                    const dur = slotDurationMin(r.startDate, r.startMin, r.endDate, r.endMin);
+                  {ranges.map(({ id, range }) => {
+                    const dur = slotDurationMin(range.startDate, range.startMin, range.endDate, range.endMin);
                     const long = dur > SLOT_MAX_MINUTES;
-                    const cap = overCap(r);
+                    const cap = overCap(range);
                     return (
-                      <div
-                        key={i}
-                        className={`flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 ${
-                          cap ? "border-red-300 bg-red-50" : "border-border bg-muted/30"
-                        }`}
-                      >
-                        <Badge variant={long ? "destructive" : cap ? "outline" : "default"}>
-                          {fmtSlotRange(r.startDate, r.startMin, r.endDate, r.endMin)}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {dur < 60 ? `${dur} min` : `${(dur / 60).toFixed(dur % 60 ? 1 : 0)} h`}
-                        </span>
-                        <Badge variant="secondary">
-                          {long ? "Long (POC)" : forOther ? "On-behalf block" : "Self"}
-                        </Badge>
-                        {cap && <span className="text-xs text-red-600">over {effMaxLabel} limit</span>}
-                        <span className="ml-auto">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6"
-                            onClick={() => removeRange(i)}
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </Button>
-                        </span>
-                      </div>
+                      <RangeRow
+                        key={id}
+                        range={range}
+                        dur={dur}
+                        long={long}
+                        cap={cap}
+                        effMaxLabel={effMaxLabel}
+                        forOther={forOther}
+                        onRemove={() => removeRange(id)}
+                        onSave={(next) => updateRange(id, next)}
+                        onLocate={() => {
+                          setFocusReq({ range, nonce: ++focusNonce.current });
+                        }}
+                      />
                     );
                   })}
                 </div>
                 <p className="mt-3 text-xs text-muted-foreground">
-                  Drag another range on the calendar to add it — every range stays highlighted until you remove it.
+                  Drag on the calendar to add a range — dragging next to an existing one extends it. Use the pencil
+                  to fine-tune From / To, or the crosshair to jump to a range on the calendar.
                 </p>
               </CardContent>
             </Card>
@@ -471,6 +542,138 @@ export function BookingClient({
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+/** One row of the "Selected ranges" list — shows the range, and an inline From/To editor. */
+function RangeRow({
+  range,
+  dur,
+  long,
+  cap,
+  effMaxLabel,
+  forOther,
+  onRemove,
+  onSave,
+  onLocate,
+}: {
+  range: RangeSelection;
+  dur: number;
+  long: boolean;
+  cap: boolean;
+  effMaxLabel: string;
+  forOther: boolean;
+  onRemove: () => void;
+  onSave: (next: RangeSelection) => string | null;
+  onLocate: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [startDate, setStartDate] = useState(range.startDate);
+  const [startTime, setStartTime] = useState(fmtMin(range.startMin));
+  const [endDate, setEndDate] = useState(range.endDate);
+  const [endTime, setEndTime] = useState(fmtMin(range.endMin));
+  const [err, setErr] = useState<string | null>(null);
+
+  // Keep local fields in sync if the parent replaces the range (e.g. merge).
+  useEffect(() => {
+    setStartDate(range.startDate);
+    setStartTime(fmtMin(range.startMin));
+    setEndDate(range.endDate);
+    setEndTime(fmtMin(range.endMin));
+  }, [range]);
+
+  function save() {
+    const sT = parseTime(startTime);
+    const eT = parseTime(endTime);
+    if (sT == null || eT == null) {
+      setErr("Enter valid times in HH:MM format.");
+      return;
+    }
+    const msg = onSave({ startDate, startMin: sT, endDate, endMin: eT });
+    if (msg) {
+      setErr(msg);
+      return;
+    }
+    setErr(null);
+    setEditing(false);
+  }
+
+  return (
+    <div
+      className={`rounded-md border px-3 py-2 ${
+        cap ? "border-red-300 bg-red-50" : "border-border bg-muted/30"
+      }`}
+    >
+      {editing ? (
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div>
+              <Label className="text-[10px] uppercase text-muted-foreground">From date</Label>
+              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-8 text-xs" />
+            </div>
+            <div>
+              <Label className="text-[10px] uppercase text-muted-foreground">From time (IST)</Label>
+              <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="h-8 text-xs" />
+            </div>
+            <div>
+              <Label className="text-[10px] uppercase text-muted-foreground">To date</Label>
+              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-8 text-xs" />
+            </div>
+            <div>
+              <Label className="text-[10px] uppercase text-muted-foreground">To time (IST)</Label>
+              <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="h-8 text-xs" />
+            </div>
+          </div>
+          {err && <p className="text-xs text-red-600">{err}</p>}
+          <div className="flex items-center gap-2">
+            <Button type="button" size="sm" onClick={save}>
+              Save
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => { setErr(null); setEditing(false); }}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={long ? "destructive" : cap ? "outline" : "default"}>
+            {fmtSlotRange(range.startDate, range.startMin, range.endDate, range.endMin)}
+          </Badge>
+          <span className="text-xs text-muted-foreground">
+            {dur < 60 ? `${dur} min` : `${(dur / 60).toFixed(dur % 60 ? 1 : 0)} h`}
+          </span>
+          <Badge variant="secondary">
+            {long ? "Long (POC)" : forOther ? "On-behalf block" : "Self"}
+          </Badge>
+          {cap && <span className="text-xs text-red-600">over {effMaxLabel} limit</span>}
+          <span className="ml-auto flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              title="Show this range on the calendar"
+              onClick={onLocate}
+            >
+              <Crosshair className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              title="Edit From / To"
+              onClick={() => setEditing(true)}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={onRemove}>
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </span>
+        </div>
+      )}
     </div>
   );
 }
