@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { fmtMin } from "@/lib/ist";
+import { fmtMin, fmtSlotRange } from "@/lib/ist";
+import { Button } from "@/components/ui/button";
 
 const CELL_MIN = 15;
-const CELL_H = 14; // px per 15-min cell
+const CELL_H_QUARTER = 24; // px per 15-min cell when zoomed in
+const CELL_H_HOUR = 14; // px per 15-min cell when zoomed out (hour labels)
 const COL_W = 150; // px per day column
 const GUTTER_W = 46;
 
@@ -23,6 +25,8 @@ export type RangeSelection = {
   endDate: string;
   endMin: number;
 };
+
+type Zoom = "hour" | "quarter";
 
 function idx(date: string, min: number): number {
   return Math.floor(Date.parse(`${date}T00:00:00Z`) / 60000) + min;
@@ -84,11 +88,14 @@ export function TimeGrid({
   onReject?: () => void;
   nowMin: number;
   todayKey: string;
-  /** Scroll-area max height (e.g. "52vh" in dialogs, "62vh" on full pages). */
+  /** Scroll-area max height (e.g. "52vh" in dialogs, "60vh" on full pages). */
   maxHeight?: string;
 }) {
-  const colHeight = (24 * 60) / CELL_MIN * CELL_H;
+  const [zoom, setZoom] = useState<Zoom>("hour");
+  const cellH = zoom === "quarter" ? CELL_H_QUARTER : CELL_H_HOUR;
+  const colHeight = (24 * 60) / CELL_MIN * cellH;
   const [drag, setDrag] = useState<RangeSelection | null>(null);
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const dragFrom = useRef<{ date: string; min: number } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -114,7 +121,7 @@ export function TimeGrid({
     if (x < GUTTER_W) return null;
     const dayIdx = Math.floor((x - GUTTER_W) / COL_W);
     if (dayIdx < 0 || dayIdx >= days.length) return null;
-    const min = Math.max(0, Math.min(24 * 60 - CELL_MIN, Math.floor(y / CELL_H) * CELL_MIN));
+    const min = Math.max(0, Math.min(24 * 60 - CELL_MIN, Math.floor(y / cellH) * CELL_MIN));
     return { date: days[dayIdx], min };
   }
 
@@ -150,6 +157,7 @@ export function TimeGrid({
     if (!cell || isDisabled(cell.date, cell.min)) return;
     dragFrom.current = cell;
     setDrag({ startDate: cell.date, startMin: cell.min, endDate: cell.date, endMin: cell.min + CELL_MIN });
+    setDragPos({ x: e.clientX, y: e.clientY });
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
@@ -159,6 +167,7 @@ export function TimeGrid({
 
   function handlePointerMove(e: React.PointerEvent) {
     if (!dragFrom.current) return;
+    setDragPos({ x: e.clientX, y: e.clientY });
     const cell = cellFromEvent(e);
     if (!cell) return;
     const ai = idx(dragFrom.current.date, dragFrom.current.min);
@@ -176,12 +185,14 @@ export function TimeGrid({
   function handlePointerUp() {
     if (!dragFrom.current) {
       setDrag(null);
+      setDragPos(null);
       return;
     }
     const from = dragFrom.current;
     const cur = drag;
     dragFrom.current = null;
     setDrag(null);
+    setDragPos(null);
     if (!cur) return;
     const range = normalizeRange(from, { date: cur.endDate, min: cur.endMin - CELL_MIN });
     if (!range) return;
@@ -192,21 +203,56 @@ export function TimeGrid({
     onCommit(range);
   }
 
-  const hours = Array.from({ length: 24 }, (_, h) => h * 60);
+  const minutes = Array.from({ length: 24 * 60 / CELL_MIN }, (_, i) => i * CELL_MIN);
 
   return (
     <div>
-      <p className="text-xs text-muted-foreground mb-2">
-        <span className="inline-flex items-center gap-1.5 mr-3">
-          <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary/25" /> Drag to select
-        </span>
-        <span className="inline-flex items-center gap-1.5 mr-3">
-          <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary" /> Selected
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-3 w-3 rounded-sm bg-red-500/20 border border-red-400" /> Already booked
-        </span>
-      </p>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5 mr-3">
+            <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary/25" /> Drag to select
+          </span>
+          <span className="inline-flex items-center gap-1.5 mr-3">
+            <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary" /> Selected
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded-sm bg-red-500/20 border border-red-400" /> Already booked
+          </span>
+        </p>
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant={zoom === "hour" ? "secondary" : "outline"}
+            size="sm"
+            className="h-7 px-2.5 text-xs"
+            onClick={() => setZoom("hour")}
+            title="Zoom out — show hour marks"
+          >
+            1 h
+          </Button>
+          <Button
+            type="button"
+            variant={zoom === "quarter" ? "secondary" : "outline"}
+            size="sm"
+            className="h-7 px-2.5 text-xs"
+            onClick={() => setZoom("quarter")}
+            title="Zoom in — show 15-minute marks"
+          >
+            15 min
+          </Button>
+        </div>
+      </div>
+
+      {/* Live from–to tooltip while dragging */}
+      {drag && dragPos && (
+        <div
+          className="pointer-events-none fixed z-50 rounded-md border bg-card px-3 py-1.5 text-xs font-semibold text-foreground shadow-xl"
+          style={{ left: dragPos.x + 12, top: dragPos.y - 40 }}
+        >
+          {fmtSlotRange(drag.startDate, drag.startMin, drag.endDate, drag.endMin)}
+        </div>
+      )}
+
       <div className="overflow-auto rounded-lg border bg-card" style={{ maxHeight: maxHeight ?? "52vh" }}>
         {/* Day header (sticky) */}
         <div className="sticky top-0 z-20 flex bg-card border-b">
@@ -216,10 +262,15 @@ export function TimeGrid({
               key={d}
               style={{ width: COL_W }}
               className={`shrink-0 px-2 py-1.5 text-center border-r ${
-                d === todayKey ? "text-primary font-semibold" : "text-muted-foreground"
+                d === todayKey
+                  ? "bg-primary/10 text-primary font-semibold border-b-2 border-primary"
+                  : "text-muted-foreground"
               }`}
             >
-              <div className="text-xs font-medium">{dayName(d)}</div>
+              <div className="text-xs font-medium">
+                {dayName(d)}
+                {d === todayKey && <span className="ml-1 text-[9px] font-semibold uppercase tracking-wide">Today</span>}
+              </div>
               <div className="text-[10px]">{fmtDay(d)}</div>
             </div>
           ))}
@@ -227,15 +278,21 @@ export function TimeGrid({
         <div className="flex">
           {/* Time gutter */}
           <div style={{ width: GUTTER_W, height: colHeight }} className="shrink-0 relative">
-            {hours.map((h) => (
-              <div
-                key={h}
-                style={{ height: (60 / CELL_MIN) * CELL_H, top: (h / (24 * 60)) * colHeight }}
-                className="absolute right-1 -translate-y-1/2 text-[9px] text-muted-foreground"
-              >
-                {fmtMin(h)}
-              </div>
-            ))}
+            {minutes.map((m) => {
+              const isHour = m % 60 === 0;
+              if (zoom === "hour" && !isHour) return null;
+              return (
+                <div
+                  key={m}
+                  style={{ height: (CELL_MIN / (24 * 60)) * colHeight, top: (m / (24 * 60)) * colHeight }}
+                  className={`absolute right-1 -translate-y-1/2 text-muted-foreground ${
+                    isHour ? "text-[10px] font-semibold" : "text-[8px]"
+                  }`}
+                >
+                  {fmtMin(m)}
+                </div>
+              );
+            })}
           </div>
           {/* Day columns */}
           <div
@@ -248,25 +305,30 @@ export function TimeGrid({
             onPointerCancel={() => {
               dragFrom.current = null;
               setDrag(null);
+              setDragPos(null);
             }}
           >
             {days.map((d) => (
               <div
                 key={d}
-                className="shrink-0 relative border-r"
+                className={`shrink-0 relative border-r ${d === todayKey ? "bg-primary/[0.04]" : ""}`}
                 style={{ width: COL_W, height: colHeight }}
               >
                 {/* faint hour lines */}
-                {hours.map((h) => (
-                  <div
-                    key={h}
-                    className="absolute left-0 right-0 border-t"
-                    style={{
-                      top: (h / (24 * 60)) * colHeight,
-                      borderColor: h % 60 === 0 ? "var(--iipe-border)" : "rgba(0,0,0,0.03)",
-                    }}
-                  />
-                ))}
+                {minutes.map((m) => {
+                  const isHour = m % 60 === 0;
+                  if (zoom === "hour" && !isHour) return null;
+                  return (
+                    <div
+                      key={m}
+                      className="absolute left-0 right-0 border-t"
+                      style={{
+                        top: (m / (24 * 60)) * colHeight,
+                        borderColor: isHour ? "var(--iipe-border)" : "rgba(0,0,0,0.04)",
+                      }}
+                    />
+                  );
+                })}
               </div>
             ))}
 

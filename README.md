@@ -10,7 +10,7 @@ buildings, rooms and time slots. It follows the platform architecture:
 It is a fully separate project with its own PostgreSQL database (`app4_db`),
 own users, own roles and own business rules. It consumes `iipe-common-ui`
 via a `file:` link (no private npm registry needed) and is built with a base
-path (`/app4`) so Apache2 can reverse-proxy it at `intranet.iipe.ac.in/app4`.
+path (`/facilities`) so Apache2 can reverse-proxy it at `intranet.iipe.ac.in/facilities`.
 
 ## Booking model (all times IST)
 
@@ -47,7 +47,7 @@ pnpm install
 cp .env.example .env          # fill in DB URL + secrets to match the SSO/Main seeds
 npx prisma migrate deploy
 npx prisma db seed
-pnpm dev                      # http://localhost:3005 (basePath: set BASE_PATH=/app4 to test proxied)
+pnpm dev                      # http://localhost:3005 (basePath: set BASE_PATH=/facilities to test proxied)
 ```
 
 The SSO seed registers the OIDC client `iipe-app4`; IIPE Main's seed registers
@@ -57,5 +57,5 @@ the application and grants. Sign in with any SSO user that has a Main grant
 ## Deployment
 
 See `deploy/VM-DEPLOYMENT.md` in the workspace root. App4 runs on port 3005
-under pm2 with `BASE_PATH=/app4`, and Apache2 proxies `/app4` →
-`http://127.0.0.1:3005/app4`.
+under pm2 with `BASE_PATH=/facilities`, and Apache2 proxies `/facilities` →
+`http://127.0.0.1:3005/facilities`.

@@ -78,6 +78,15 @@ export function addDays(dateKey: string, days: number): string {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+/** The Monday of the week containing the given date key (Mon–Sun weeks). */
+export function mondayOf(dateKey: string): string {
+  const d = new Date(`${dateKey}T00:00:00Z`);
+  const dow = d.getUTCDay(); // 0 = Sunday … 6 = Saturday
+  const back = dow === 0 ? 6 : dow - 1; // days to go back to Monday
+  d.setUTCDate(d.getUTCDate() - back);
+  return d.toISOString().slice(0, 10);
+}
+
 
 /** Range of inclusive day keys from startDate to endDate (IST). */
 export function dayRange(startDate: string, endDate: string): string[] {

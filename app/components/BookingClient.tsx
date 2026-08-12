@@ -17,6 +17,7 @@ import {
   addDays,
   fmtMin,
   fmtSlotRange,
+  mondayOf,
   slotDurationMin,
 } from "@/lib/ist";
 
@@ -74,7 +75,8 @@ export function BookingClient({
   );
   const effMaxLabel = capLabel(effMax);
 
-  const [weekStart, setWeekStart] = useState(today);
+  // The calendar always shows a full Monday–Sunday week.
+  const [weekStart, setWeekStart] = useState(() => mondayOf(today));
   const [bookings, setBookings] = useState<BookingBlock[]>([]);
   const [loading, setLoading] = useState(false);
   const [ranges, setRanges] = useState<RangeSelection[]>([]);
@@ -288,7 +290,7 @@ export function BookingClient({
                   <Button variant="outline" size="icon" onClick={() => setWeekStart((w) => addDays(w, WEEK_DAYS))}>
                     <ChevronRight className="h-4 w-4" />
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setWeekStart(today)}>
+                  <Button variant="ghost" size="sm" onClick={() => setWeekStart(mondayOf(today))}>
                     Today
                   </Button>
                 </div>
