@@ -125,6 +125,7 @@ export function TimeGrid({
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const dragFrom = useRef<{ date: string; min: number } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
 
   const bookedFragments = useMemo(
     () => bookings.flatMap((b) => fragments(b, days).map((f) => ({ ...f, label: b.label, id: b.id }))),
@@ -141,7 +142,7 @@ export function TimeGrid({
   // Scroll the calendar so a requested range is visible.
   useEffect(() => {
     if (!focus) return;
-    const el = containerRef.current?.parentElement;
+    const el = scrollerRef.current;
     if (!el) return;
     const startY = (focus.range.startMin / 1440) * colHeight;
     const max = el.scrollHeight - el.clientHeight;
@@ -300,7 +301,7 @@ export function TimeGrid({
         </div>
       )}
 
-      <div className="overflow-auto rounded-lg border bg-card" style={{ maxHeight: maxHeight ?? "52vh" }}>
+      <div ref={scrollerRef} className="overflow-auto rounded-lg border bg-card" style={{ maxHeight: maxHeight ?? "52vh" }}>
         {/* Day header (sticky) — today is bold but not background-highlighted */}
         <div className="sticky top-0 z-20 flex bg-card border-b">
           <div style={{ width: GUTTER_W }} className="shrink-0" />
