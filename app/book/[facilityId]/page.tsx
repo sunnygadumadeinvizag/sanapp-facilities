@@ -163,7 +163,6 @@ export default async function BookPage({
       <BookingClient
         facility={{ id: facility.id, name: facility.name }}
         editBooking={editBooking}
-        onEdited={() => undefined}
         buildingName={facility.building.name}
         today={today}
         todaySlots={slots}
