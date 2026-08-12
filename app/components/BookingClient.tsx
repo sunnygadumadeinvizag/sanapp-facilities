@@ -1,19 +1,11 @@
 "use client";
 import { apiPath } from "iipe-common-ui";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Loader2, Paperclip, Plus, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Loader2, Paperclip, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -82,12 +74,11 @@ export function BookingClient({
   );
   const effMaxLabel = capLabel(effMax);
 
-  const [open, setOpen] = useState(false);
   const [weekStart, setWeekStart] = useState(today);
   const [bookings, setBookings] = useState<BookingBlock[]>([]);
   const [loading, setLoading] = useState(false);
   const [ranges, setRanges] = useState<RangeSelection[]>([]);
-  const [draft, setDraft] = useState<RangeSelection | null>(null);
+  const [rejectMsg, setRejectMsg] = useState<string | null>(null);
   const [forOther, setForOther] = useState(false);
   const [forQuery, setForQuery] = useState("");
   const [forResults, setForResults] = useState<{ id: string; username: string; name: string }[]>([]);
@@ -98,6 +89,7 @@ export function BookingClient({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const rejectTimer = useRef<number | null>(null);
 
   const days = useMemo(
     () => Array.from({ length: WEEK_DAYS }, (_, i) => addDays(weekStart, i)),
@@ -135,23 +127,8 @@ export function BookingClient({
   );
 
   useEffect(() => {
-    if (open) void loadBookings(weekStart);
-  }, [open, weekStart, loadBookings]);
-
-  function openDialog() {
-    setError(null);
-    setSuccess(null);
-    setRanges([]);
-    setDraft(null);
-    setWeekStart(today);
-    setForOther(false);
-    setForUserId("");
-    setForQuery("");
-    setPurpose("");
-    setPdf(null);
-    setPdfName("");
-    setOpen(true);
-  }
+    void loadBookings(weekStart);
+  }, [weekStart, loadBookings]);
 
   async function searchUsers(q: string) {
     if (!q.trim()) {
@@ -188,10 +165,17 @@ export function BookingClient({
     setPdfName(f.name);
   }
 
-  function addDraft() {
-    if (!draft) return;
-    setRanges((prev) => [...prev, draft]);
-    setDraft(null);
+  /** Auto-commit a dragged range (called by TimeGrid on pointer release). */
+  function commitRange(range: RangeSelection) {
+    setRanges((prev) => [...prev, range]);
+  }
+
+  function rejectRange() {
+    setRejectMsg(
+      "That range overlaps an already-booked slot, another range you selected, or the past — nothing was added."
+    );
+    if (rejectTimer.current) window.clearTimeout(rejectTimer.current);
+    rejectTimer.current = window.setTimeout(() => setRejectMsg(null), 4000);
   }
 
   function removeRange(i: number) {
@@ -255,13 +239,12 @@ export function BookingClient({
     setForQuery("");
     setForResults([]);
     setRanges([]);
-    setDraft(null);
     await loadBookings(weekStart);
     setBusy(false);
   }
 
   return (
-    <div style={{ marginTop: 12 }}>
+    <div>
       {/* Day's schedule chips */}
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="secondary" className="gap-1">
@@ -284,62 +267,55 @@ export function BookingClient({
       </div>
 
       {!eligible && (
-        <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           This facility is restricted to specific primary roles. Your role ({me.primaryRole || "not set"}) is not
           in the allowed list.
           {canApprover ? " You can still block a slot for an eligible user using approval access." : ""}
         </div>
       )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        <Button size="sm" onClick={openDialog} disabled={!eligible && !canApprover}>
-          Book a slot
-        </Button>
-        <span className="text-xs text-muted-foreground">
-          {buildingName} · {facility.name} · max {effMaxLabel} per booking
-        </span>
-      </div>
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        {/* Left column — calendar + selected ranges */}
+        <div className="space-y-4">
+          <Card>
+            <CardContent className="p-4">
+              {/* Week navigation */}
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1">
+                  <Button variant="outline" size="icon" onClick={() => setWeekStart((w) => addDays(w, -WEEK_DAYS))}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" onClick={() => setWeekStart((w) => addDays(w, WEEK_DAYS))}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setWeekStart(today)}>
+                    Today
+                  </Button>
+                </div>
+                <span className="text-sm font-medium">
+                  {days[0]} — {days[days.length - 1]}
+                </span>
+                {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+              </div>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Book {facility.name}</DialogTitle>
-            <DialogDescription>
-              {buildingName} · Drag on the calendar to choose a range, then{" "}
-              <strong>Add another range</strong> to block several durations at once. Ranges from 15
-              minutes up to <strong>{effMaxLabel}</strong> ({isAdmin ? "admin — no limit" : "max for your role"}).
-              Longer blocks (POC) are allowed for designated users. All times are IST.
-            </DialogDescription>
-          </DialogHeader>
+              {rejectMsg && (
+                <div className="mb-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {rejectMsg}
+                </div>
+              )}
 
-          {/* Week navigation */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1">
-              <Button variant="outline" size="icon" onClick={() => setWeekStart((w) => addDays(w, -WEEK_DAYS))}>
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button variant="outline" size="icon" onClick={() => setWeekStart((w) => addDays(w, WEEK_DAYS))}>
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setWeekStart(today)}>
-                Today
-              </Button>
-            </div>
-            <span className="text-sm font-medium">
-              {days[0]} — {days[days.length - 1]}
-            </span>
-            {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-          </div>
-
-          <TimeGrid
-            days={days}
-            bookings={bookings}
-            committed={ranges}
-            draft={draft}
-            onDraft={setDraft}
-            nowMin={nowMin}
-            todayKey={today}
-          />
+              <TimeGrid
+                days={days}
+                bookings={bookings}
+                committed={ranges}
+                onCommit={commitRange}
+                onReject={rejectRange}
+                nowMin={nowMin}
+                todayKey={today}
+                maxHeight="60vh"
+              />
+            </CardContent>
+          </Card>
 
           {/* Selected ranges summary */}
           {ranges.length > 0 && (
@@ -374,7 +350,13 @@ export function BookingClient({
                         </Badge>
                         {cap && <span className="text-xs text-red-600">over {effMaxLabel} limit</span>}
                         <span className="ml-auto">
-                          <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeRange(i)}>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => removeRange(i)}
+                          >
                             <X className="h-3.5 w-3.5" />
                           </Button>
                         </span>
@@ -382,123 +364,111 @@ export function BookingClient({
                     );
                   })}
                 </div>
-                {draft && (
-                  <Button type="button" variant="outline" size="sm" className="mt-3" onClick={addDraft}>
-                    <Plus className="h-3.5 w-3.5" /> Add another range
-                  </Button>
-                )}
-                {!draft && ranges.length >= 1 && (
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    Drag another range on the calendar to add it.
-                  </p>
-                )}
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Drag another range on the calendar to add it — every range stays highlighted until you remove it.
+                </p>
               </CardContent>
             </Card>
           )}
+        </div>
 
-          {draft && ranges.length === 0 && (
-            <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2">
-              <Badge variant="outline">
-                {fmtSlotRange(draft.startDate, draft.startMin, draft.endDate, draft.endMin)}
-              </Badge>
-              <Button type="button" variant="default" size="sm" onClick={addDraft}>
-                <Plus className="h-3.5 w-3.5" /> Add this range
-              </Button>
-            </div>
-          )}
+        {/* Right column — booking details */}
+        <Card className="h-fit xl:sticky xl:top-4">
+          <CardContent className="p-4 space-y-4">
+            {canApprover && (
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={forOther} onCheckedChange={(v) => setForOther(v === true)} />
+                Block these ranges for another user (approval access)
+              </label>
+            )}
 
-          <Card>
-            <CardContent className="p-4">
-              {canApprover && (
-                <label className="mt-1 flex items-center gap-2 text-sm">
-                  <Checkbox checked={forOther} onCheckedChange={(v) => setForOther(v === true)} />
-                  Block these ranges for another user (approval access)
-                </label>
-              )}
-
-              {forOther && (
-                <div className="mt-3">
-                  <Label>Book for (search name or username)</Label>
-                  <Input
-                    value={forQuery}
-                    placeholder="e.g. sanyasi or Sanyasi Naidu"
-                    onChange={(e) => {
-                      setForQuery(e.target.value);
-                      setForUserId("");
-                      void searchUsers(e.target.value);
-                    }}
-                  />
-                  {forResults.length > 0 && (
-                    <div className="mt-2 flex flex-col gap-1">
-                      {forResults.map((u) => (
-                        <Button
-                          key={u.id}
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="justify-start"
-                          onClick={() => {
-                            setForUserId(u.id);
-                            setForQuery(`${u.name} (@${u.username})`);
-                            setForResults([]);
-                          }}
-                        >
-                          {u.name} (@{u.username})
-                        </Button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="mt-3">
-                <Label htmlFor={`purpose-${facility.id}`}>
-                  Description {needPurpose ? "(required)" : "(optional)"}
-                </Label>
-                <Textarea
-                  id={`purpose-${facility.id}`}
-                  rows={2}
-                  placeholder={needPurpose ? "Describe the purpose of these bookings" : "Optional — e.g. weekly staff meeting"}
-                  value={purpose}
-                  onChange={(e) => setPurpose(e.target.value)}
+            {forOther && (
+              <div>
+                <Label>Book for (search name or username)</Label>
+                <Input
+                  value={forQuery}
+                  placeholder="e.g. sanyasi or Sanyasi Naidu"
+                  onChange={(e) => {
+                    setForQuery(e.target.value);
+                    setForUserId("");
+                    void searchUsers(e.target.value);
+                  }}
                 />
+                {forResults.length > 0 && (
+                  <div className="mt-2 flex flex-col gap-1">
+                    {forResults.map((u) => (
+                      <Button
+                        key={u.id}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="justify-start"
+                        onClick={() => {
+                          setForUserId(u.id);
+                          setForQuery(`${u.name} (@${u.username})`);
+                          setForResults([]);
+                        }}
+                      >
+                        {u.name} (@{u.username})
+                      </Button>
+                    ))}
+                  </div>
+                )}
               </div>
+            )}
 
-              <div className="mt-3">
-                <Label>Attachment (PDF, max 1 MB, optional — applies to all ranges)</Label>
-                <div className="mt-1 flex items-center gap-2">
-                  <Input type="file" accept="application/pdf,.pdf" onChange={(e) => pickFile(e.target.files?.[0] ?? null)} />
-                  {pdfName && (
-                    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                      <Paperclip className="h-3 w-3" /> {pdfName}
-                    </span>
-                  )}
-                </div>
+            <div>
+              <Label htmlFor={`purpose-${facility.id}`}>
+                Description {needPurpose ? "(required)" : "(optional)"}
+              </Label>
+              <Textarea
+                id={`purpose-${facility.id}`}
+                rows={2}
+                placeholder={needPurpose ? "Describe the purpose of these bookings" : "Optional — e.g. weekly staff meeting"}
+                value={purpose}
+                onChange={(e) => setPurpose(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <Label>Attachment (PDF, max 1 MB, optional — applies to all ranges)</Label>
+              <div className="mt-1 flex items-center gap-2">
+                <Input type="file" accept="application/pdf,.pdf" onChange={(e) => pickFile(e.target.files?.[0] ?? null)} />
+                {pdfName && (
+                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <Paperclip className="h-3 w-3" /> {pdfName}
+                  </span>
+                )}
               </div>
+            </div>
 
-              {error && <div className="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
-              {success && <div className="mt-3 rounded-md border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">{success}</div>}
+            {error && (
+              <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+            )}
+            {success && (
+              <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">
+                {success}
+              </div>
+            )}
 
-              <DialogFooter className="mt-4">
-                <Button
-                  type="submit"
-                  onClick={submit}
-                  disabled={
-                    busy ||
-                    ranges.length === 0 ||
-                    hasOverCap ||
-                    (forOther && !forUserId) ||
-                    (needPurpose && !purpose.trim()) ||
-                    (anyLong && !canPoc)
-                  }
-                >
-                  {busy ? "Booking…" : `Confirm ${ranges.length > 1 ? `${ranges.length} ranges` : "booking"}`}
-                </Button>
-              </DialogFooter>
-            </CardContent>
-          </Card>
-        </DialogContent>
-      </Dialog>
+            <Button
+              type="submit"
+              className="w-full"
+              onClick={submit}
+              disabled={
+                busy ||
+                ranges.length === 0 ||
+                hasOverCap ||
+                (forOther && !forUserId) ||
+                (needPurpose && !purpose.trim()) ||
+                (anyLong && !canPoc)
+              }
+            >
+              {busy ? "Booking…" : `Confirm ${ranges.length > 1 ? `${ranges.length} ranges` : "booking"}`}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

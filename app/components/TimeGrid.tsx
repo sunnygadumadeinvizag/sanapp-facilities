@@ -68,20 +68,24 @@ export function TimeGrid({
   days,
   bookings,
   committed,
-  draft,
-  onDraft,
+  onCommit,
+  onReject,
   nowMin,
   todayKey,
+  maxHeight,
 }: {
   days: string[];
   bookings: BookingBlock[];
   /** Ranges the user has already locked in (blue overlays). */
   committed: RangeSelection[];
-  /** The range currently being dragged / the latest drag result (can be null). */
-  draft: RangeSelection | null;
-  onDraft: (sel: RangeSelection | null) => void;
+  /** Called when a completed drag produces a non-conflicting range. */
+  onCommit: (range: RangeSelection) => void;
+  /** Called when a completed drag conflicts and is therefore not added. */
+  onReject?: () => void;
   nowMin: number;
   todayKey: string;
+  /** Scroll-area max height (e.g. "52vh" in dialogs, "62vh" on full pages). */
+  maxHeight?: string;
 }) {
   const colHeight = (24 * 60) / CELL_MIN * CELL_H;
   const [drag, setDrag] = useState<RangeSelection | null>(null);
@@ -120,10 +124,14 @@ export function TimeGrid({
     return bookings.some((b) => t >= idx(b.startDate, b.startMin) && t < idx(b.endDate, b.endMin));
   }
 
-  function normalizeAndCommit(a: { date: string; min: number }, b: { date: string; min: number }) {
+  /** Build the normalized range for a completed drag (end cell is inclusive). */
+  function normalizeRange(
+    a: { date: string; min: number },
+    b: { date: string; min: number }
+  ): RangeSelection | null {
     const ai = idx(a.date, a.min);
     const bi = idx(b.date, b.min);
-    if (ai === bi) return;
+    if (ai === bi) return null;
     const start = ai < bi ? a : b;
     const end = ai < bi ? b : a;
     const range: RangeSelection = {
@@ -132,8 +140,8 @@ export function TimeGrid({
       endDate: end.date,
       endMin: end.min + CELL_MIN, // include the whole end cell
     };
-    if (idx(range.endDate, range.endMin) <= idx(range.startDate, range.startMin)) return;
-    onDraft(range);
+    if (idx(range.endDate, range.endMin) <= idx(range.startDate, range.startMin)) return null;
+    return range;
   }
 
   function handlePointerDown(e: React.PointerEvent) {
@@ -173,12 +181,18 @@ export function TimeGrid({
     const from = dragFrom.current;
     const cur = drag;
     dragFrom.current = null;
-    if (cur) normalizeAndCommit(from, { date: cur.endDate, min: cur.endMin - CELL_MIN });
     setDrag(null);
+    if (!cur) return;
+    const range = normalizeRange(from, { date: cur.endDate, min: cur.endMin - CELL_MIN });
+    if (!range) return;
+    if (conflict(range)) {
+      onReject?.();
+      return;
+    }
+    onCommit(range);
   }
 
   const hours = Array.from({ length: 24 }, (_, h) => h * 60);
-  const live = drag ?? draft;
 
   return (
     <div>
@@ -193,7 +207,7 @@ export function TimeGrid({
           <span className="inline-block h-3 w-3 rounded-sm bg-red-500/20 border border-red-400" /> Already booked
         </span>
       </p>
-      <div className="overflow-auto max-h-[52vh] rounded-lg border bg-card">
+      <div className="overflow-auto rounded-lg border bg-card" style={{ maxHeight: maxHeight ?? "52vh" }}>
         {/* Day header (sticky) */}
         <div className="sticky top-0 z-20 flex bg-card border-b">
           <div style={{ width: GUTTER_W }} className="shrink-0" />
@@ -277,8 +291,8 @@ export function TimeGrid({
               <SelectionOverlay key={i} range={r} days={days} colHeight={colHeight} conflict={conflict(r)} solid />
             ))}
 
-            {/* Current drag / draft overlay */}
-            {live && <SelectionOverlay range={live} days={days} colHeight={colHeight} conflict={conflict(live)} />}
+            {/* Current drag overlay */}
+            {drag && <SelectionOverlay range={drag} days={days} colHeight={colHeight} conflict={conflict(drag)} />}
           </div>
         </div>
       </div>

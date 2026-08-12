@@ -1,13 +1,14 @@
 import { notFound } from "next/navigation";
 import { cookies } from "next/headers";
-import { Breadcrumb } from "iipe-common-ui";
+import { Breadcrumb, apiPath } from "iipe-common-ui";
 import { prisma } from "@/lib/prisma";
 import { verifyAppSession } from "@/lib/session";
 import { AppShell } from "../../components/AppShell";
-import { BookingClient, type SlotItem } from "../../components/BookingClient";
+import type { SlotItem } from "../../components/BookingClient";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { istDateKey, istMinute, SLOT_MAX_MINUTES } from "@/lib/ist";
+import { istDateKey, istMinute, SLOT_MAX_MINUTES, fmtMin } from "@/lib/ist";
 import { capLabel } from "@/lib/limits";
 import { primaryRoleLabel } from "@/lib/labels";
 
@@ -26,9 +27,6 @@ export default async function BuildingPage({
     // The proxy normally handles this; guard here too for direct hits.
     return <p className="iipe-container">Session not found.</p>;
   }
-
-  // Designations (approver / POC) live on the local user, not the session.
-  const local = await prisma.appUser.findUnique({ where: { username: me.username } });
 
   const building = await prisma.building.findUnique({
     where: { id },
@@ -100,11 +98,6 @@ export default async function BuildingPage({
               bookerName: b.user.name,
               forName: b.forUser?.name ?? null,
             }));
-            // ADMINs can book any facility (the server bypasses restrictions).
-            const eligible =
-              me.role === "ADMIN" ||
-              f.allowedRoles.length === 0 ||
-              (me.primaryRole ? f.allowedRoles.includes(me.primaryRole) : false);
             return (
               <Card key={f.id} className="p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -122,32 +115,34 @@ export default async function BuildingPage({
                       </p>
                     )}
                   </div>
-                  {f.allowedRoles.length > 0 ? (
-                    <Badge variant="secondary" className="whitespace-normal text-right">
-                      {f.allowedRoles.map((r) => primaryRoleLabel(r)).join(" · ")}
-                    </Badge>
-                  ) : (
-                    <Badge>Open to all</Badge>
-                  )}
+                  <div className="flex flex-col items-end gap-2">
+                    {f.allowedRoles.length > 0 ? (
+                      <Badge variant="secondary" className="whitespace-normal text-right">
+                        {f.allowedRoles.map((r) => primaryRoleLabel(r)).join(" · ")}
+                      </Badge>
+                    ) : (
+                      <Badge>Open to all</Badge>
+                    )}
+                    <Button size="sm" asChild>
+                      <a href={apiPath(`/book/${f.id}`)}>Book a slot</a>
+                    </Button>
+                  </div>
                 </div>
-                <BookingClient
-                  facility={{ id: f.id, name: f.name }}
-                  buildingName={building.name}
-                  today={today}
-                  todaySlots={slots}
-                  me={{
-                    name: me.name,
-                    primaryRole: me.primaryRole ?? "",
-                    role: local?.role ?? "USER",
-                    isApprover: local?.isApprover ?? false,
-                    isPoc: local?.isPoc ?? false,
-                  }}
-                  eligible={eligible}
-                  nowMin={nowMin}
-                  maxMinutes={f.maxMinutes}
-                  buildingMaxMinutes={building.maxMinutes}
-                  roleLimits={(f as any).roleLimits ?? []}
-                />
+                {slots.length > 0 && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-muted-foreground">Today:</span>
+                    {slots.map((s) => (
+                      <Badge
+                        key={s.id}
+                        variant="outline"
+                        className="gap-1 text-red-700 border-red-300 bg-red-50"
+                        title={s.forName ? `Blocked for ${s.forName}` : undefined}
+                      >
+                        {fmtMin(s.startMin)}–{fmtMin(s.endMin)} IST · {s.forName ?? s.bookerName}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
               </Card>
             );
           })}
@@ -155,8 +150,9 @@ export default async function BuildingPage({
       )}
 
       <p className="mt-4 text-xs text-muted-foreground">
-        Slots shown for {today} (IST). Use the calendar in a facility card to view other days and
-        book — drag to select a range, including overnight and multi-day blocks. Current IST time:{" "}
+        Open a facility to book — the calendar shows 7 days at a time. Drag to select a range and
+        release to add it, including overnight and multi-day blocks. All times are IST (server time).
+        Current IST time:{" "}
         {`${String(Math.floor(nowMin / 60)).padStart(2, "0")}:${String(nowMin % 60).padStart(2, "0")}`}.
       </p>
     </AppShell>
