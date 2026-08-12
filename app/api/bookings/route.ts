@@ -26,6 +26,7 @@ function endDayOf(date: string, endDate: string): string {
 
 const BOOKING_LIST_SELECT = {
   id: true,
+  batchId: true,
   type: true,
   status: true,
   date: true,
@@ -87,9 +88,42 @@ export async function GET(request: NextRequest) {
   const mine = searchParams.get("mine") === "1";
   const all = searchParams.get("all") === "1";
 
+  // List-view filters (mine/all): q = free-text search, status, booker userId,
+  // buildingId, facilityId, and from/to as a start-date range.
+  const q = (searchParams.get("q") ?? "").trim().toLowerCase();
+  const status = searchParams.get("status") ?? "";
+  const userId = searchParams.get("userId") ?? "";
+  const buildingId = searchParams.get("buildingId") ?? "";
+  const facilityFilter = searchParams.get("facilityId") ?? "";
+  const dateFrom = searchParams.get("dateFrom") ?? "";
+  const dateTo = searchParams.get("dateTo") ?? "";
+
+  const listWhere: Record<string, unknown> = {};
+  if (status === "CONFIRMED" || status === "CANCELLED") listWhere.status = status;
+  if (userId) listWhere.userId = userId;
+  if (facilityFilter) listWhere.facilityId = facilityFilter;
+  if (buildingId) listWhere.facility = { buildingId };
+  if (dateFrom && DATE_RE.test(dateFrom)) listWhere.date = { gte: dateFrom, ...(listWhere.date ?? {}) };
+  if (dateTo && DATE_RE.test(dateTo)) {
+    listWhere.date = { ...(listWhere.date ?? {}), lte: dateTo };
+  }
+  if (q) {
+    const term = { contains: q, mode: "insensitive" as const };
+    listWhere.OR = [
+      { facility: { name: term } },
+      { facility: { building: { name: term } } },
+      { purpose: term },
+      { user: { name: term } },
+      { user: { username: term } },
+      { forUser: { name: term } },
+      { forUser: { username: term } },
+    ];
+  }
+
   if (all) {
     if (user.role !== "ADMIN") return bad("forbidden", 403);
     const rows = await prisma.booking.findMany({
+      where: listWhere,
       orderBy: [{ date: "desc" }, { startMin: "desc" }],
       select: BOOKING_LIST_SELECT,
     });
@@ -103,7 +137,8 @@ export async function GET(request: NextRequest) {
 
   if (mine) {
     const rows = await prisma.booking.findMany({
-      where: { OR: [{ userId: user.id }, { forUserId: user.id }] },
+      // listWhere (filters incl. free-text OR) AND the mine filter.
+      where: { AND: [listWhere, { OR: [{ userId: user.id }, { forUserId: user.id }] }] },
       orderBy: [{ date: "asc" }, { startMin: "asc" }],
       select: BOOKING_LIST_SELECT,
     });
@@ -167,7 +202,7 @@ export async function POST(request: NextRequest) {
 
   if (ct.includes("multipart/form-data")) {
     const form = await request.formData();
-    for (const key of ["facilityId", "date", "endDate", "startDate", "startMin", "endMin", "purpose", "forUserId"]) {
+    for (const key of ["facilityId", "date", "endDate", "startDate", "startMin", "endMin", "purpose", "forUserId", "batchId"]) {
       const v = form.get(key);
       if (v !== null && v !== undefined && typeof v === "string") body[key] = v;
     }
@@ -196,6 +231,7 @@ export async function POST(request: NextRequest) {
   const endMin = Number(body.endMin);
   const purpose = String(body.purpose ?? "").trim();
   const forUserId = String(body.forUserId ?? "").trim();
+  const batchId = String(body.batchId ?? "").trim() || undefined;
 
   if (!facilityId || !startDate || !DATE_RE.test(startDate)) {
     return bad("facilityId and start date (YYYY-MM-DD) are required");
@@ -346,6 +382,7 @@ export async function POST(request: NextRequest) {
   const booking = await prisma.booking.create({
     data: {
       facilityId,
+      batchId,
       userId: user.id,
       forUserId: resolvedForUserId,
       type,

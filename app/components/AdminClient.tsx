@@ -1,7 +1,7 @@
 "use client";
 import { apiPath } from "iipe-common-ui";
 import { useCallback, useEffect, useState } from "react";
-import { CalendarClock, FileText, Loader2, Pencil, Trash2 } from "lucide-react";
+import { Loader2, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,8 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { EditBookingDialog } from "./EditBookingDialog";
-import { fmtIstDateTime, fmtMin, fmtSlotRange, slotDurationMin } from "@/lib/ist";
+import { AdminBookingsTab } from "./AdminBookingsTab";
 import { capLabel } from "@/lib/limits";
 import { PRIMARY_ROLE_LABELS } from "@/lib/labels";
 
@@ -101,7 +100,7 @@ export function AdminClient({ isAdmin, today }: { isAdmin: boolean; today: strin
         <TabsContent value="buildings"><BuildingsTab onError={setError} /></TabsContent>
         <TabsContent value="facilities"><FacilitiesTab onError={setError} /></TabsContent>
         <TabsContent value="users"><UsersTab onError={setError} /></TabsContent>
-        <TabsContent value="bookings"><BookingsTab onError={setError} today={today} /></TabsContent>
+        <TabsContent value="bookings"><AdminBookingsTab onError={setError} today={today} /></TabsContent>
       </Tabs>
     </div>
   );
@@ -596,172 +595,6 @@ function UsersTab({ onError }: { onError: (s: string | null) => void }) {
           </CardContent>
         </Card>
       ))}
-    </div>
-  );
-}
-
-/* -------------------------------- Bookings -------------------------------- */
-
-function BookingsTab({ onError, today }: { onError: (s: string | null) => void; today: string }) {
-  const [bookings, setBookings] = useState<AdminBooking[]>([]);
-  const [statusFilter, setStatusFilter] = useState("ALL");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [edit, setEdit] = useState<AdminBooking | null>(null);
-
-  const load = useCallback(async () => {
-    const res = await fetch(apiPath("/api/bookings?all=1"), { cache: "no-store" });
-    const data = await res.json();
-    if (res.ok) setBookings(data.bookings);
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function cancelMany(ids: string[]) {
-    if (ids.length === 0) return;
-    const reason = window.prompt(`Reason for cancelling ${ids.length} booking(s) (optional):`) ?? null;
-    if (reason === null) return;
-    const res = await fetch(
-      apiPath(`/api/bookings?id=${ids.join(",")}&reason=${encodeURIComponent(reason)}`),
-      { method: "DELETE" }
-    );
-    const data = await res.json();
-    if (!res.ok) return onError(data.error ?? "Could not cancel");
-    onError(null);
-    setSelected(new Set());
-    await load();
-  }
-
-  const visible = statusFilter === "ALL" ? bookings : bookings.filter((b) => b.status === statusFilter);
-  const cancellableVisible = visible.filter((b) => b.status === "CONFIRMED");
-
-  function toggle(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function toggleAll() {
-    const ids = cancellableVisible.map((b) => b.id);
-    setSelected((prev) => (prev.size === ids.length && ids.length > 0 ? new Set() : new Set(ids)));
-  }
-
-  if (bookings.length === 0) return <p className="text-muted-foreground">No bookings yet.</p>;
-
-  return (
-    <div className="grid gap-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Status:</span>
-          {["ALL", "CONFIRMED", "CANCELLED"].map((st) => (
-            <Button
-              key={st}
-              size="sm"
-              variant={statusFilter === st ? "default" : "outline"}
-              onClick={() => setStatusFilter(st)}
-            >
-              {st === "ALL" ? "All" : st === "CONFIRMED" ? "Confirmed" : "Cancelled"}
-            </Button>
-          ))}
-        </div>
-        <span className="ml-auto" />
-        {selected.size > 0 && (
-          <Button variant="destructive" size="sm" onClick={() => cancelMany([...selected])}>
-            <Trash2 className="h-3.5 w-3.5" /> Cancel selected ({selected.size})
-          </Button>
-        )}
-      </div>
-
-      {visible.length === 0 && <p className="text-muted-foreground">Nothing here.</p>}
-      {visible.length > 0 && (
-        <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
-          <Checkbox
-            checked={selected.size === cancellableVisible.length && cancellableVisible.length > 0}
-            onCheckedChange={() => toggleAll()}
-          />
-          Select all confirmed — cancel several at once
-        </div>
-      )}
-
-      {visible.map((b) => {
-        const dur = slotDurationMin(b.date, b.startMin, b.endDate, b.endMin);
-        const cancellable = b.status === "CONFIRMED";
-        return (
-          <Card key={b.id}>
-            <CardContent className="p-4">
-              <div className="flex items-start gap-3">
-                <Checkbox
-                  checked={selected.has(b.id)}
-                  onCheckedChange={() => toggle(b.id)}
-                  disabled={!cancellable}
-                  aria-label={`Select ${b.facility.name} booking`}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold">{b.facility.building.name} — {b.facility.name}</span>
-                    <Badge variant={b.type === "LONG" ? "destructive" : "secondary"}>
-                      {b.type === "SELF" ? "Self" : b.type === "ON_BEHALF" ? "Blocked" : "Long"}
-                    </Badge>
-                    {b.status === "CANCELLED" && <Badge variant="outline">Cancelled</Badge>}
-                  </div>
-                  <div className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
-                    <CalendarClock className="h-3.5 w-3.5" />
-                    {fmtSlotRange(b.date, b.startMin, b.endDate, b.endMin)}
-                    <span className="text-xs">
-                      · {dur < 60 ? `${dur} min` : `${(dur / 60).toFixed(dur % 60 ? 1 : 0)} h`}
-                    </span>
-                  </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {b.user.name} (@{b.user.username})
-                    {b.forUser ? ` → blocked for ${b.forUser.name} (@${b.forUser.username})` : ""}
-                  </div>
-                  {b.purpose && <p className="mt-1 text-sm">{b.purpose}</p>}
-                  {b.status === "CANCELLED" && (
-                    <div className="mt-1.5 rounded-md bg-red-50 px-2.5 py-1.5 text-xs text-red-700">
-                      Cancelled{b.cancelledBy ? ` by ${b.cancelledBy.name} (@${b.cancelledBy.username})` : ""}
-                      {b.cancelledAt ? ` on ${fmtIstDateTime(b.cancelledAt)}` : ""}
-                      {b.cancelReason ? ` — “${b.cancelReason}”` : ""}
-                    </div>
-                  )}
-                </div>
-                <div className="flex shrink-0 gap-1.5">
-                  {b.pdf && (
-                    <Button variant="outline" size="icon" className="h-8 w-8" asChild title="Attachment">
-                      <a href={apiPath(`/api/bookings/${b.id}/pdf`)} target="_blank" rel="noreferrer">
-                        <FileText className="h-3.5 w-3.5" />
-                      </a>
-                    </Button>
-                  )}
-                  {cancellable && (
-                    <Button variant="outline" size="icon" className="h-8 w-8" title="Edit booking" onClick={() => setEdit(b)}>
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                  {cancellable && (
-                    <Button variant="outline" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700" title="Cancel booking" onClick={() => cancelMany([b.id])}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })}
-
-      {edit && (
-        <EditBookingDialog
-          booking={edit}
-          today={today}
-          onClose={() => setEdit(null)}
-          onSaved={() => { setEdit(null); void load(); }}
-          onError={(s) => onError(s)}
-        />
-      )}
     </div>
   );
 }

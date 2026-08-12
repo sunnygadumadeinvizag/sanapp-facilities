@@ -13,10 +13,14 @@ export const dynamic = "force-dynamic";
 
 export default async function BookPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ facilityId: string }>;
+  searchParams: Promise<{ edit?: string }>;
 }) {
   const { facilityId } = await params;
+  const sp = await searchParams;
+  const editId = sp.edit ?? "";
   const store = await cookies();
   const session = store.get("app4_session")?.value ?? "";
   const me = await verifyAppSession(session);
@@ -46,6 +50,53 @@ export default async function BookPage({
 
   if (!facility) {
     notFound();
+  }
+
+  // Edit mode: ?edit=<bookingId> pre-fills the range/details on the calendar.
+  let editBooking: {
+    id: string;
+    date: string;
+    endDate: string;
+    startMin: number;
+    endMin: number;
+    purpose: string | null;
+    type: "SELF" | "ON_BEHALF" | "LONG";
+    forUserId: string | null;
+  } | null = null;
+  if (editId) {
+    const b = await prisma.booking.findUnique({
+      where: { id: editId },
+      select: {
+        id: true,
+        facilityId: true,
+        date: true,
+        endDate: true,
+        startMin: true,
+        endMin: true,
+        purpose: true,
+        type: true,
+        forUserId: true,
+        userId: true,
+        status: true,
+      },
+    });
+    if (
+      b &&
+      b.facilityId === facility.id &&
+      b.status === "CONFIRMED" &&
+      (b.userId === local?.id || local?.role === "ADMIN" || b.forUserId === local?.id)
+    ) {
+      editBooking = {
+        id: b.id,
+        date: b.date,
+        endDate: b.endDate || b.date,
+        startMin: b.startMin,
+        endMin: b.endMin,
+        purpose: b.purpose,
+        type: b.type,
+        forUserId: b.forUserId,
+      };
+    }
   }
 
   const today = istDateKey();
@@ -92,7 +143,7 @@ export default async function BookPage({
 
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="iipe-page-title">Book {facility.name}</h1>
+          <h1 className="iipe-page-title">{editBooking ? `Edit booking — ${facility.name}` : `Book ${facility.name}`}</h1>
           <p className="iipe-page-sub">
             {facility.building.name}
             {facility.building.location ? ` · ${facility.building.location}` : ""}
@@ -111,6 +162,8 @@ export default async function BookPage({
 
       <BookingClient
         facility={{ id: facility.id, name: facility.name }}
+        editBooking={editBooking}
+        onEdited={() => undefined}
         buildingName={facility.building.name}
         today={today}
         todaySlots={slots}

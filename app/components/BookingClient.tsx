@@ -1,6 +1,7 @@
 "use client";
 import { apiPath } from "iipe-common-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, Crosshair, Loader2, Paperclip, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -83,6 +84,17 @@ function parseTime(v: string): number | null {
   return h * 60 + mm;
 }
 
+export type EditBookingInfo = {
+  id: string;
+  date: string;
+  endDate: string;
+  startMin: number;
+  endMin: number;
+  purpose: string | null;
+  type: "SELF" | "ON_BEHALF" | "LONG";
+  forUserId?: string | null;
+};
+
 export function BookingClient({
   facility,
   buildingName,
@@ -94,6 +106,8 @@ export function BookingClient({
   maxMinutes = null,
   buildingMaxMinutes = null,
   roleLimits = [],
+  editBooking = null,
+  onEdited,
 }: {
   facility: { id: string; name: string };
   buildingName: string;
@@ -105,7 +119,10 @@ export function BookingClient({
   maxMinutes?: number | null;
   buildingMaxMinutes?: number | null;
   roleLimits?: { role: string; maxMinutes: number }[];
+  editBooking?: EditBookingInfo | null;
+  onEdited?: () => void;
 }) {
+  const router = useRouter();
   const canApprover = me.isApprover || me.role === "ADMIN";
   const canPoc = me.isPoc || me.role === "ADMIN";
   const isAdmin = me.role === "ADMIN";
@@ -121,16 +138,30 @@ export function BookingClient({
   const [weekStart, setWeekStart] = useState(() => mondayOf(today));
   const [bookings, setBookings] = useState<BookingBlock[]>([]);
   const [loading, setLoading] = useState(false);
-  const [ranges, setRanges] = useState<PendingRange[]>([]);
-  const idRef = useRef(0);
+  const [ranges, setRanges] = useState<PendingRange[]>(() =>
+    editBooking
+      ? [
+          {
+            id: 0,
+            range: {
+              startDate: editBooking.date,
+              startMin: editBooking.startMin,
+              endDate: editBooking.endDate || editBooking.date,
+              endMin: editBooking.endMin,
+            },
+          },
+        ]
+      : []
+  );
+  const idRef = useRef(editBooking ? 1 : 0);
   const [focusReq, setFocusReq] = useState<FocusRequest | null>(null);
   const focusNonce = useRef(0);
   const [rejectMsg, setRejectMsg] = useState<string | null>(null);
-  const [forOther, setForOther] = useState(false);
+  const [forOther, setForOther] = useState(editBooking ? editBooking.type === "ON_BEHALF" : false);
   const [forQuery, setForQuery] = useState("");
   const [forResults, setForResults] = useState<{ id: string; username: string; name: string }[]>([]);
-  const [forUserId, setForUserId] = useState("");
-  const [purpose, setPurpose] = useState("");
+  const [forUserId, setForUserId] = useState(editBooking?.forUserId ?? "");
+  const [purpose, setPurpose] = useState(editBooking?.purpose ?? "");
   const [pdfName, setPdfName] = useState("");
   const [pdf, setPdf] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
@@ -219,6 +250,10 @@ export function BookingClient({
    */
   function commitRange(range: RangeSelection, mergeIndices?: number[]) {
     setRanges((prev) => {
+      // In edit mode there is exactly one range — a new drag replaces it.
+      if (editBooking) {
+        return [{ id: prev[0]?.id ?? ++idRef.current, range }];
+      }
       if (mergeIndices && mergeIndices.length > 0) {
         const keep = prev.filter((_, i) => !mergeIndices.includes(i));
         const id = prev[mergeIndices[0]]?.id ?? ++idRef.current;
@@ -285,11 +320,44 @@ export function BookingClient({
     setError(null);
     setSuccess(null);
 
+    // One batchId for every range in this submission (grouped as one booking).
+    // Edit mode: PATCH the single existing booking.
+    if (editBooking) {
+      const { range } = ranges[0];
+      try {
+        const res = await fetch(apiPath("/api/bookings"), {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            id: editBooking.id,
+            startDate: range.startDate,
+            endDate: range.endDate,
+            startMin: range.startMin,
+            endMin: range.endMin,
+            purpose: purpose.trim() || null,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Could not update the booking");
+        setSuccess("Booking updated.");
+        setBusy(false);
+        onEdited?.();
+        window.setTimeout(() => router.push(apiPath("/my-bookings")), 800);
+        return;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not update the booking");
+        setBusy(false);
+        return;
+      }
+    }
+
+    const batchId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
     const created: string[] = [];
     const failed: string[] = [];
     for (const { range } of ranges) {
       const form = new FormData();
       form.set("facilityId", facility.id);
+      form.set("batchId", batchId);
       form.set("startDate", range.startDate);
       form.set("endDate", range.endDate);
       form.set("startMin", String(range.startMin));
@@ -448,7 +516,7 @@ export function BookingClient({
         {/* Right column — booking details */}
         <Card className="h-fit xl:sticky xl:top-4">
           <CardContent className="p-4 space-y-4">
-            {canApprover && (
+            {!editBooking && canApprover && (
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox checked={forOther} onCheckedChange={(v) => setForOther(v === true)} />
                 Block these ranges for another user (approval access)
@@ -503,6 +571,7 @@ export function BookingClient({
               />
             </div>
 
+            {!editBooking && (
             <div>
               <Label>Attachment (PDF, max 1 MB, optional — applies to all ranges)</Label>
               <div className="mt-1 flex items-center gap-2">
@@ -514,6 +583,7 @@ export function BookingClient({
                 )}
               </div>
             </div>
+            )}
 
             {error && (
               <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
@@ -537,7 +607,7 @@ export function BookingClient({
                 (anyLong && !canPoc)
               }
             >
-              {busy ? "Booking…" : `Confirm ${ranges.length > 1 ? `${ranges.length} ranges` : "booking"}`}
+              {busy ? "Saving…" : editBooking ? "Save changes" : `Confirm ${ranges.length > 1 ? `${ranges.length} ranges` : "booking"}`}
             </Button>
           </CardContent>
         </Card>

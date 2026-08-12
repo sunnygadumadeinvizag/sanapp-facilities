@@ -95,6 +95,10 @@ model Booking {
   id         String        @id @default(uuid())
   facilityId String
   facility   Facility      @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  // Submission group: all slots confirmed in one multi-range submission share
+  // one batchId, so they can be shown as a single "booking". NULL for slots
+  // created before batching (each is its own booking).
+  batchId    String?
   // The user who made the booking.
   userId     String
   user       AppUser       @relation("Booker", fields: [userId], references: [id], onDelete: Cascade)
