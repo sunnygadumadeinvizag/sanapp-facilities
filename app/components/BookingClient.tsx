@@ -342,7 +342,8 @@ export function BookingClient({
         setSuccess("Booking updated.");
         setBusy(false);
         onEdited?.();
-        window.setTimeout(() => router.push(apiPath("/my-bookings")), 800);
+        // Next appends the basePath to router.push, so pass the unprefixed path.
+        window.setTimeout(() => router.push("/my-bookings"), 800);
         return;
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not update the booking");
