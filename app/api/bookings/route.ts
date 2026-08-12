@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@/generated/prisma/client";
 import { currentUser, listSsoUsers } from "@/lib/auth";
 import {
   PDF_MAX_BYTES,
@@ -49,7 +50,19 @@ const BOOKING_LIST_SELECT = {
   cancelledBy: { select: { id: true, username: true, name: true } },
 };
 
+/** Raised inside a booking transaction when the slot conflicts — maps to HTTP 409. */
+class SlotConflict extends Error {}
+
+/** True when PostgreSQL rejected the write via the no-overlap exclusion constraint. */
+function isExclusionViolation(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const code = (e as { code?: unknown }).code;
+  const message = String((e as { message?: unknown }).message ?? "");
+  return code === "P2004" || code === "23P01" || /exclusion|no_overlap/i.test(message);
+}
+
 async function hasConflict(
+  client: { booking: typeof prisma.booking },
   facilityId: string,
   startDate: string,
   endDate: string,
@@ -59,7 +72,7 @@ async function hasConflict(
 ) {
   const startIdx = slotIndex(startDate, startMin);
   const endIdx = slotIndex(endDate, endMin);
-  const overlapping = await prisma.booking.findMany({
+  const overlapping = await client.booking.findMany({
     where: {
       facilityId,
       status: "CONFIRMED",
@@ -372,36 +385,48 @@ export async function POST(request: NextRequest) {
     return bad("A description is required for this type of booking");
   }
 
-  if (await hasConflict(facilityId, startDate, endDate, startMin, endMin)) {
-    return bad(
-      "That time range is already booked — please pick a free range in the calendar",
-      409
-    );
+  const CONFLICT_MSG =
+    "That time range is already booked — please pick a free range in the calendar";
+  let booking: Awaited<ReturnType<typeof prisma.booking.create>>;
+  try {
+    // Lock the facility row so concurrent booking attempts for the same
+    // facility serialise — the conflict re-check and the insert are atomic,
+    // so two users racing for the same (or overlapping) slot cannot both win.
+    booking = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Facility" WHERE id = ${facilityId} FOR UPDATE`;
+      if (await hasConflict(tx, facilityId, startDate, endDate, startMin, endMin)) {
+        throw new SlotConflict(CONFLICT_MSG);
+      }
+      return await tx.booking.create({
+        data: {
+          facilityId,
+          batchId,
+          userId: user.id,
+          forUserId: resolvedForUserId,
+          type,
+          status: "CONFIRMED",
+          date: startDate,
+          endDate,
+          startMin,
+          endMin,
+          purpose: purpose || null,
+          // Buffer -> Uint8Array<ArrayBuffer> for Prisma Bytes.
+          pdf: pdf ? (() => { const b = new Uint8Array(pdf.byteLength); b.set(pdf); return b; })() : undefined,
+          pdfName: pdfName ?? undefined,
+        },
+        include: {
+          facility: { select: { id: true, name: true, building: { select: { id: true, name: true } } } },
+          user: { select: { id: true, username: true, name: true } },
+          forUser: { select: { id: true, username: true, name: true } },
+        },
+      });
+    });
+  } catch (e) {
+    if (e instanceof SlotConflict || isExclusionViolation(e)) {
+      return bad(CONFLICT_MSG, 409);
+    }
+    throw e;
   }
-
-  const booking = await prisma.booking.create({
-    data: {
-      facilityId,
-      batchId,
-      userId: user.id,
-      forUserId: resolvedForUserId,
-      type,
-      status: "CONFIRMED",
-      date: startDate,
-      endDate,
-      startMin,
-      endMin,
-      purpose: purpose || null,
-      // Buffer -> Uint8Array<ArrayBuffer> for Prisma Bytes.
-      pdf: pdf ? (() => { const b = new Uint8Array(pdf.byteLength); b.set(pdf); return b; })() : undefined,
-      pdfName: pdfName ?? undefined,
-    },
-    include: {
-      facility: { select: { id: true, name: true, building: { select: { id: true, name: true } } } },
-      user: { select: { id: true, username: true, name: true } },
-      forUser: { select: { id: true, username: true, name: true } },
-    },
-  });
 
   return NextResponse.json(
     { booking, message: "Booking confirmed" },
@@ -492,15 +517,26 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
-  if (await hasConflict(facility.id, startDate, endDate, startMin, endMin, id)) {
-    return bad("That time range is already booked — please pick a free range", 409);
+  const CONFLICT_MSG = "That time range is already booked — please pick a free range";
+  let updated: Prisma.BookingGetPayload<{ select: typeof BOOKING_LIST_SELECT }>;
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Facility" WHERE id = ${facility.id} FOR UPDATE`;
+      if (await hasConflict(tx, facility.id, startDate, endDate, startMin, endMin, id)) {
+        throw new SlotConflict(CONFLICT_MSG);
+      }
+      return await tx.booking.update({
+        where: { id },
+        data: { date: startDate, endDate, startMin, endMin, purpose },
+        select: BOOKING_LIST_SELECT,
+      });
+    });
+  } catch (e) {
+    if (e instanceof SlotConflict || isExclusionViolation(e)) {
+      return bad(CONFLICT_MSG, 409);
+    }
+    throw e;
   }
-
-  const updated = await prisma.booking.update({
-    where: { id },
-    data: { date: startDate, endDate, startMin, endMin, purpose },
-    select: BOOKING_LIST_SELECT,
-  });
   return NextResponse.json({
     booking: { ...updated, pdf: Boolean(updated.pdfName) },
     message: "Booking updated",
