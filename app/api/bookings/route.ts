@@ -444,7 +444,39 @@ export async function PATCH(request: NextRequest) {
   const user = await currentUser();
   if (!user) return bad("unauthorized", 401);
 
-  const body = await request.json().catch(() => ({}));
+  // Accept both plain JSON and multipart/form-data (the latter carries an
+  // optional replacement PDF). Both forms carry the same slot fields.
+  const ct = request.headers.get("content-type") ?? "";
+  let body: Record<string, unknown> = {};
+  let pdf: Buffer | null = null;
+  let pdfName: string | null = null;
+  let pdfClear = false;
+  if (ct.includes("multipart/form-data")) {
+    const form = await request.formData();
+    for (const key of ["id", "startDate", "endDate", "startMin", "endMin", "purpose"]) {
+      const v = form.get(key);
+      if (v !== null && v !== undefined && typeof v === "string") body[key] = v;
+    }
+    pdfClear = form.get("pdfClear") === "1";
+    const file = form.get("pdf");
+    if (file && typeof file !== "string" && file.size > 0) {
+      const bytes = Buffer.from(await file.arrayBuffer());
+      const name = file.name || "";
+      const type = file.type || "";
+      if (bytes.length > PDF_MAX_BYTES) {
+        return bad("PDF attachment must be 1 MB or smaller");
+      }
+      if (!name.toLowerCase().endsWith(".pdf") && type !== "application/pdf") {
+        return bad("Attachment must be a PDF file");
+      }
+      pdf = bytes;
+      pdfName = name;
+    }
+  } else {
+    body = await request.json().catch(() => ({}));
+    pdfClear = body.pdfClear === "1";
+  }
+
   const id = String(body.id ?? "").trim();
   if (!id) return bad("id is required");
 
@@ -525,9 +557,25 @@ export async function PATCH(request: NextRequest) {
       if (await hasConflict(tx, facility.id, startDate, endDate, startMin, endMin, id)) {
         throw new SlotConflict(CONFLICT_MSG);
       }
+      const data: Prisma.BookingUncheckedUpdateInput = {
+        date: startDate,
+        endDate,
+        startMin,
+        endMin,
+        purpose,
+      };
+      if (pdf && pdfName) {
+        const b = new Uint8Array(pdf.byteLength);
+        b.set(pdf);
+        data.pdf = b;
+        data.pdfName = pdfName;
+      } else if (pdfClear) {
+        data.pdf = null;
+        data.pdfName = null;
+      }
       return await tx.booking.update({
         where: { id },
-        data: { date: startDate, endDate, startMin, endMin, purpose },
+        data,
         select: BOOKING_LIST_SELECT,
       });
     });

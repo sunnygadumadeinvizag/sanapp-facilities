@@ -62,6 +62,7 @@ export default async function BookPage({
     purpose: string | null;
     type: "SELF" | "ON_BEHALF" | "LONG";
     forUserId: string | null;
+    pdfName: string | null;
   } | null = null;
   if (editId) {
     const b = await prisma.booking.findUnique({
@@ -78,6 +79,7 @@ export default async function BookPage({
         forUserId: true,
         userId: true,
         status: true,
+        pdfName: true,
       },
     });
     if (
@@ -95,6 +97,7 @@ export default async function BookPage({
         purpose: b.purpose,
         type: b.type,
         forUserId: b.forUserId,
+        pdfName: b.pdfName,
       };
     }
   }

@@ -126,6 +126,10 @@ export function TimeGrid({
   const dragFrom = useRef<{ date: string; min: number } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  // Last pointer position + auto-scroll state used while dragging near the edges.
+  const lastPosRef = useRef<{ x: number; y: number } | null>(null);
+  const scrollDirRef = useRef<{ h: -1 | 0 | 1; v: -1 | 0 | 1 }>({ h: 0, v: 0 });
+  const autoScrollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const bookedFragments = useMemo(
     () => bookings.flatMap((b) => fragments(b, days).map((f) => ({ ...f, label: b.label, id: b.id }))),
@@ -149,18 +153,83 @@ export function TimeGrid({
     el.scrollTop = Math.max(0, Math.min(startY - 80, max));
   }, [focus, colHeight]);
 
-  function cellFromEvent(e: React.PointerEvent): { date: string; min: number } | null {
+  /** Resolve a viewport point to a calendar cell (works while the scroller is auto-scrolling). */
+  function cellFromXY(clientX: number, clientY: number): { date: string; min: number } | null {
     const el = containerRef.current;
     if (!el) return null;
     const rect = el.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top - 0; // header is outside the grid container
+    const x = clientX - rect.left;
+    const y = clientY - rect.top; // header is outside the grid container
     if (x < GUTTER_W) return null;
     const dayIdx = Math.floor((x - GUTTER_W) / COL_W);
     if (dayIdx < 0 || dayIdx >= days.length) return null;
     const min = Math.max(0, Math.min(24 * 60 - CELL_MIN, Math.floor(y / zoom.cellH) * CELL_MIN));
     return { date: days[dayIdx], min };
   }
+
+  function cellFromEvent(e: React.PointerEvent): { date: string; min: number } | null {
+    return cellFromXY(e.clientX, e.clientY);
+  }
+
+  const EDGE_ZONE = 32; // px from a scroller edge that triggers auto-scroll
+  const SCROLL_STEP = 12; // px per 16ms tick while dragging near an edge
+
+  /** Extend the drag using the last known pointer position (used by the auto-scroll tick). */
+  function applyDragFromPointer(x: number, y: number) {
+    if (!dragFrom.current) return;
+    const cell = cellFromXY(x, y);
+    if (!cell) return;
+    const ai = idx(dragFrom.current.date, dragFrom.current.min);
+    const bi = idx(cell.date, cell.min);
+    const start = ai <= bi ? dragFrom.current : cell;
+    const end = ai <= bi ? cell : dragFrom.current;
+    setDrag({ startDate: start.date, startMin: start.min, endDate: end.date, endMin: end.min + CELL_MIN });
+  }
+
+  /** Which way to auto-scroll for a pointer position (0 = inside the edges). */
+  function edgeDirFromPointer(clientX: number, clientY: number): { h: -1 | 0 | 1; v: -1 | 0 | 1 } {
+    const sc = scrollerRef.current;
+    if (!sc) return { h: 0, v: 0 };
+    const r = sc.getBoundingClientRect();
+    return {
+      h: clientX > r.right - EDGE_ZONE ? 1 : clientX < r.left + EDGE_ZONE ? -1 : 0,
+      v: clientY > r.bottom - EDGE_ZONE ? 1 : clientY < r.top + EDGE_ZONE ? -1 : 0,
+    };
+  }
+
+  function startAutoScroll(dir: { h: -1 | 0 | 1; v: -1 | 0 | 1 }) {
+    if (dir.h === 0 && dir.v === 0) {
+      stopAutoScroll();
+      return;
+    }
+    if (
+      autoScrollRef.current !== null &&
+      scrollDirRef.current.h === dir.h &&
+      scrollDirRef.current.v === dir.v
+    ) {
+      return;
+    }
+    stopAutoScroll();
+    scrollDirRef.current = dir;
+    autoScrollRef.current = setInterval(() => {
+      const sc = scrollerRef.current;
+      if (!sc) return;
+      if (scrollDirRef.current.h !== 0) sc.scrollLeft += scrollDirRef.current.h * SCROLL_STEP;
+      if (scrollDirRef.current.v !== 0) sc.scrollTop += scrollDirRef.current.v * SCROLL_STEP;
+      if (lastPosRef.current) applyDragFromPointer(lastPosRef.current.x, lastPosRef.current.y);
+    }, 16);
+  }
+
+  function stopAutoScroll() {
+    if (autoScrollRef.current !== null) {
+      clearInterval(autoScrollRef.current);
+      autoScrollRef.current = null;
+    }
+    scrollDirRef.current = { h: 0, v: 0 };
+  }
+
+  // Stop any running auto-scroll when the component unmounts.
+  useEffect(() => () => stopAutoScroll(), []);
 
   function isDisabled(date: string, min: number): boolean {
     if (date === todayKey && min < nowMin) return true;
@@ -193,6 +262,8 @@ export function TimeGrid({
     const cell = cellFromEvent(e);
     if (!cell || isDisabled(cell.date, cell.min)) return;
     dragFrom.current = cell;
+    lastPosRef.current = { x: e.clientX, y: e.clientY };
+    stopAutoScroll();
     setDrag({ startDate: cell.date, startMin: cell.min, endDate: cell.date, endMin: cell.min + CELL_MIN });
     setDragPos({ x: e.clientX, y: e.clientY });
     try {
@@ -204,7 +275,11 @@ export function TimeGrid({
 
   function handlePointerMove(e: React.PointerEvent) {
     if (!dragFrom.current) return;
+    lastPosRef.current = { x: e.clientX, y: e.clientY };
     setDragPos({ x: e.clientX, y: e.clientY });
+    // Dragging near the scroller edge auto-scrolls so the selection can keep
+    // extending into days/hours that are currently off-screen.
+    startAutoScroll(edgeDirFromPointer(e.clientX, e.clientY));
     const cell = cellFromEvent(e);
     if (!cell) return;
     const ai = idx(dragFrom.current.date, dragFrom.current.min);
@@ -220,6 +295,7 @@ export function TimeGrid({
   }
 
   function handlePointerUp() {
+    stopAutoScroll();
     if (!dragFrom.current) {
       setDrag(null);
       setDragPos(null);
@@ -345,6 +421,7 @@ export function TimeGrid({
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={() => {
+              stopAutoScroll();
               dragFrom.current = null;
               setDrag(null);
               setDragPos(null);

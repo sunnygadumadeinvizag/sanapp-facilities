@@ -93,6 +93,8 @@ export type EditBookingInfo = {
   purpose: string | null;
   type: "SELF" | "ON_BEHALF" | "LONG";
   forUserId?: string | null;
+  /** Name of the PDF currently attached to this booking (if any). */
+  pdfName?: string | null;
 };
 
 export function BookingClient({
@@ -164,6 +166,8 @@ export function BookingClient({
   const [purpose, setPurpose] = useState(editBooking?.purpose ?? "");
   const [pdfName, setPdfName] = useState("");
   const [pdf, setPdf] = useState<File | null>(null);
+  const [pdfClear, setPdfClear] = useState(false);
+  const existingPdfName = editBooking?.pdfName ?? null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -228,6 +232,7 @@ export function BookingClient({
     if (!f) {
       setPdf(null);
       setPdfName("");
+      setPdfClear(false);
       return;
     }
     if (!f.name.toLowerCase().endsWith(".pdf")) {
@@ -241,6 +246,7 @@ export function BookingClient({
     setError(null);
     setPdf(f);
     setPdfName(f.name);
+    setPdfClear(false);
   }
 
   /**
@@ -325,17 +331,35 @@ export function BookingClient({
     if (editBooking) {
       const { range } = ranges[0];
       try {
+        // When the attachment changes (upload/remove), send multipart so the
+        // file rides along; otherwise plain JSON with the slot fields.
+        const wantPdfChange = pdf !== null || pdfClear;
+        const payload = wantPdfChange ? new FormData() : null;
+        if (payload) {
+          payload.set("id", editBooking.id);
+          payload.set("startDate", range.startDate);
+          payload.set("endDate", range.endDate);
+          payload.set("startMin", String(range.startMin));
+          payload.set("endMin", String(range.endMin));
+          if (purpose.trim()) payload.set("purpose", purpose.trim());
+          if (pdfClear && !pdf) payload.set("pdfClear", "1");
+          if (pdf) payload.set("pdf", pdf, pdf.name);
+        }
         const res = await fetch(apiPath("/api/bookings"), {
           method: "PATCH",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            id: editBooking.id,
-            startDate: range.startDate,
-            endDate: range.endDate,
-            startMin: range.startMin,
-            endMin: range.endMin,
-            purpose: purpose.trim() || null,
-          }),
+          ...(payload
+            ? { body: payload }
+            : {
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  id: editBooking.id,
+                  startDate: range.startDate,
+                  endDate: range.endDate,
+                  startMin: range.startMin,
+                  endMin: range.endMin,
+                  purpose: purpose.trim() || null,
+                }),
+              }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Could not update the booking");
@@ -389,6 +413,7 @@ export function BookingClient({
     setPurpose("");
     setPdf(null);
     setPdfName("");
+    setPdfClear(false);
     setForUserId("");
     setForQuery("");
     setForResults([]);
@@ -572,19 +597,49 @@ export function BookingClient({
               />
             </div>
 
-            {!editBooking && (
             <div>
-              <Label>Attachment (PDF, max 1 MB, optional — applies to all ranges)</Label>
-              <div className="mt-1 flex items-center gap-2">
+              <Label>
+                Attachment (PDF, max 1 MB, {editBooking ? "optional" : "optional — applies to all ranges"})
+              </Label>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
                 <Input type="file" accept="application/pdf,.pdf" onChange={(e) => pickFile(e.target.files?.[0] ?? null)} />
                 {pdfName && (
                   <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                     <Paperclip className="h-3 w-3" /> {pdfName}
                   </span>
                 )}
+                {!pdfName && existingPdfName && editBooking && (
+                  <span className="inline-flex items-center gap-2 text-xs">
+                    <a
+                      href={apiPath("/api/bookings/" + editBooking.id + "/pdf")}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-primary hover:underline"
+                    >
+                      <Paperclip className="h-3 w-3" /> {existingPdfName}
+                    </a>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-1.5 text-[11px] text-red-600 hover:text-red-700"
+                      onClick={() => {
+                        setPdfClear(true);
+                        setPdf(null);
+                        setPdfName("");
+                      }}
+                    >
+                      Remove
+                    </Button>
+                  </span>
+                )}
+                {pdfClear && !pdfName && (
+                  <span className="text-xs font-medium text-red-600">
+                    Current attachment will be removed when you save.
+                  </span>
+                )}
               </div>
             </div>
-            )}
 
             {error && (
               <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
