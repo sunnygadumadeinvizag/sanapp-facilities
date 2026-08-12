@@ -138,6 +138,11 @@ export function TimeGrid({
   const scrollDirRef = useRef<{ h: -1 | 0 | 1; v: -1 | 0 | 1 }>({ h: 0, v: 0 });
   const autoScrollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastAdvanceRef = useRef(0);
+  // Always-fresh reference to applyDragFromPointer — its days closure changes
+  // when the week advances, so ticks must call the latest version. advanceDirRef
+  // remembers the last week-advance direction to prevent corner-day bouncing.
+  const applyDragRef = useRef<(x: number, y: number) => void>(() => {});
+  const advanceDirRef = useRef<0 | 7 | -7>(0);
 
   const bookedFragments = useMemo(
     () => bookings.flatMap((b) => fragments(b, days).map((f) => ({ ...f, label: b.label, id: b.id }))),
@@ -193,6 +198,7 @@ export function TimeGrid({
     const end = ai <= bi ? cell : dragFrom.current;
     setDrag({ startDate: start.date, startMin: start.min, endDate: end.date, endMin: end.min + CELL_MIN });
   }
+  applyDragRef.current = applyDragFromPointer;
 
   /** Which way to auto-scroll for a pointer position (0 = inside the edges). */
   function edgeDirFromPointer(clientX: number, clientY: number): { h: -1 | 0 | 1; v: -1 | 0 | 1 } {
@@ -234,8 +240,15 @@ export function TimeGrid({
   function maybeAdvanceWeek(deltaDays: number) {
     const now = Date.now();
     if (now - lastAdvanceRef.current < 700) return;
+    // Never reverse direction while the pointer stays on a corner day — after a
+    // +7 advance the pointer lands on the new week's first day, also a corner.
+    if (advanceDirRef.current !== 0 && advanceDirRef.current !== deltaDays) return;
     lastAdvanceRef.current = now;
+    advanceDirRef.current = deltaDays === 7 ? 7 : -7;
     onAutoAdvance?.(deltaDays);
+    // Keep extending the drag into the newly rendered week — the tick uses the
+    // fresh applyDragRef so it maps to the new day columns.
+    startAutoScroll({ h: deltaDays > 0 ? 1 : -1, v: 0 });
   }
 
   function startAutoScroll(dir: { h: -1 | 0 | 1; v: -1 | 0 | 1 }) {
@@ -257,7 +270,7 @@ export function TimeGrid({
       if (!sc) return;
       if (scrollDirRef.current.h !== 0) sc.scrollLeft += scrollDirRef.current.h * SCROLL_STEP;
       if (scrollDirRef.current.v !== 0) sc.scrollTop += scrollDirRef.current.v * SCROLL_STEP;
-      if (lastPosRef.current) applyDragFromPointer(lastPosRef.current.x, lastPosRef.current.y);
+      if (lastPosRef.current) applyDragRef.current(lastPosRef.current.x, lastPosRef.current.y);
     }, 16);
   }
 
@@ -305,6 +318,7 @@ export function TimeGrid({
     dragFrom.current = cell;
     lastPosRef.current = { x: e.clientX, y: e.clientY };
     stopAutoScroll();
+    advanceDirRef.current = 0;
     setDrag({ startDate: cell.date, startMin: cell.min, endDate: cell.date, endMin: cell.min + CELL_MIN });
     setDragPos({ x: e.clientX, y: e.clientY });
     try {
@@ -337,6 +351,7 @@ export function TimeGrid({
         Math.floor((sc.scrollLeft + sc.clientWidth - GUTTER_W - 24) / COL_W)
       );
       const dayIdx = days.indexOf(cell.date);
+      if (dayIdx > firstVisible && dayIdx < lastVisible) advanceDirRef.current = 0;
       if (!canScrollRight && dayIdx >= lastVisible) maybeAdvanceWeek(7);
       else if (!canScrollLeft && dayIdx <= firstVisible) maybeAdvanceWeek(-7);
     }
@@ -354,6 +369,7 @@ export function TimeGrid({
 
   function handlePointerUp() {
     stopAutoScroll();
+    advanceDirRef.current = 0;
     if (!dragFrom.current) {
       setDrag(null);
       setDragPos(null);
