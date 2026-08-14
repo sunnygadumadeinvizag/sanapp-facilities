@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { cookies } from "next/headers";
-import { Breadcrumb, apiPath } from "iipe-common-ui";
+import { Breadcrumb, apiPath } from "sanapp-common-ui";
 import { prisma } from "@/lib/prisma";
 import { verifyAppSession } from "@/lib/session";
 import { AppShell } from "../../components/AppShell";

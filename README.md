@@ -1,4 +1,4 @@
-# IIPE Facilities Booking (iipe-app4)
+# IIPE Facilities Booking (sanapp-facilities)
 
 An independent IIPE intranet application for booking institute facilities —
 buildings, rooms and time slots. It follows the platform architecture:
@@ -8,7 +8,7 @@ buildings, rooms and time slots. It follows the platform architecture:
 - **Role & business logic** — what you can do here → managed inside this app
 
 It is a fully separate project with its own PostgreSQL database (`app4_db`),
-own users, own roles and own business rules. It consumes `iipe-common-ui`
+own users, own roles and own business rules. It consumes `sanapp-common-ui`
 via a `file:` link (no private npm registry needed) and is built with a base
 path (`/facilities`) so Apache2 can reverse-proxy it at `intranet.iipe.ac.in/facilities`.
 
@@ -40,7 +40,7 @@ path (`/facilities`) so Apache2 can reverse-proxy it at `intranet.iipe.ac.in/fac
 ## Local development
 
 Requirements: Node 20+, pnpm, PostgreSQL on localhost:5432, and the sibling
-repos `iipe-sso`, `iipe-main`, `iipe-common-ui` checked out next to this one.
+repos `sanapp-sso`, `sanapp-main`, `sanapp-common-ui` checked out next to this one.
 
 ```bash
 pnpm install

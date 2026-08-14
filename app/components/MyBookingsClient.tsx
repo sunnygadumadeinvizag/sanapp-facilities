@@ -1,5 +1,5 @@
 "use client";
-import { apiPath } from "iipe-common-ui";
+import { apiPath } from "sanapp-common-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarClock, FileText, Loader2, Pencil, Search, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";

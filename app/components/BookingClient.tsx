@@ -1,5 +1,5 @@
 "use client";
-import { apiPath } from "iipe-common-ui";
+import { apiPath } from "sanapp-common-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, Crosshair, Loader2, Paperclip, Pencil, X } from "lucide-react";

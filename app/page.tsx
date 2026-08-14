@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { apiPath } from "iipe-common-ui";
+import { apiPath } from "sanapp-common-ui";
 import { prisma } from "@/lib/prisma";
 import { verifyAppSession } from "@/lib/session";
 import { AppShell } from "./components/AppShell";

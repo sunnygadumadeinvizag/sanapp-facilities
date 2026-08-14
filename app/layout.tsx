@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
-import "iipe-common-ui/styles.css";
+import "sanapp-common-ui/styles.css";
 import "./globals.css";
-import { ThemeScript } from "iipe-common-ui";
+import { ThemeScript } from "sanapp-common-ui";
 
 export const metadata: Metadata = {
   title: "IIPE Facilities Booking",

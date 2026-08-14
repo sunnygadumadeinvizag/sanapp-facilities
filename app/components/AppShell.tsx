@@ -7,7 +7,7 @@ import {
   PageShell,
   SessionGuard,
   UserMenu,
-} from "iipe-common-ui";
+} from "sanapp-common-ui";
 import type { AppUserSession } from "@/lib/session";
 import { verifyAppSession } from "@/lib/session";
 import { roleLabel } from "@/lib/labels";

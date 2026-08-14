@@ -3,7 +3,7 @@
 
 /* ------------------------------------------------------------------
    shadcn/ui theme — tokens reference the IIPE design system variables
-   (defined by iipe-common-ui/styles.css), so the super-admin-chosen
+   (defined by sanapp-common-ui/styles.css), so the super-admin-chosen
    brand colors and light/dark/system modes keep working.
    ------------------------------------------------------------------ */
 :root {

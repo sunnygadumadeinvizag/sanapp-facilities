@@ -1,4 +1,4 @@
-import { apiPath, Footer, getPlatformNav, Header, Logo } from "iipe-common-ui";
+import { apiPath, Footer, getPlatformNav, Header, Logo } from "sanapp-common-ui";
 
 export const dynamic = "force-dynamic";
 
