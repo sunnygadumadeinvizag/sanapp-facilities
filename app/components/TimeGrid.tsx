@@ -138,6 +138,8 @@ export function TimeGrid({
   const scrollDirRef = useRef<{ h: -1 | 0 | 1; v: -1 | 0 | 1 }>({ h: 0, v: 0 });
   const autoScrollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastAdvanceRef = useRef(0);
+  // Longer cooldown for the edge-hold week extension (deliberate multi-week drags).
+  const lastHoldAdvanceRef = useRef(0);
   // Always-fresh reference to applyDragFromPointer — its days closure changes
   // when the week advances, so ticks must call the latest version.
   const applyDragRef = useRef<(x: number, y: number) => void>(() => {});
@@ -305,11 +307,13 @@ export function TimeGrid({
    * (cooldown-gated so a held pointer doesn't bounce). applyDragFromPointer
    * tracks the selection date independently of these advances.
    */
-  function maybeAdvanceWeek(deltaDays: number): boolean {
+  function maybeAdvanceWeek(deltaDays: number, hold = false): boolean {
     const now = Date.now();
-    if (now - lastAdvanceRef.current < 700) return false;
+    const ref = hold ? lastHoldAdvanceRef : lastAdvanceRef;
+    const cooldown = hold ? 1500 : 700;
+    if (now - ref.current < cooldown) return false;
     if (!onAutoAdvance) return false;
-    lastAdvanceRef.current = now;
+    ref.current = now;
     advanceCountRef.current += deltaDays > 0 ? 1 : -1;
     onAutoAdvance(deltaDays);
     return true;
@@ -336,14 +340,23 @@ export function TimeGrid({
         const before = sc.scrollLeft;
         sc.scrollLeft += scrollDirRef.current.h * SCROLL_STEP;
         if (sc.scrollLeft === before) {
-          // No horizontal scroll room (all days visible): holding the pointer at
-          // the edge keeps extending the selection into the next/previous week.
-          if (scrollDirRef.current.h > 0) {
-            const countNow = advanceCountRef.current;
-            if (maybeAdvanceWeek(7)) dragEndColRef.current = Math.max(dragEndColRef.current, 7 * (countNow + 1));
-          } else {
-            const countNow = advanceCountRef.current;
-            if (maybeAdvanceWeek(-7)) dragEndColRef.current = Math.min(dragEndColRef.current, 7 * countNow - 1);
+          // No horizontal scroll room: dragging ON (or past) the last/first day
+          // column continues the selection into the next/previous week. The
+          // corner-zone check keeps an ordinary in-week drag from jumping weeks,
+          // and the longer hold cooldown makes multi-week extension deliberate.
+          const el = containerRef.current;
+          if (el) {
+            const rect = el.getBoundingClientRect();
+            const x = lastPosRef.current ? lastPosRef.current.x : 0;
+            const col = (x - rect.left - GUTTER_W) / colW;
+            const edge = EDGE_ZONE / colW;
+            if (scrollDirRef.current.h > 0 && col >= 7 * (advanceCountRef.current + 1) - edge) {
+              const countNow = advanceCountRef.current;
+              if (maybeAdvanceWeek(7, true)) dragEndColRef.current = Math.max(dragEndColRef.current, 7 * (countNow + 1));
+            } else if (scrollDirRef.current.h < 0 && col <= 7 * advanceCountRef.current + edge) {
+              const countNow = advanceCountRef.current;
+              if (maybeAdvanceWeek(-7, true)) dragEndColRef.current = Math.min(dragEndColRef.current, 7 * countNow - 1);
+            }
           }
         }
       }
