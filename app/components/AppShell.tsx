@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import {
   AppsMenu,
   getPlatformNav,
+  lookupAppName,
   PageShell,
   SessionGuard,
   UserMenu,
@@ -14,7 +15,7 @@ const MAIN_BASE_URL = process.env.MAIN_BASE_URL ?? "http://localhost:3001";
 
 export type SidebarItem = { label: string; href: string; active?: boolean };
 
-export function AppShell({
+export async function AppShell({
   me,
   active = "home",
   sidebarItems,
@@ -25,8 +26,17 @@ export function AppShell({
   sidebarItems: SidebarItem[];
   children: ReactNode;
 }) {
+  // The registry name for this deployment (one project can host several apps):
+  // resolved from iipe-main by base path, falling back to the project name.
+  const appName = await lookupAppName({
+    mainBaseUrl: MAIN_BASE_URL,
+    appKey: process.env.MAIN_API_KEY,
+    basePath: process.env.BASE_PATH ?? "/facilities",
+    fallback: "Facilities",
+  });
   return (
     <PageShell
+      appName={appName}
       header={{
         navItems: getPlatformNav({
           mainBaseUrl: MAIN_BASE_URL,
