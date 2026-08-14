@@ -60,6 +60,7 @@ export async function GET(request: NextRequest) {
       email: user.email,
       role: localUser.role,
       primaryRole: user.role ?? localUser.primaryRole ?? "",
+      ssoRole: user.role ?? "USER",
     });
 
     // Return the user to the page they were on before being sent to the SSO.

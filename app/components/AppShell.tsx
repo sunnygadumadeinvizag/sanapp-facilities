@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cookies } from "next/headers";
 import {
   AppsMenu,
   getPlatformNav,
@@ -8,6 +9,7 @@ import {
   UserMenu,
 } from "iipe-common-ui";
 import type { AppUserSession } from "@/lib/session";
+import { verifyAppSession } from "@/lib/session";
 import { roleLabel } from "@/lib/labels";
 
 const SSO_BASE_URL = process.env.SSO_BASE_URL ?? "http://localhost:3000";
@@ -28,6 +30,10 @@ export async function AppShell({
 }) {
   // The registry name for this deployment (one project can host several apps):
   // resolved from iipe-main by base path, falling back to the project name.
+  const ssoRole =
+    (await verifyAppSession((await cookies()).get("app4_session")?.value ?? ""))?.ssoRole ??
+    "USER";
+  const isSuperAdmin = ssoRole === "SUPER_ADMIN";
   const appName = await lookupAppName({
     mainBaseUrl: MAIN_BASE_URL,
     appKey: process.env.MAIN_API_KEY,
@@ -55,6 +61,12 @@ export async function AppShell({
             >
               <a href={`${SSO_BASE_URL}/account`}>My Account</a>
               <a href={`${MAIN_BASE_URL}/my-apps`}>My Apps</a>
+              {isSuperAdmin && (
+                <>
+                  <div className="iipe-dropdown-section">Admin Console</div>
+                  <a href={`${MAIN_BASE_URL}/admin-console`}>Admin Console</a>
+                </>
+              )}
             </UserMenu>
           </>
         ),
