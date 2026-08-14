@@ -5,7 +5,7 @@ import { fmtMin, fmtSlotRange } from "@/lib/ist";
 import { Button } from "@/components/ui/button";
 
 const CELL_MIN = 15;
-const COL_W = 150; // px per day column
+const COL_MIN_W = 150; // minimum px per day column (columns expand to fill the container)
 const GUTTER_W = 46;
 
 export type BookingBlock = {
@@ -139,10 +139,19 @@ export function TimeGrid({
   const autoScrollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastAdvanceRef = useRef(0);
   // Always-fresh reference to applyDragFromPointer — its days closure changes
-  // when the week advances, so ticks must call the latest version. advanceDirRef
-  // remembers the last week-advance direction to prevent corner-day bouncing.
+  // when the week advances, so ticks must call the latest version.
   const applyDragRef = useRef<(x: number, y: number) => void>(() => {});
-  const advanceDirRef = useRef<0 | 7 | -7>(0);
+  // Day columns expand to fill the container width (measured from the scroller).
+  const [colW, setColW] = useState(COL_MIN_W);
+  // Drag state for week-boundary continuation: dragStartDateMsRef is days[0] at
+  // pointer-down; dragEndColRef is the pointer's continuous day-column offset
+  // from that date (one column = one day; it may exceed the visible 0..6 range);
+  // advanceCountRef counts the +7/-7 week advances the grid made during the drag
+  // so the rendered week stays in sync with the dragged day.
+  const dragStartDateMsRef = useRef(0);
+  const dragEndColRef = useRef(0);
+  const lastPRef = useRef<number | null>(null);
+  const advanceCountRef = useRef(0);
 
   const bookedFragments = useMemo(
     () => bookings.flatMap((b) => fragments(b, days).map((f) => ({ ...f, label: b.label, id: b.id }))),
@@ -166,6 +175,23 @@ export function TimeGrid({
     el.scrollTop = Math.max(0, Math.min(startY - 80, max));
   }, [focus, colHeight]);
 
+  // Measure the scroller width so the 7 day columns expand to fill the available
+  // space instead of leaving whitespace on wide screens (150px minimum each).
+  useEffect(() => {
+    const sc = scrollerRef.current;
+    if (!sc) return;
+    const update = () => {
+      const next = Math.max(COL_MIN_W, (sc.clientWidth - GUTTER_W) / days.length);
+      setColW((prev) => (Math.abs(prev - next) > 0.5 ? next : prev));
+      // Column width changed -> the pointer's column delta is meaningless mid-drag.
+      lastPRef.current = null;
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(sc);
+    return () => ro.disconnect();
+  }, [days.length]);
+
   /** Resolve a viewport point to a calendar cell (works while the scroller is auto-scrolling). */
   function cellFromXY(clientX: number, clientY: number): { date: string; min: number } | null {
     const el = containerRef.current;
@@ -178,7 +204,7 @@ export function TimeGrid({
     // first) day column — or over the time gutter — still resolves to that edge
     // day; the corner-day auto-scroll/advance logic then keeps the drag moving
     // into the next/previous week.
-    const dayIdx = Math.max(0, Math.min(days.length - 1, Math.floor((x - GUTTER_W) / COL_W)));
+    const dayIdx = Math.max(0, Math.min(days.length - 1, Math.floor((x - GUTTER_W) / colW)));
     const min = Math.max(0, Math.min(24 * 60 - CELL_MIN, Math.floor(y / zoom.cellH) * CELL_MIN));
     return { date: days[dayIdx], min };
   }
@@ -190,15 +216,50 @@ export function TimeGrid({
   const EDGE_ZONE = 32; // px from a scroller edge that triggers auto-scroll
   const SCROLL_STEP = 12; // px per 16ms tick while dragging near an edge
 
-  /** Extend the drag using the last known pointer position (used by the auto-scroll tick). */
+  /**
+   * Extend the drag using the last known pointer position (used by pointer moves
+   * and the auto-scroll tick). The selection date is a continuous day-column
+   * offset from the drag-start week, so dragging past the last (or first) visible
+   * day column continues into the next (or previous) week day by day — the grid
+   * advances via maybeAdvanceWeek to keep the dragged day in view.
+   */
   function applyDragFromPointer(x: number, y: number) {
     if (!dragFrom.current) return;
-    const cell = cellFromXY(x, y);
-    if (!cell) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const p = (x - rect.left - GUTTER_W) / colW;
+    if (lastPRef.current !== null) dragEndColRef.current += p - lastPRef.current;
+    lastPRef.current = p;
+
+    // Keep the rendered week in line with the drag end (cooldown-gated).
+    let blocked = false;
+    let guard = 0;
+    while (Math.floor(dragEndColRef.current / 7) !== advanceCountRef.current && guard < 4) {
+      const want = Math.floor(dragEndColRef.current / 7);
+      const delta = want > advanceCountRef.current ? 7 : -7;
+      if (!maybeAdvanceWeek(delta)) {
+        blocked = true;
+        break;
+      }
+      guard++;
+    }
+
+    const py = y - rect.top;
+    const min = Math.max(0, Math.min(24 * 60 - CELL_MIN, Math.floor(py / zoom.cellH) * CELL_MIN));
+    const dayMs = dragStartDateMsRef.current + Math.floor(dragEndColRef.current * 1440) * 60000;
+    let endDate = new Date(dayMs).toISOString().slice(0, 10);
+    if (blocked) {
+      // Cooldown blocked the week advance — pin the overlay to the rendered
+      // week's edge so the selection stays visible until the advance can run.
+      const rel = dragEndColRef.current - 7 * advanceCountRef.current;
+      const idx = Math.max(0, Math.min(days.length - 1, Math.floor(rel)));
+      endDate = days[idx];
+    }
     const ai = idx(dragFrom.current.date, dragFrom.current.min);
-    const bi = idx(cell.date, cell.min);
-    const start = ai <= bi ? dragFrom.current : cell;
-    const end = ai <= bi ? cell : dragFrom.current;
+    const bi = idx(endDate, min);
+    const start = ai <= bi ? dragFrom.current : { date: endDate, min };
+    const end = ai <= bi ? { date: endDate, min } : dragFrom.current;
     setDrag({ startDate: start.date, startMin: start.min, endDate: end.date, endMin: end.min + CELL_MIN });
   }
   applyDragRef.current = applyDragFromPointer;
@@ -218,10 +279,10 @@ export function TimeGrid({
       const cell = cellFromXY(clientX, clientY);
       if (cell) {
         if (h === 0) {
-          const firstVisible = Math.max(0, Math.floor(sc.scrollLeft / COL_W));
+          const firstVisible = Math.max(0, Math.floor(sc.scrollLeft / colW));
           const lastVisible = Math.min(
             days.length - 1,
-            Math.floor((sc.scrollLeft + sc.clientWidth - GUTTER_W - 24) / COL_W)
+            Math.floor((sc.scrollLeft + sc.clientWidth - GUTTER_W - 24) / colW)
           );
           const dayIdx = days.indexOf(cell.date);
           if (dayIdx >= lastVisible && sc.scrollLeft < sc.scrollWidth - sc.clientWidth - 4) h = 1;
@@ -239,19 +300,19 @@ export function TimeGrid({
     return { h, v };
   }
 
-  /** Advance the week while dragging on a corner day with no scroll room (cooldown-gated). */
-  function maybeAdvanceWeek(deltaDays: number) {
+  /**
+   * Advance the rendered week by +-7 days while a drag crosses the week boundary
+   * (cooldown-gated so a held pointer doesn't bounce). applyDragFromPointer
+   * tracks the selection date independently of these advances.
+   */
+  function maybeAdvanceWeek(deltaDays: number): boolean {
     const now = Date.now();
-    if (now - lastAdvanceRef.current < 700) return;
-    // Never reverse direction while the pointer stays on a corner day — after a
-    // +7 advance the pointer lands on the new week's first day, also a corner.
-    if (advanceDirRef.current !== 0 && advanceDirRef.current !== deltaDays) return;
+    if (now - lastAdvanceRef.current < 700) return false;
+    if (!onAutoAdvance) return false;
     lastAdvanceRef.current = now;
-    advanceDirRef.current = deltaDays === 7 ? 7 : -7;
-    onAutoAdvance?.(deltaDays);
-    // Keep extending the drag into the newly rendered week — the tick uses the
-    // fresh applyDragRef so it maps to the new day columns.
-    startAutoScroll({ h: deltaDays > 0 ? 1 : -1, v: 0 });
+    advanceCountRef.current += deltaDays > 0 ? 1 : -1;
+    onAutoAdvance(deltaDays);
+    return true;
   }
 
   function startAutoScroll(dir: { h: -1 | 0 | 1; v: -1 | 0 | 1 }) {
@@ -271,7 +332,21 @@ export function TimeGrid({
     autoScrollRef.current = setInterval(() => {
       const sc = scrollerRef.current;
       if (!sc) return;
-      if (scrollDirRef.current.h !== 0) sc.scrollLeft += scrollDirRef.current.h * SCROLL_STEP;
+      if (scrollDirRef.current.h !== 0) {
+        const before = sc.scrollLeft;
+        sc.scrollLeft += scrollDirRef.current.h * SCROLL_STEP;
+        if (sc.scrollLeft === before) {
+          // No horizontal scroll room (all days visible): holding the pointer at
+          // the edge keeps extending the selection into the next/previous week.
+          if (scrollDirRef.current.h > 0) {
+            const countNow = advanceCountRef.current;
+            if (maybeAdvanceWeek(7)) dragEndColRef.current = Math.max(dragEndColRef.current, 7 * (countNow + 1));
+          } else {
+            const countNow = advanceCountRef.current;
+            if (maybeAdvanceWeek(-7)) dragEndColRef.current = Math.min(dragEndColRef.current, 7 * countNow - 1);
+          }
+        }
+      }
       if (scrollDirRef.current.v !== 0) sc.scrollTop += scrollDirRef.current.v * SCROLL_STEP;
       if (lastPosRef.current) applyDragRef.current(lastPosRef.current.x, lastPosRef.current.y);
     }, 16);
@@ -321,7 +396,13 @@ export function TimeGrid({
     dragFrom.current = cell;
     lastPosRef.current = { x: e.clientX, y: e.clientY };
     stopAutoScroll();
-    advanceDirRef.current = 0;
+    const el = containerRef.current;
+    const rect = el ? el.getBoundingClientRect() : null;
+    const p0 = rect ? (e.clientX - rect.left - GUTTER_W) / colW : 0;
+    dragStartDateMsRef.current = Date.parse(`${days[0]}T00:00:00Z`);
+    dragEndColRef.current = p0;
+    lastPRef.current = p0;
+    advanceCountRef.current = 0;
     setDrag({ startDate: cell.date, startMin: cell.min, endDate: cell.date, endMin: cell.min + CELL_MIN });
     setDragPos({ x: e.clientX, y: e.clientY });
     try {
@@ -336,43 +417,15 @@ export function TimeGrid({
     lastPosRef.current = { x: e.clientX, y: e.clientY };
     setDragPos({ x: e.clientX, y: e.clientY });
     // Dragging near the scroller edge auto-scrolls so the selection can keep
-    // extending into days/hours that are currently off-screen.
+    // extending into days/hours that are currently off-screen. Crossing the
+    // week boundary (last/first day column) advances the week inside
+    // applyDragFromPointer, so the drag continues into the next/previous week.
     startAutoScroll(edgeDirFromPointer(e.clientX, e.clientY));
-    const cell = cellFromEvent(e);
-    if (!cell) return;
-
-    // Corner days with no scroll room: advance the week instead, so a drag on
-    // the last visible day (e.g. Sunday) can continue into the next week and a
-    // drag on the first visible day can reach back into the previous week.
-    const sc = scrollerRef.current;
-    if (sc && onAutoAdvance) {
-      const canScrollRight = sc.scrollLeft < sc.scrollWidth - sc.clientWidth - 4;
-      const canScrollLeft = sc.scrollLeft > 4;
-      const firstVisible = Math.max(0, Math.floor(sc.scrollLeft / COL_W));
-      const lastVisible = Math.min(
-        days.length - 1,
-        Math.floor((sc.scrollLeft + sc.clientWidth - GUTTER_W - 24) / COL_W)
-      );
-      const dayIdx = days.indexOf(cell.date);
-      if (dayIdx > firstVisible && dayIdx < lastVisible) advanceDirRef.current = 0;
-      if (!canScrollRight && dayIdx >= lastVisible) maybeAdvanceWeek(7);
-      else if (!canScrollLeft && dayIdx <= firstVisible) maybeAdvanceWeek(-7);
-    }
-    const ai = idx(dragFrom.current.date, dragFrom.current.min);
-    const bi = idx(cell.date, cell.min);
-    const start = ai <= bi ? dragFrom.current : cell;
-    const end = ai <= bi ? cell : dragFrom.current;
-    setDrag({
-      startDate: start.date,
-      startMin: start.min,
-      endDate: end.date,
-      endMin: end.min + CELL_MIN,
-    });
+    applyDragFromPointer(e.clientX, e.clientY);
   }
 
   function handlePointerUp() {
     stopAutoScroll();
-    advanceDirRef.current = 0;
     if (!dragFrom.current) {
       setDrag(null);
       setDragPos(null);
@@ -461,7 +514,7 @@ export function TimeGrid({
           {days.map((d) => (
             <div
               key={d}
-              style={{ width: COL_W }}
+              style={{ width: colW }}
               className={`shrink-0 px-2 py-1.5 text-center border-r ${
                 d === todayKey ? "text-primary font-bold" : "text-muted-foreground"
               }`}
@@ -505,7 +558,7 @@ export function TimeGrid({
             }}
           >
             {days.map((d) => (
-              <div key={d} className="shrink-0 relative border-r" style={{ width: COL_W, height: colHeight }}>
+              <div key={d} className="shrink-0 relative border-r" style={{ width: colW, height: colHeight }}>
                 {/* grid lines at the zoom's mark interval */}
                 {marks.map((m) => (
                   <div
@@ -526,8 +579,8 @@ export function TimeGrid({
                 key={f.id + f.date}
                 className="fb-booked"
                 style={{
-                  left: days.indexOf(f.date) * COL_W + 2,
-                  width: COL_W - 4,
+                  left: days.indexOf(f.date) * colW + 2,
+                  width: colW - 4,
                   top: (f.topMin / (24 * 60)) * colHeight + 1,
                   height: Math.max(14, ((f.bottomMin - f.topMin) / (24 * 60)) * colHeight - 2),
                 }}
@@ -538,11 +591,11 @@ export function TimeGrid({
 
             {/* Committed selection overlays */}
             {committed.map((r, i) => (
-              <SelectionOverlay key={i} range={r} days={days} colHeight={colHeight} conflict={conflict(r)} solid />
+              <SelectionOverlay key={i} range={r} days={days} colW={colW} colHeight={colHeight} conflict={conflict(r)} solid />
             ))}
 
             {/* Current drag overlay */}
-            {drag && <SelectionOverlay range={drag} days={days} colHeight={colHeight} conflict={conflict(drag)} />}
+            {drag && <SelectionOverlay range={drag} days={days} colW={colW} colHeight={colHeight} conflict={conflict(drag)} />}
           </div>
         </div>
       </div>
@@ -553,12 +606,14 @@ export function TimeGrid({
 function SelectionOverlay({
   range,
   days,
+  colW,
   colHeight,
   conflict,
   solid = false,
 }: {
   range: RangeSelection;
   days: string[];
+  colW: number;
   colHeight: number;
   conflict: boolean;
   solid?: boolean;
@@ -571,8 +626,8 @@ function SelectionOverlay({
           key={f.date}
           className="fb-selection"
           style={{
-            left: days.indexOf(f.date) * COL_W + 1,
-            width: COL_W - 2,
+            left: days.indexOf(f.date) * colW + 1,
+            width: colW - 2,
             top: (f.topMin / (24 * 60)) * colHeight + 1,
             height: Math.max(12, ((f.bottomMin - f.topMin) / (24 * 60)) * colHeight - 2),
             ...(solid
