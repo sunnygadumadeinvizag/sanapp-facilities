@@ -7,7 +7,7 @@ buildings, rooms and time slots. It follows the platform architecture:
 - **Application access** — can you use this app → IIPE Main (`/main`)
 - **Role & business logic** — what you can do here → managed inside this app
 
-It is a fully separate project with its own PostgreSQL database (`app4_db`),
+It is a fully separate project with its own PostgreSQL database (`sanapp_facilities_db`),
 own users, own roles and own business rules. It consumes `sanapp-common-ui`
 via a `file:` link (no private npm registry needed) and is built with a base
 path (`/facilities`) so Apache2 can reverse-proxy it at `intranet.iipe.ac.in/facilities`.
@@ -50,7 +50,7 @@ npx prisma db seed
 pnpm dev                      # http://localhost:3005 (basePath: set BASE_PATH=/facilities to test proxied)
 ```
 
-The SSO seed registers the OIDC client `iipe-app4`; IIPE Main's seed registers
+The SSO seed registers the OIDC client `sanapp-facilities`; IIPE Main's seed registers
 the application and grants. Sign in with any SSO user that has a Main grant
 (e.g. `admin` / `admin123`).
 

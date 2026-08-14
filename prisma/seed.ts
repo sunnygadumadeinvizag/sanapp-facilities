@@ -2,7 +2,7 @@ import "dotenv/config";
 import { prisma } from "../src/lib/prisma";
 
 async function main() {
-  console.log("Seeding app4_db (Facilities Booking) …");
+  console.log("Seeding sanapp_facilities_db (Facilities Booking) …");
 
   // ------------------------------------------------------------------
   // Users — provisioned from the central SSO at first login. Usernames

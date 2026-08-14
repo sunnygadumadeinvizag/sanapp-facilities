@@ -32,7 +32,7 @@ export type SsoUser = {
 let ssoUsersCache: { at: number; users: SsoUser[] } | null = null;
 
 /**
- * List of users from the central SSO registry (identity lives in sso_db, not
+ * List of users from the central SSO registry (identity lives in sanapp_sso_db, not
  * here). Used by APPROVERs to pick who a blocked slot is for, and by ADMINs
  * for designation management. Cached briefly to keep the SSO happy.
  */

@@ -29,7 +29,7 @@ export async function AppShell({
   children: ReactNode;
 }) {
   // The registry name for this deployment (one project can host several apps):
-  // resolved from iipe-main by base path, falling back to the project name.
+  // resolved from sanapp-main by base path, falling back to the project name.
   const ssoRole =
     (await verifyAppSession((await cookies()).get("app4_session")?.value ?? ""))?.ssoRole ??
     "USER";
@@ -73,7 +73,7 @@ export async function AppShell({
       }}
       sidebarItems={sidebarItems}
     >
-      <SessionGuard channel="iipe-app4-session" />
+      <SessionGuard channel="sanapp-facilities-session" />
       {children}
     </PageShell>
   );

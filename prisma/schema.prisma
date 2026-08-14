@@ -8,7 +8,7 @@ datasource db {
 }
 
 // ------------------------------------------------------------------
-// IIPE App4 (Facilities Booking) — app4_db
+// IIPE App4 (Facilities Booking) — sanapp_facilities_db
 // Fully independent: its own users (provisioned from SSO identity),
 // its own roles, and its own business data.
 //
