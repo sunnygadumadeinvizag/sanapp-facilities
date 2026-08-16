@@ -1,17 +1,18 @@
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { verifyAppSession } from "@/lib/session";
 import { AppShell } from "../components/AppShell";
-import { MyBookingsClient } from "../components/MyBookingsClient";
+import { ParkingClient } from "../components/ParkingClient";
 import { istDateKey } from "@/lib/ist";
 
 export const dynamic = "force-dynamic";
 
-export default async function MyBookingsPage() {
+export default async function ParkingPage() {
   const store = await cookies();
   const session = store.get("app4_session")?.value ?? "";
   const me = await verifyAppSession(session);
   if (!me) {
-    return <p className="iipe-container">Session not found.</p>;
+    redirect(process.env.APP_BASE_URL! + "/api/start-oauth");
   }
 
   return (
@@ -20,20 +21,19 @@ export default async function MyBookingsPage() {
       active="home"
       sidebarItems={[
         { label: "Facilities Home", href: "/" },
-        { label: "My Bookings", href: "/my-bookings", active: true },
+        { label: "My Bookings", href: "/my-bookings" },
         { label: "Vehicle Requests", href: "/vehicles" },
-        { label: "Parking Requests", href: "/parking" },
+        { label: "Parking Requests", href: "/parking", active: true },
         { label: "My Account", href: `${process.env.SSO_BASE_URL}/account` },
-        { label: "SSO (identity)", href: process.env.SSO_BASE_URL! },
-        { label: "Main (access)", href: process.env.MAIN_BASE_URL! },
       ]}
     >
-      <h1 className="iipe-page-title">My Bookings</h1>
+      <h1 className="iipe-page-title">Parking Requests</h1>
       <p className="iipe-page-sub">
-        Every slot is Indian Standard Time (IST). You can cancel a booking until
-        its start time is reached.
+        Request a parking slot (Logistics section). Pick a slot and an IST period — the
+        logistics POC / app admin approves it. All times are{" "}
+        <strong>Indian Standard Time (IST)</strong>, server time.
       </p>
-      <MyBookingsClient today={istDateKey()} canEdit />
+      <ParkingClient today={istDateKey()} />
     </AppShell>
   );
 }

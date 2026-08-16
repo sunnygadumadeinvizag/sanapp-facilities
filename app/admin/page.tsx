@@ -24,6 +24,8 @@ export default async function AdminPage() {
       sidebarItems={[
         { label: "Facilities Home", href: "/" },
         { label: "My Bookings", href: "/my-bookings" },
+        { label: "Vehicle Requests", href: "/vehicles" },
+        { label: "Parking Requests", href: "/parking" },
         { label: "Admin", href: "/admin", active: true },
         { label: "My Account", href: `${process.env.SSO_BASE_URL}/account` },
         { label: "SSO (identity)", href: process.env.SSO_BASE_URL! },

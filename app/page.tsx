@@ -42,6 +42,8 @@ export default async function DashboardPage({
       sidebarItems={[
         { label: "Facilities Home", href: "/", active: true },
         { label: "My Bookings", href: "/my-bookings" },
+        { label: "Vehicle Requests", href: "/vehicles" },
+        { label: "Parking Requests", href: "/parking" },
         { label: "My Account", href: `${process.env.SSO_BASE_URL}/account` },
         { label: "SSO (identity)", href: process.env.SSO_BASE_URL! },
         { label: "Main (access)", href: process.env.MAIN_BASE_URL! },

@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { AdminBookingsTab } from "./AdminBookingsTab";
+import { AdminLogisticsTab } from "./AdminLogisticsTab";
 import { capLabel } from "@/lib/limits";
 import { PRIMARY_ROLE_LABELS } from "@/lib/labels";
 
@@ -96,11 +97,13 @@ export function AdminClient({ isAdmin, today }: { isAdmin: boolean; today: strin
           <TabsTrigger value="facilities">Facilities</TabsTrigger>
           <TabsTrigger value="users">Users &amp; designations</TabsTrigger>
           <TabsTrigger value="bookings">All bookings</TabsTrigger>
+          <TabsTrigger value="logistics">Logistics (vehicles &amp; parking)</TabsTrigger>
         </TabsList>
         <TabsContent value="buildings"><BuildingsTab onError={setError} /></TabsContent>
         <TabsContent value="facilities"><FacilitiesTab onError={setError} /></TabsContent>
         <TabsContent value="users"><UsersTab onError={setError} /></TabsContent>
         <TabsContent value="bookings"><AdminBookingsTab onError={setError} today={today} /></TabsContent>
+        <TabsContent value="logistics"><AdminLogisticsTab onError={setError} /></TabsContent>
       </Tabs>
     </div>
   );

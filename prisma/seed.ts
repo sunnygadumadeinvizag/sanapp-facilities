@@ -101,6 +101,43 @@ async function main() {
   }
   console.log(`  facilities: ${facilities.length}`);
 
+  // ------------------------------------------------------------------
+  // Logistics — vehicles & parking slots (managed further by the admin)
+  // ------------------------------------------------------------------
+  const vehicles = [
+    { name: "Toyota Innova", type: "Car", registrationNo: "AP31 CN 1101", capacity: 6, driverName: "S. Raju", driverPhone: "98490 11001" },
+    { name: "Maruti Ertiga", type: "Car", registrationNo: "AP31 CN 1102", capacity: 6, driverName: "K. Prasad", driverPhone: "98490 11002" },
+    { name: "Mahindra Bolero", type: "Van", registrationNo: "AP31 CN 1103", capacity: 9, driverName: "M. Naidu", driverPhone: "98490 11003" },
+    { name: "Force Traveller", type: "Bus", registrationNo: "AP31 CN 1104", capacity: 26, driverName: "V. Rao", driverPhone: "98490 11004" },
+  ] as const;
+  for (const v of vehicles) {
+    await prisma.vehicle.upsert({
+      where: { registrationNo: v.registrationNo },
+      update: { name: v.name, type: v.type, capacity: v.capacity, driverName: v.driverName, driverPhone: v.driverPhone },
+      create: { name: v.name, type: v.type, registrationNo: v.registrationNo, capacity: v.capacity, driverName: v.driverName, driverPhone: v.driverPhone },
+    });
+  }
+  console.log(`  vehicles: ${vehicles.map((v) => v.registrationNo).join(", ")}`);
+
+  const parkingSlots = [
+    { name: "Block A — P1", area: "Main Campus", slotType: "RESERVED" },
+    { name: "Block A — P2", area: "Main Campus", slotType: "GENERAL" },
+    { name: "Block B — P1", area: "Main Campus", slotType: "GENERAL" },
+    { name: "Guest House — G1", area: "South Campus", slotType: "RESERVED" },
+    { name: "Sports Complex — S1", area: "North Campus", slotType: "GENERAL" },
+  ] as const;
+  for (const sp of parkingSlots) {
+    const key = `${sp.area} / ${sp.name}`;
+    const existing = await prisma.parkingSlot.findFirst({ where: { name: sp.name, area: sp.area } });
+    if (existing) {
+      await prisma.parkingSlot.update({ where: { id: existing.id }, data: { slotType: sp.slotType } });
+    } else {
+      await prisma.parkingSlot.create({ data: { name: sp.name, area: sp.area, slotType: sp.slotType } });
+    }
+  }
+  console.log(`  parking slots: ${parkingSlots.length}`);
+
+
   console.log("Seed complete.");
 }
 

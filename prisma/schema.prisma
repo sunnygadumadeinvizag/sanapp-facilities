@@ -55,6 +55,10 @@ model AppUser {
   bookings    Booking[] @relation("Booker")
   onBehalf    Booking[] @relation("ForUser")
   cancellations Booking[] @relation("CancelledBy")
+  vehicleRequests VehicleRequest[] @relation("VehicleRequester")
+  vehicleDecisions VehicleRequest[] @relation("VehicleDecider")
+  parkingRequests ParkingRequest[] @relation("ParkingRequester")
+  parkingDecisions ParkingRequest[] @relation("ParkingDecider")
 }
 
 model Building {
@@ -138,4 +142,101 @@ model FacilityRoleLimit {
   role       String // SSO primary role (STAFF_TEACHING, STUDENT, ...)
   maxMinutes Int
   @@unique([facilityId, role])
+}
+
+// ------------------------------------------------------------------
+// Logistics — vehicle requests & parking requests.
+// These are REQUEST-based (not drag-on-calendar): the user submits a
+// request with an IST slot, and the app admin / logistics POC decides it.
+// ------------------------------------------------------------------
+
+enum VehicleStatus {
+  AVAILABLE
+  IN_USE
+  MAINTENANCE
+  RETIRED
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+  CANCELLED
+}
+
+model Vehicle {
+  id             String           @id @default(uuid())
+  name           String // e.g. "Toyota Innova"
+  type           String // Car / Van / Bus / Ambulance / ...
+  registrationNo String           @unique
+  capacity       Int?
+  driverName     String?
+  driverPhone    String?
+  status         VehicleStatus    @default(AVAILABLE)
+  notes          String?
+  active         Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  requests       VehicleRequest[]
+  @@index([status])
+}
+
+model VehicleRequest {
+  id          String        @id @default(uuid())
+  vehicleId   String
+  vehicle     Vehicle       @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  userId      String
+  user        AppUser       @relation("VehicleRequester", fields: [userId], references: [id], onDelete: Cascade)
+  // IST slot — same convention as Booking: date = START day, endDate = END
+  // day ("" = same day), startMin/endMin = minutes from midnight IST.
+  date        String
+  endDate     String        @default("")
+  startMin    Int
+  endMin      Int
+  purpose     String
+  destination String?
+  passengers  Int?
+  status      RequestStatus @default(PENDING)
+  remarks     String? // decision / progress remarks from the decider
+  decidedById String?
+  decidedBy   AppUser?      @relation("VehicleDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt   DateTime?
+  createdAt   DateTime      @default(now())
+  @@index([userId, status])
+  @@index([vehicleId, status])
+  @@index([date, status])
+}
+
+model ParkingSlot {
+  id        String           @id @default(uuid())
+  name      String // e.g. "Block A — P1"
+  area      String? // location, e.g. "Main Campus"
+  slotType  String           @default("GENERAL") // RESERVED / GENERAL
+  notes     String?
+  active    Boolean          @default(true)
+  createdAt DateTime         @default(now())
+  requests  ParkingRequest[]
+}
+
+model ParkingRequest {
+  id          String        @id @default(uuid())
+  slotId      String
+  slot        ParkingSlot   @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  userId      String
+  user        AppUser       @relation("ParkingRequester", fields: [userId], references: [id], onDelete: Cascade)
+  vehicleNo   String // requester's vehicle registration number
+  date        String
+  endDate     String        @default("")
+  startMin    Int
+  endMin      Int
+  purpose     String?
+  status      RequestStatus @default(PENDING)
+  remarks     String?
+  decidedById String?
+  decidedBy   AppUser?      @relation("ParkingDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt   DateTime?
+  createdAt   DateTime      @default(now())
+  @@index([userId, status])
+  @@index([slotId, status])
+  @@index([date, status])
 }
