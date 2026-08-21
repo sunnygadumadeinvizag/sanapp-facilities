@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { TimeGrid, type BookingBlock, type FocusRequest, type RangeSelection } from "./TimeGrid";
+import { DatePicker } from "./DatePicker";
 import { effectiveMaxMinutes, capLabel } from "@/lib/limits";
 import {
   PDF_MAX_BYTES,
@@ -742,7 +743,7 @@ function RangeRow({
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <div>
               <Label className="text-[10px] uppercase text-muted-foreground">From date</Label>
-              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-8 text-xs" />
+              <DatePicker value={startDate} onChange={setStartDate} className="w-full" />
             </div>
             <div>
               <Label className="text-[10px] uppercase text-muted-foreground">From time (IST)</Label>
@@ -750,7 +751,7 @@ function RangeRow({
             </div>
             <div>
               <Label className="text-[10px] uppercase text-muted-foreground">To date</Label>
-              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-8 text-xs" />
+              <DatePicker value={endDate} onChange={setEndDate} className="w-full" />
             </div>
             <div>
               <Label className="text-[10px] uppercase text-muted-foreground">To time (IST)</Label>

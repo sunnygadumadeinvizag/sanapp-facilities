@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DatePicker } from "./DatePicker";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -236,11 +237,11 @@ export function MyBookingsClient({ today, canEdit }: { today: string; canEdit: b
         <div className="grid grid-cols-2 gap-2">
           <div className="grid gap-1">
             <Label className="text-xs text-muted-foreground">From date</Label>
-            <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
+            <DatePicker value={dateFrom} onChange={(v) => { setDateFrom(v); setPage(1); }} placeholder="Any date" clearable />
           </div>
           <div className="grid gap-1">
             <Label className="text-xs text-muted-foreground">To date</Label>
-            <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
+            <DatePicker value={dateTo} onChange={(v) => { setDateTo(v); setPage(1); }} placeholder="Any date" clearable />
           </div>
         </div>
       </div>

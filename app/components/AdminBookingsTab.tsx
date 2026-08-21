@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DatePicker } from "./DatePicker";
 import { fmtIstDateTime, fmtMin, fmtSlotRange, slotDurationMin } from "@/lib/ist";
 
 type AdminBooking = {
@@ -211,11 +212,11 @@ export function AdminBookingsTab({ onError, today }: { onError: (s: string | nul
         </div>
         <div className="grid gap-1">
           <Label className="text-xs text-muted-foreground">From date</Label>
-          <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} />
+          <DatePicker value={dateFrom} onChange={(v) => { setDateFrom(v); setPage(1); }} placeholder="Any date" clearable />
         </div>
         <div className="grid gap-1">
           <Label className="text-xs text-muted-foreground">To date</Label>
-          <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
+          <DatePicker value={dateTo} onChange={(v) => { setDateTo(v); setPage(1); }} placeholder="Any date" clearable />
         </div>
         <div className="grid gap-1">
           <Label className="text-xs text-muted-foreground">Status</Label>
