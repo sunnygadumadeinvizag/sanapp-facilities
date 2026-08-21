@@ -489,16 +489,6 @@ export function TimeGrid({
           <span className="inline-flex items-center gap-1.5 mr-3">
             <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary" /> Selected
           </span>
-          <span className="inline-flex items-center gap-1.5 mr-3">
-            <span
-              className="inline-block h-3 w-3 rounded-sm border"
-              style={{
-                background:
-                  "repeating-linear-gradient(-45deg, rgba(127,127,127,0.30) 0 4px, transparent 4px 8px)",
-              }}
-            />{" "}
-            Past
-          </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-3 w-3 rounded-sm bg-red-500/20 border border-red-400" /> Already booked
           </span>
@@ -593,14 +583,6 @@ export function TimeGrid({
                     }}
                   />
                 ))}
-                {/* Past hours of today — hatched and non-selectable */}
-                {d === todayKey && nowMin > 0 && (
-                  <div
-                    className="fb-past"
-                    aria-label="Past hours"
-                    style={{ height: (Math.min(nowMin, 24 * 60) / (24 * 60)) * colHeight }}
-                  />
-                )}
                 {/* Current time marker on today's column */}
                 {d === todayKey && nowMin < 24 * 60 && (
                   <div

@@ -309,7 +309,7 @@ export function AdminBookingsTab({ onError, today }: { onError: (s: string | nul
                       )}
                       {cancellable && (
                         <Button variant="outline" size="icon" className="h-8 w-8" title="Edit on the booking calendar" asChild>
-                          <a href={apiPath(`/book/${b.facility.id}?edit=${b.id}`)}>
+                          <a href={apiPath(`/bookings/${b.facility.id}?edit=${b.id}`)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </a>
                         </Button>

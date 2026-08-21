@@ -412,7 +412,7 @@ function BookingGroupCard({
                         title="Edit this slot on the booking calendar"
                         asChild
                       >
-                        <a href={apiPath(`/book/${b.facility.id}?edit=${b.id}`)}>
+                        <a href={apiPath(`/bookings/${b.facility.id}?edit=${b.id}`)}>
                           <Pencil className="h-3.5 w-3.5" />
                         </a>
                       </Button>
@@ -528,7 +528,7 @@ function SlotCard({
                 title="Edit on the booking calendar"
                 asChild
               >
-                <a href={apiPath(`/book/${b.facility.id}?edit=${b.id}`)}>
+                <a href={apiPath(`/bookings/${b.facility.id}?edit=${b.id}`)}>
                   <Pencil className="h-3.5 w-3.5" />
                 </a>
               </Button>

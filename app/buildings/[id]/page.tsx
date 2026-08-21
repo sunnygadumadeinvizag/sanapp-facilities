@@ -124,7 +124,7 @@ export default async function BuildingPage({
                       <Badge>Open to all</Badge>
                     )}
                     <Button size="sm" asChild>
-                      <a href={apiPath(`/book/${f.id}`)}>Book a slot</a>
+                      <a href={apiPath(`/bookings/${f.id}`)}>Book a slot</a>
                     </Button>
                   </div>
                 </div>

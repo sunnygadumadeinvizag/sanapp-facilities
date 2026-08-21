@@ -116,19 +116,6 @@ h6 {
   white-space: nowrap;
   width: 100%;
 }
-.fb-past {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  background: repeating-linear-gradient(
-    -45deg,
-    rgba(127, 127, 127, 0.22) 0 5px,
-    transparent 5px 10px
-  );
-  z-index: 3;
-  pointer-events: none;
-}
 .fb-now {
   position: absolute;
   left: 0;
