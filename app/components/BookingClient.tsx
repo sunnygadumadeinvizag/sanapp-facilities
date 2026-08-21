@@ -19,6 +19,9 @@ import {
   addDays,
   fmtMin,
   fmtSlotRange,
+  istDateKey,
+  istMinute,
+  istNow,
   mondayOf,
   slotDurationMin,
   slotIndex,
@@ -129,6 +132,20 @@ export function BookingClient({
   const canApprover = me.isApprover || me.role === "ADMIN";
   const canPoc = me.isPoc || me.role === "ADMIN";
   const isAdmin = me.role === "ADMIN";
+
+  // Live IST clock: keeps the past-time shading and the conflict checks fresh
+  // while the page stays open (server-provided today/nowMin go stale).
+  const [clock, setClock] = useState<{ today: string; nowMin: number }>({ today, nowMin });
+  useEffect(() => {
+    const tick = () => {
+      const n = istNow();
+      setClock({ today: istDateKey(n), nowMin: istMinute(n) });
+    };
+    tick();
+    const t = setInterval(tick, 30_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Effective max for THIS user on THIS facility (admin is exempt server-side).
   const effMax = useMemo(
@@ -286,7 +303,7 @@ export function BookingClient({
   function updateRange(id: number, next: RangeSelection): string | null {
     const dur = slotDurationMin(next.startDate, next.startMin, next.endDate, next.endMin);
     if (dur < 15) return "End must be at least 15 minutes after start.";
-    if (slotIndex(next.startDate, next.startMin) <= slotIndex(today, nowMin)) {
+    if (slotIndex(next.startDate, next.startMin) <= slotIndex(clock.today, clock.nowMin)) {
       return "Start must be in the future.";
     }
     const overlapsBooking = bookings.some((b) => {
@@ -428,7 +445,7 @@ export function BookingClient({
       {/* Day's schedule chips */}
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="secondary" className="gap-1">
-          <span>{today}</span>
+          <span>{clock.today}</span>
         </Badge>
         {todaySlots.length > 0 ? (
           todaySlots.map((s) => (
@@ -466,7 +483,7 @@ export function BookingClient({
                   <Button variant="outline" size="icon" onClick={() => setWeekStart((w) => addDays(w, WEEK_DAYS))}>
                     <ChevronRight className="h-4 w-4" />
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setWeekStart(mondayOf(today))}>
+                  <Button variant="ghost" size="sm" onClick={() => setWeekStart(mondayOf(clock.today))}>
                     Today
                   </Button>
                 </div>
@@ -488,8 +505,8 @@ export function BookingClient({
                 committed={ranges.map((p) => p.range)}
                 onCommit={commitRange}
                 onReject={rejectRange}
-                nowMin={nowMin}
-                todayKey={today}
+          nowMin={clock.nowMin}
+          todayKey={clock.today}
                 maxHeight="60vh"
                 onAutoAdvance={(d) => setWeekStart((w) => addDays(w, d))}
                 focus={focusReq}
