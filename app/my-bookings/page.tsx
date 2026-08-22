@@ -15,15 +15,7 @@ export default async function MyBookingsPage() {
   }
 
   return (
-    <AppShell
-      me={me}
-      active="home"
-      sidebarItems={[
-        { label: "Facilities Home", href: "/" },
-        { label: "My Bookings", href: "/my-bookings", active: true },
-
-      ]}
-    >
+    <AppShell me={me} active="my-bookings">
       <h1 className="iipe-page-title">My Bookings</h1>
       <p className="iipe-page-sub">
         Every slot is Indian Standard Time (IST). You can cancel a booking until

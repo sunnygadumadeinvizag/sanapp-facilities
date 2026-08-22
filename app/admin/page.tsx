@@ -18,16 +18,7 @@ export default async function AdminPage() {
   const isAdmin = local?.role === "ADMIN";
 
   return (
-    <AppShell
-      me={me}
-      active="home"
-      sidebarItems={[
-        { label: "Facilities Home", href: "/" },
-        { label: "My Bookings", href: "/my-bookings" },
-        { label: "Admin", href: "/admin", active: true },
-
-      ]}
-    >
+    <AppShell me={me} active="admin">
       <h1 className="iipe-page-title">App Administration</h1>
       <p className="iipe-page-sub">
         Manage buildings, facilities, who may book them (by primary role), and

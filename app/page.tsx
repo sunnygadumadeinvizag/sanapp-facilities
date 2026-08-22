@@ -36,15 +36,7 @@ export default async function DashboardPage({
   });
 
   return (
-    <AppShell
-      me={me}
-      active="home"
-      sidebarItems={[
-        { label: "Facilities Home", href: "/", active: true },
-        { label: "My Bookings", href: "/my-bookings" },
-
-      ]}
-    >
+    <AppShell me={me} active="home">
       <h1 className="iipe-page-title">Facilities Booking</h1>
       <p className="iipe-page-sub">
         Book institute facilities — buildings, rooms and slots. All times are{" "}

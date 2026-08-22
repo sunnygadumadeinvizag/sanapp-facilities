@@ -24,22 +24,32 @@ export async function AppShell({
   children,
 }: {
   me: AppUserSession;
-  active?: "home" | "my-apps" | "applications" | "account" | "notifications";
-  sidebarItems: SidebarItem[];
+  active?: "home" | "my-bookings" | "admin" | "my-apps" | "applications" | "account" | "notifications";
+  sidebarItems?: SidebarItem[];
   children: ReactNode;
 }) {
-  // The registry name for this deployment (one project can host several apps):
-  // resolved from sanapp-main by base path, falling back to the project name.
   const ssoRole =
     (await verifyAppSession((await cookies()).get("app4_session")?.value ?? ""))?.ssoRole ??
     "USER";
   const isSuperAdmin = ssoRole === "SUPER_ADMIN";
+  const isAdmin = me.role === "ADMIN" || isSuperAdmin;
+
   const appName = await lookupAppName({
     mainBaseUrl: MAIN_BASE_URL,
     appKey: process.env.MAIN_API_KEY,
     basePath: process.env.BASE_PATH ?? "/facilities",
     fallback: "Facilities",
   });
+
+  const effectiveSidebar: SidebarItem[] = sidebarItems && sidebarItems.length > 0
+    ? sidebarItems
+    : [
+        { label: "Facilities Home", href: "/", active: active === "home" },
+        { label: "My Bookings", href: "/my-bookings", active: active === "my-bookings" },
+        ...(isAdmin ? [{ label: "App Admin", href: "/admin", active: active === "admin" }] : []),
+        { label: "App Notifications", href: "/notifications", active: active === "notifications" },
+      ];
+
   return (
     <PageShell
       appName={appName}
@@ -48,7 +58,7 @@ export async function AppShell({
           mainBaseUrl: MAIN_BASE_URL,
           ssoBaseUrl: SSO_BASE_URL,
           homeLabel: "Facilities",
-          active,
+          active: active === "home" ? "home" : undefined,
         }),
         right: (
           <>
@@ -56,7 +66,7 @@ export async function AppShell({
             <UserMenu
               name={me.name}
               email={me.email}
-              role={roleLabel(me.role)}
+              role={isAdmin ? "App Admin" : roleLabel(me.role)}
               signOutHref="/api/logout"
             >
               <a href={`${SSO_BASE_URL}/account`}>My Account</a>
@@ -70,10 +80,7 @@ export async function AppShell({
           </>
         ),
       }}
-      sidebarItems={[
-        ...sidebarItems,
-        { label: "App Notifications", href: "/notifications", active: active === "notifications" },
-      ]}
+      sidebarItems={effectiveSidebar}
     >
       <SessionGuard channel="sanapp-facilities-session" />
       {children}

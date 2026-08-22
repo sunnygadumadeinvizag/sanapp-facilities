@@ -14,7 +14,7 @@ export default async function NotificationsPage() {
   }
 
   return (
-    <AppShell me={me} active="notifications" sidebarItems={[]}>
+    <AppShell me={me} active="notifications">
       <h1 className="iipe-page-title">App Notifications</h1>
       <p className="iipe-page-sub">
         Alerts from Facilities Booking — confirmations, changes and cancellations. Notifications

@@ -68,7 +68,7 @@ export async function verifyIdToken(idToken: string) {
 export async function checkAppAccess(user: {
   sub: string;
   username: string;
-}): Promise<{ allowed: boolean; application?: { name: string } }> {
+}): Promise<{ allowed: boolean; role?: string; application?: { name: string } }> {
   const res = await fetch(`${MAIN_BASE_URL}/api/access/check`, {
     method: "POST",
     headers: {
