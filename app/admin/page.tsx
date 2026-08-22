@@ -25,9 +25,7 @@ export default async function AdminPage() {
         { label: "Facilities Home", href: "/" },
         { label: "My Bookings", href: "/my-bookings" },
         { label: "Admin", href: "/admin", active: true },
-        { label: "My Account", href: `${process.env.SSO_BASE_URL}/account` },
-        { label: "SSO (identity)", href: process.env.SSO_BASE_URL! },
-        { label: "Main (access)", href: process.env.MAIN_BASE_URL! },
+
       ]}
     >
       <h1 className="iipe-page-title">App Administration</h1>

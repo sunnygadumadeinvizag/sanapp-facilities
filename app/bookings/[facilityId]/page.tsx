@@ -128,9 +128,7 @@ export default async function BookPage({
       sidebarItems={[
         { label: "Facilities Home", href: "/", active: false },
         { label: "My Bookings", href: "/my-bookings", active: false },
-        { label: "My Account", href: `${process.env.SSO_BASE_URL}/account`, active: false },
-        { label: "SSO (identity)", href: process.env.SSO_BASE_URL!, active: false },
-        { label: "Main (access)", href: process.env.MAIN_BASE_URL!, active: false },
+
       ]}
     >
       <div className="mb-3">

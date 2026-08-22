@@ -42,9 +42,7 @@ export default async function DashboardPage({
       sidebarItems={[
         { label: "Facilities Home", href: "/", active: true },
         { label: "My Bookings", href: "/my-bookings" },
-        { label: "My Account", href: `${process.env.SSO_BASE_URL}/account` },
-        { label: "SSO (identity)", href: process.env.SSO_BASE_URL! },
-        { label: "Main (access)", href: process.env.MAIN_BASE_URL! },
+
       ]}
     >
       <h1 className="iipe-page-title">Facilities Booking</h1>

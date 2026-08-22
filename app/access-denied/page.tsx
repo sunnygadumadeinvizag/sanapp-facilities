@@ -31,7 +31,7 @@ export default function AccessDeniedPage() {
             then <a href={apiPath("/")}>try again</a> — you won&apos;t need to sign in again.
           </div>
           <div className="iipe-form-actions">
-            <a className="iipe-btn" href={`${MAIN_BASE_URL}/my-apps`}>
+            <a className="iipe-btn" href={MAIN_BASE_URL}>
               Go to My Apps
             </a>
             <a className="iipe-btn secondary" href={apiPath("/")}>

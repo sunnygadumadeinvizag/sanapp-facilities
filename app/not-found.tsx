@@ -19,7 +19,7 @@ function NotFoundBody() {
         <a className="iipe-btn" href={apiPath("/")}>
           Back to Facilities Home
         </a>
-        <a className="iipe-btn secondary" href={`${MAIN_BASE_URL}/my-apps`}>
+        <a className="iipe-btn secondary" href={MAIN_BASE_URL}>
           Open My Apps
         </a>
       </div>
@@ -59,9 +59,7 @@ export default async function NotFoundPage() {
       sidebarItems={[
         { label: "Facilities Home", href: "/" },
         { label: "My Bookings", href: "/my-bookings" },
-        { label: "My Account", href: `${SSO_BASE_URL}/account` },
-        { label: "SSO (identity)", href: SSO_BASE_URL },
-        { label: "Main (access)", href: MAIN_BASE_URL },
+
       ]}
     >
       <NotFoundBody />
