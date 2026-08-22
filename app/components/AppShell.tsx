@@ -24,7 +24,7 @@ export async function AppShell({
   children,
 }: {
   me: AppUserSession;
-  active?: "home" | "my-apps" | "applications" | "account";
+  active?: "home" | "my-apps" | "applications" | "account" | "notifications";
   sidebarItems: SidebarItem[];
   children: ReactNode;
 }) {
@@ -70,7 +70,10 @@ export async function AppShell({
           </>
         ),
       }}
-      sidebarItems={sidebarItems}
+      sidebarItems={[
+        ...sidebarItems,
+        { label: "App Notifications", href: "/notifications", active: active === "notifications" },
+      ]}
     >
       <SessionGuard channel="sanapp-facilities-session" />
       {children}
