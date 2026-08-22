@@ -4,7 +4,7 @@ import { createAppSession } from "@/lib/session";
 import { checkAppAccess, exchangeCode, fetchUserInfo, verifyIdToken } from "@/lib/sso";
 
 export async function GET(request: NextRequest) {
-  const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "";
+  const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || process.env.BASE_PATH || "/facilities";
   const proto = request.headers.get("x-forwarded-proto") ?? "http";
   const host = request.headers.get("host") ?? request.nextUrl.host;
   const publicOrigin = `${proto}://${host}`;
