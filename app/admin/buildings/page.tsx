@@ -21,35 +21,38 @@ export default async function AdminBuildingsPage() {
   if (!admin) {
     return (
       <AppShell me={me} active="admin-buildings">
-        <h1 className="iipe-page-title">Buildings &amp; POCs</h1>
+        <h1 className="iipe-page-title">Buildings</h1>
         <Card className="p-6">
           <h2 className="text-lg font-semibold">Administrator access required</h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Only an app administrator can manage buildings and POCs.
-          </p>
+          <p className="mt-2 text-sm text-muted-foreground">Only an app administrator can manage buildings.</p>
         </Card>
       </AppShell>
     );
   }
 
-  const buildings = await prisma.building.findMany({
-    orderBy: [{ order: "asc" }, { name: "asc" }],
-    include: {
-      facilities: { select: { id: true, name: true, active: true } },
-      pocs: {
-        include: { user: { select: { id: true, name: true, username: true } } },
-        orderBy: { createdAt: "asc" },
+  let buildings: Awaited<ReturnType<typeof prisma.building.findMany>>;
+  try {
+    buildings = await prisma.building.findMany({
+      orderBy: [{ order: "asc" }, { name: "asc" }],
+      include: {
+        facilities: { select: { id: true, name: true, active: true } },
       },
-    },
-  });
+    });
+  } catch {
+    return (
+      <AppShell me={me} active="admin-buildings">
+        <h1 className="iipe-page-title">Buildings</h1>
+        <Card className="p-6">
+          <p className="text-sm text-red-700">Could not load buildings. Please reload the page.</p>
+        </Card>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell me={me} active="admin-buildings">
-      <h1 className="iipe-page-title">Buildings &amp; POCs</h1>
-      <p className="iipe-page-sub">
-        Add buildings and set their default booking caps. A building POC automatically becomes POC
-        of every facility in that building — including facilities added later.
-      </p>
+      <h1 className="iipe-page-title">Buildings</h1>
+      <p className="iipe-page-sub">Add and manage buildings. Facilities are managed on the next page.</p>
       <BuildingsAdmin initialBuildings={JSON.parse(JSON.stringify(buildings))} today={istDateKey()} />
     </AppShell>
   );

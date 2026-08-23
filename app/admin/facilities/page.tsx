@@ -31,30 +31,38 @@ export default async function AdminFacilitiesPage() {
     );
   }
 
-  const buildings = await prisma.building.findMany({
-    orderBy: [{ order: "asc" }, { name: "asc" }],
-    include: {
-      facilities: {
-        orderBy: { name: "asc" },
-        include: {
-          roleLimits: { select: { role: true, maxMinutes: true } },
-          pocs: {
-            include: { user: { select: { id: true, name: true, username: true } } },
-            orderBy: { createdAt: "asc" },
+  let buildings: Awaited<ReturnType<typeof prisma.building.findMany>>;
+  try {
+    buildings = await prisma.building.findMany({
+      orderBy: [{ order: "asc" }, { name: "asc" }],
+      include: {
+        facilities: {
+          orderBy: { name: "asc" },
+          include: {
+            roleLimits: { select: { role: true, maxMinutes: true } },
+            pocs: {
+              include: { user: { select: { id: true, name: true, username: true } } },
+              orderBy: { createdAt: "asc" },
+            },
           },
         },
       },
-      pocs: { select: { userId: true } },
-    },
-  });
+    });
+  } catch {
+    return (
+      <AppShell me={me} active="admin-facilities">
+        <h1 className="iipe-page-title">Facilities &amp; POCs</h1>
+        <Card className="p-6">
+          <p className="text-sm text-red-700">Could not load facilities. Please reload the page.</p>
+        </Card>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell me={me} active="admin-facilities">
       <h1 className="iipe-page-title">Facilities &amp; POCs</h1>
-      <p className="iipe-page-sub">
-        Pick a building to manage its facilities — booking caps, who may book, and facility-level
-        POCs. POCs inherited from the building are marked automatically.
-      </p>
+      <p className="iipe-page-sub">Pick a building to manage its facilities — booking caps, who may book, and facility-level POCs.</p>
       <FacilitiesAdmin initialBuildings={JSON.parse(JSON.stringify(buildings))} />
     </AppShell>
   );

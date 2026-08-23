@@ -146,10 +146,9 @@ export function BookingClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Effective max for THIS user on THIS facility (admin is exempt server-side).
   const effMax = useMemo(
-    () => effectiveMaxMinutes({ maxMinutes }, { maxMinutes: buildingMaxMinutes }, roleLimits, me.primaryRole),
-    [maxMinutes, buildingMaxMinutes, roleLimits, me.primaryRole]
+    () => effectiveMaxMinutes({ maxMinutes }, roleLimits, me.primaryRole),
+    [maxMinutes, roleLimits, me.primaryRole]
   );
   const effMaxLabel = capLabel(effMax);
 
@@ -329,9 +328,8 @@ export function BookingClient({
   const isOnBehalf = forOther;
   const needPurpose = anyLong || isOnBehalf;
 
-  /** A range is over this user's permitted maximum (admins are exempt). */
   function overCap(r: RangeSelection): boolean {
-    if (isAdmin) return false;
+    if (isAdmin || effMax === null) return false;
     return slotDurationMin(r.startDate, r.startMin, r.endDate, r.endMin) > effMax;
   }
   const hasOverCap = ranges.some((p) => overCap(p.range));

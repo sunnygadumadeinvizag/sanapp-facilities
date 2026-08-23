@@ -375,11 +375,10 @@ export async function POST(request: NextRequest) {
   }
   const effMax = effectiveMaxMinutes(
     facility,
-    facility.building,
     facility.roleLimits.map((r) => ({ role: r.role, maxMinutes: r.maxMinutes })),
     capRole
   );
-  if (duration > effMax && user.role !== "ADMIN") {
+  if (effMax !== null && duration > effMax && user.role !== "ADMIN") {
     const fmtMax =
       effMax % 60 === 0
         ? `${effMax / 60} hour${effMax === 60 ? "" : "s"}`
@@ -549,11 +548,10 @@ export async function PATCH(request: NextRequest) {
   }
   const effMax = effectiveMaxMinutes(
     facility,
-    facility.building,
     facility.roleLimits.map((r) => ({ role: r.role, maxMinutes: r.maxMinutes })),
     capRole
   );
-  if (duration > effMax && user.role !== "ADMIN") {
+  if (effMax !== null && duration > effMax && user.role !== "ADMIN") {
     const fmtMax =
       effMax % 60 === 0
         ? `${effMax / 60} hour${effMax === 60 ? "" : "s"}`

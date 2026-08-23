@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { currentUser, isAdmin } from "@/lib/auth";
-import { propagateBuildingPocsToFacility } from "@/lib/poc";
 
 export async function GET(request: NextRequest) {
   const user = await currentUser();
@@ -9,7 +8,6 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const buildingId = searchParams.get("buildingId");
-  // Admins may also see deactivated facilities (admin tracking).
   const all = searchParams.get("all") === "1" && (await isAdmin());
   const facilities = await prisma.facility.findMany({
     where: buildingId
@@ -31,12 +29,36 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const body = await request.json().catch(() => ({} as Record<string, unknown>));
+
+  if ((body as { op?: string })?.op === "delete" && typeof (body as { id?: unknown }).id === "string") {
+    if (!(await isAdmin())) {
+      return NextResponse.json({ error: "Only the app administrator can manage facilities" }, { status: 403 });
+    }
+    const delId = String((body as { id: string }).id).trim();
+    if (!delId) return NextResponse.json({ error: "id is required" }, { status: 400 });
+    const bookingCount = await prisma.booking.count({ where: { facilityId: delId, status: "CONFIRMED" } });
+    if (bookingCount > 0) {
+      return NextResponse.json(
+        { error: "This facility has active bookings — cancel them first" },
+        { status: 409 }
+      );
+    }
+    try {
+      await prisma.facility.delete({ where: { id: delId } });
+    } catch (e: unknown) {
+      const code = (e as { code?: string })?.code;
+      if (code === "P2025") return NextResponse.json({ error: "Facility not found" }, { status: 404 });
+      throw e;
+    }
+    return NextResponse.json({ ok: true });
+  }
+
   if (!(await isAdmin())) {
     return NextResponse.json({ error: "Only the app administrator can manage facilities" }, { status: 403 });
   }
-  const body = await request.json().catch(() => ({}));
-  const buildingId = String(body.buildingId ?? "").trim();
-  const name = String(body.name ?? "").trim();
+  const buildingId = String((body as { buildingId?: unknown }).buildingId ?? "").trim();
+  const name = String((body as { name?: unknown }).name ?? "").trim();
   if (!buildingId || !name) {
     return NextResponse.json({ error: "buildingId and facility name are required" }, { status: 400 });
   }
@@ -46,22 +68,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Building not found" }, { status: 404 });
   }
 
-  const allowedRoles = Array.isArray(body.allowedRoles)
-    ? body.allowedRoles.map(String).filter(Boolean)
+  const allowedRoles = Array.isArray((body as { allowedRoles?: unknown }).allowedRoles)
+    ? ((body as { allowedRoles: unknown[] }).allowedRoles as unknown[]).map(String).filter(Boolean)
     : [];
 
   const maxMinutes =
-    body.maxMinutes === null || body.maxMinutes === ""
+    (body as { maxMinutes: unknown }).maxMinutes === null || (body as { maxMinutes: unknown }).maxMinutes === ""
       ? null
-      : Number.isInteger(body.maxMinutes) && Number(body.maxMinutes) > 0
-        ? Number(body.maxMinutes)
+      : Number.isInteger((body as { maxMinutes: unknown }).maxMinutes) &&
+          Number((body as { maxMinutes: unknown }).maxMinutes) > 0
+        ? Number((body as { maxMinutes: number }).maxMinutes)
         : null;
 
-  const roleLimits = Array.isArray(body.roleLimits)
-    ? body.roleLimits
-        .map((r: any) => ({
-          role: String(r.role ?? "").trim(),
-          maxMinutes: Number(r.maxMinutes),
+  const roleLimits = Array.isArray((body as { roleLimits?: unknown }).roleLimits)
+    ? ((body as { roleLimits: unknown[] }).roleLimits as unknown[])
+        .map((r: unknown) => ({
+          role: String((r as { role?: unknown }).role ?? "").trim(),
+          maxMinutes: Number((r as { maxMinutes?: unknown }).maxMinutes),
         }))
         .filter((r: { role: string; maxMinutes: number }) => r.role && Number.isInteger(r.maxMinutes) && r.maxMinutes > 0)
     : [];
@@ -70,15 +93,19 @@ export async function POST(request: NextRequest) {
     data: {
       buildingId,
       name,
-      description: body.description ? String(body.description).trim() : null,
-      capacity: Number.isInteger(body.capacity) && Number(body.capacity) > 0 ? Number(body.capacity) : null,
+      description: (body as { description?: unknown }).description
+        ? String((body as { description: string }).description).trim() || null
+        : null,
+      capacity:
+        Number.isInteger((body as { capacity?: unknown }).capacity) &&
+        Number((body as { capacity: number }).capacity) > 0
+          ? Number((body as { capacity: number }).capacity)
+          : null,
       allowedRoles,
       maxMinutes,
       roleLimits: { create: roleLimits },
     },
   });
-  // A new facility inherits the building's POCs automatically.
-  await propagateBuildingPocsToFacility(buildingId, facility.id);
   return NextResponse.json({ facility }, { status: 201 });
 }
 
@@ -86,32 +113,42 @@ export async function PATCH(request: NextRequest) {
   if (!(await isAdmin())) {
     return NextResponse.json({ error: "Only the app administrator can manage facilities" }, { status: 403 });
   }
-  const body = await request.json().catch(() => ({}));
-  const id = String(body.id ?? "").trim();
+  const body = await request.json().catch(() => ({} as Record<string, unknown>));
+  const id = String((body as { id?: unknown }).id ?? "").trim();
   if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
 
+  const b = body as Record<string, unknown>;
   const data: Record<string, unknown> = {};
-  if (typeof body.name === "string" && body.name.trim()) data.name = body.name.trim();
-  if (typeof body.description === "string") data.description = body.description.trim() || null;
-  if (typeof body.capacity === "number" || body.capacity === null) {
-    data.capacity = Number.isInteger(body.capacity) && body.capacity > 0 ? body.capacity : null;
+  if (typeof b.name === "string" && b.name.trim()) data.name = b.name.trim();
+  if (typeof b.description === "string") data.description = b.description.trim() || null;
+  if (typeof b.capacity === "number" || b.capacity === null) {
+    data.capacity = Number.isInteger(b.capacity) && (b.capacity as number) > 0 ? b.capacity : null;
   }
-  if (Array.isArray(body.allowedRoles)) {
-    data.allowedRoles = body.allowedRoles.map(String).filter(Boolean);
+  if (Array.isArray(b.allowedRoles)) {
+    data.allowedRoles = (b.allowedRoles as unknown[]).map(String).filter(Boolean);
   }
-  if (body.maxMinutes === null || body.maxMinutes === "") {
+  if (b.maxMinutes === null || b.maxMinutes === "") {
     data.maxMinutes = null;
-  } else if (Number.isInteger(body.maxMinutes) && Number(body.maxMinutes) > 0) {
-    data.maxMinutes = Number(body.maxMinutes);
+  } else if (Number.isInteger(b.maxMinutes) && Number(b.maxMinutes as number) > 0) {
+    data.maxMinutes = Number(b.maxMinutes);
   }
-  if (typeof body.active === "boolean") data.active = body.active;
+  if (typeof b.active === "boolean") data.active = b.active;
 
-  const facility = await prisma.facility.update({ where: { id }, data });
+  let facility;
+  try {
+    facility = await prisma.facility.update({ where: { id }, data });
+  } catch (e: unknown) {
+    const code = (e as { code?: string })?.code;
+    if (code === "P2025") return NextResponse.json({ error: "Facility not found" }, { status: 404 });
+    throw e;
+  }
 
-  // Replace per-role limits when provided: delete the old set, create the new.
-  if (Array.isArray(body.roleLimits)) {
-    const roleLimits = body.roleLimits
-      .map((r: any) => ({ role: String(r.role ?? "").trim(), maxMinutes: Number(r.maxMinutes) }))
+  if (Array.isArray(b.roleLimits)) {
+    const roleLimits = (b.roleLimits as unknown[])
+      .map((r: unknown) => ({
+        role: String((r as { role?: unknown }).role ?? "").trim(),
+        maxMinutes: Number((r as { maxMinutes?: unknown }).maxMinutes),
+      }))
       .filter((r: { role: string; maxMinutes: number }) => r.role && Number.isInteger(r.maxMinutes) && r.maxMinutes > 0);
     await prisma.$transaction([
       prisma.facilityRoleLimit.deleteMany({ where: { facilityId: id } }),
@@ -135,10 +172,16 @@ export async function DELETE(request: NextRequest) {
   const bookingCount = await prisma.booking.count({ where: { facilityId: id, status: "CONFIRMED" } });
   if (bookingCount > 0) {
     return NextResponse.json(
-      { error: "This facility has active bookings — cancel them before disabling it" },
+      { error: "This facility has active bookings — cancel them first" },
       { status: 409 }
     );
   }
-  await prisma.facility.update({ where: { id }, data: { active: false } });
+  try {
+    await prisma.facility.delete({ where: { id } });
+  } catch (e: unknown) {
+    const code = (e as { code?: string })?.code;
+    if (code === "P2025") return NextResponse.json({ error: "Facility not found" }, { status: 404 });
+    throw e;
+  }
   return NextResponse.json({ ok: true });
 }

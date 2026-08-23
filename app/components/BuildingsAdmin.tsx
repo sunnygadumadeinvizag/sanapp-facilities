@@ -1,17 +1,14 @@
 "use client";
+
 import { apiPath } from "sanapp-common-ui";
 import { useEffect, useState } from "react";
-import { Pencil } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { PocManager } from "./PocManager";
-import { capLabel } from "@/lib/limits";
-
-type Poc = { userId: string; user: { id: string; name: string; username: string } };
 
 export type AdminBuilding = {
   id: string;
@@ -21,9 +18,7 @@ export type AdminBuilding = {
   location: string | null;
   order: number;
   active: boolean;
-  maxMinutes: number | null;
   facilities: { id: string; name: string; active: boolean }[];
-  pocs: Poc[];
 };
 
 export function BuildingsAdmin({
@@ -35,16 +30,24 @@ export function BuildingsAdmin({
 }) {
   const [error, setError] = useState<string | null>(null);
   const [buildings, setBuildings] = useState<AdminBuilding[]>(initialBuildings);
-
-  // Keep the list fresh after POC changes (the manager owns its own state;
-  // reload buildings when it signals an update).
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<Record<string, string>>({});
   const [reloadKey, setReloadKey] = useState(0);
+
   useEffect(() => {
     if (reloadKey === 0) return;
     void (async () => {
-      const res = await fetch(apiPath("/api/buildings?all=1"), { cache: "no-store" });
-      const data = await res.json();
-      if (res.ok) setBuildings(data.buildings);
+      try {
+        const res = await fetch(apiPath("/api/buildings?all=1"), { cache: "no-store" });
+        const data = (await res.json().catch(() => ({}))) as { buildings?: AdminBuilding[]; error?: string };
+        if (!res.ok) {
+          setError(data.error ?? "Could not reload buildings");
+          return;
+        }
+        if (Array.isArray(data.buildings)) setBuildings(data.buildings);
+      } catch {
+        setError("Could not reload buildings");
+      }
     })();
   }, [reloadKey]);
 
@@ -52,34 +55,87 @@ export function BuildingsAdmin({
     e.preventDefault();
     const f = e.currentTarget as HTMLFormElement;
     const fd = new FormData(f);
-    const res = await fetch(apiPath("/api/buildings"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: String(fd.get("name") ?? ""),
-        code: String(fd.get("code") ?? "").trim() || null,
-        description: String(fd.get("description") ?? "").trim() || null,
-        location: String(fd.get("location") ?? "").trim() || null,
-        maxMinutes: String(fd.get("maxMinutes") ?? "") === "" ? null : Number(fd.get("maxMinutes")),
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) return setError(data.error ?? "Could not create building");
-    setError(null);
-    f.reset();
-    setReloadKey((k) => k + 1);
+    try {
+      const res = await fetch(apiPath("/api/buildings"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: String(fd.get("name") ?? ""),
+          code: String(fd.get("code") ?? "").trim() || null,
+          description: String(fd.get("description") ?? "").trim() || null,
+          location: String(fd.get("location") ?? "").trim() || null,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "Could not create building");
+        return;
+      }
+      setError(null);
+      f.reset();
+      setReloadKey((k) => k + 1);
+    } catch {
+      setError("Could not create building");
+    }
   }
 
   async function patch(id: string, fields: Record<string, unknown>) {
-    const res = await fetch(apiPath("/api/buildings"), {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id, ...fields }),
+    try {
+      const res = await fetch(apiPath("/api/buildings"), {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, ...fields }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "Could not update building");
+        return;
+      }
+      setError(null);
+      setReloadKey((k) => k + 1);
+    } catch {
+      setError("Could not update building");
+    }
+  }
+
+  async function removeBuilding(id: string, name: string) {
+    if (!confirm(`Delete building "${name}"? Facilities inside must be deleted first.`)) return;
+    try {
+      const res = await fetch(apiPath("/api/buildings"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ op: "delete", id }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "Could not delete building");
+        return;
+      }
+      setError(null);
+      setReloadKey((k) => k + 1);
+    } catch {
+      setError("Could not delete building");
+    }
+  }
+
+  function startEdit(b: AdminBuilding) {
+    setEditingId(b.id);
+    setEditForm({ name: b.name, code: b.code ?? "", description: b.description ?? "", location: b.location ?? "" });
+  }
+
+  async function saveEdit(id: string) {
+    const name = editForm.name?.trim() ?? "";
+    if (!name) {
+      setError("Building name is required");
+      return;
+    }
+    await patch(id, {
+      name,
+      code: editForm.code?.trim() || null,
+      description: editForm.description?.trim() || null,
+      location: editForm.location?.trim() || null,
     });
-    const data = await res.json();
-    if (!res.ok) return setError(data.error ?? "Could not update building");
-    setError(null);
-    setReloadKey((k) => k + 1);
+    setEditingId(null);
   }
 
   return (
@@ -92,7 +148,7 @@ export function BuildingsAdmin({
         <CardContent className="p-5">
           <h3 className="mb-3 font-semibold">Add a building</h3>
           <form onSubmit={create} className="grid gap-3">
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1.5">
                 <Label htmlFor="b-name">Name *</Label>
                 <Input id="b-name" name="name" required placeholder="e.g. Hostel Block" />
@@ -100,10 +156,6 @@ export function BuildingsAdmin({
               <div className="grid gap-1.5">
                 <Label htmlFor="b-code">Code</Label>
                 <Input id="b-code" name="code" placeholder="e.g. HB" />
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="b-max">Default max booking (minutes)</Label>
-                <Input id="b-max" name="maxMinutes" type="number" min={15} step={15} placeholder="blank = 3 h (180)" />
               </div>
             </div>
             <div className="grid gap-1.5">
@@ -114,7 +166,9 @@ export function BuildingsAdmin({
               <Label htmlFor="b-loc">Location</Label>
               <Input id="b-loc" name="location" placeholder="e.g. Main Campus, Block A" />
             </div>
-            <div><Button type="submit">Add building</Button></div>
+            <div>
+              <Button type="submit">Add building</Button>
+            </div>
           </form>
         </CardContent>
       </Card>
@@ -125,65 +179,75 @@ export function BuildingsAdmin({
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <h3 className="font-semibold">
-                  {b.name} {b.code ? `(${b.code})` : ""}{" "}
-                  {!b.active && <Badge variant="outline">inactive</Badge>}
+                  {b.name} {b.code ? `(${b.code})` : ""} {!b.active && <Badge variant="outline">inactive</Badge>}
                 </h3>
                 <p className="text-sm text-muted-foreground">
                   {b.facilities.filter((f) => f.active).length} facilities · {b.location ?? "no location"}
-                </p>
-                <p className="mt-1 text-xs font-medium text-primary">
-                  Max {b.maxMinutes ? capLabel(b.maxMinutes) : "3 h (default)"} per booking per facility
                 </p>
                 {b.description && <p className="mt-1 text-sm text-muted-foreground">{b.description}</p>}
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {b.facilities.map((f) => (
                     <Badge key={f.id} variant={f.active ? "secondary" : "outline"}>
-                      {f.name}{!f.active && " (inactive)"}
+                      {f.name}
+                      {!f.active && " (inactive)"}
                     </Badge>
                   ))}
+                  {b.facilities.length === 0 && <span className="text-xs text-muted-foreground">No facilities yet.</span>}
                 </div>
               </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const v = window.prompt(
-                      `Default max booking (minutes) for ${b.name} — blank = 3 h default:`,
-                      b.maxMinutes ? String(b.maxMinutes) : ""
-                    );
-                    if (v === null) return;
-                    void patch(b.id, { maxMinutes: v.trim() === "" ? null : Number(v) });
-                  }}
-                >
-                  <Pencil className="h-3.5 w-3.5" /> Duration
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={() => (editingId === b.id ? setEditingId(null) : startEdit(b))}>
+                  <Pencil className="h-3.5 w-3.5" /> Edit
+                </Button>
+                <Button variant="outline" size="sm" className="text-red-600" onClick={() => patch(b.id, { active: !b.active })}>
+                  {b.active ? "Deactivate" : "Reactivate"}
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
                   className="text-red-600"
-                  onClick={() => patch(b.id, { active: !b.active })}
+                  onClick={() => removeBuilding(b.id, b.name)}
                 >
-                  {b.active ? "Deactivate" : "Reactivate"}
+                  <Trash2 className="h-3.5 w-3.5" /> Delete
                 </Button>
               </div>
             </div>
 
-            <PocManager
-              scope="building"
-              scopeId={b.id}
-              initialPocs={b.pocs}
-              onError={setError}
-              onChanged={() => setReloadKey((k) => k + 1)}
-              note="Building POCs automatically cover every facility in this building."
-            />
+            {editingId === b.id && (
+              <div className="mt-3 grid gap-3 rounded-md border p-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="grid gap-1.5">
+                    <Label className="text-xs">Name *</Label>
+                    <Input value={editForm.name ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, name: e.target.value }))} />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label className="text-xs">Code</Label>
+                    <Input value={editForm.code ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, code: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label className="text-xs">Description</Label>
+                  <Textarea rows={2} value={editForm.description ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, description: e.target.value }))} />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label className="text-xs">Location</Label>
+                  <Input value={editForm.location ?? ""} onChange={(e) => setEditForm((p) => ({ ...p, location: e.target.value }))} />
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => saveEdit(b.id)}>
+                    Save
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       ))}
 
-      <p className="text-xs text-muted-foreground">
-        All times Indian Standard Time · today is {today} (IST).
-      </p>
+      <p className="text-xs text-muted-foreground">All times Indian Standard Time · today is {today} (IST).</p>
     </div>
   );
 }

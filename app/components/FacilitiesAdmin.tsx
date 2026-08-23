@@ -61,11 +61,22 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
   const [editForm, setEditForm] = useState<Record<string, unknown>>({});
 
   async function reload() {
-    const res = await fetch(apiPath("/api/buildings?all=1"), { cache: "no-store" });
-    const data = await res.json();
-    if (res.ok) {
-      setBuildings(data.buildings);
-      setBuildingId((prev) => prev || data.buildings[0]?.id || "");
+    try {
+      const res = await fetch(apiPath("/api/buildings?all=1"), { cache: "no-store" });
+      const data = await res.json().catch(() => ({} as { buildings?: unknown }));
+      if (!res.ok) {
+        setError((data as { error?: string }).error ?? "Could not reload buildings");
+        return;
+      }
+      const next = (data as { buildings?: BuildingWithFacilities[] }).buildings;
+      if (!Array.isArray(next)) {
+        setError("Could not reload buildings");
+        return;
+      }
+      setBuildings(next);
+      setBuildingId((prev) => prev || next[0]?.id || "");
+    } catch {
+      setError("Could not reload buildings");
     }
   }
   useEffect(() => {
@@ -103,15 +114,42 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
   }
 
   async function patchFacility(id: string, fields: Record<string, unknown>) {
-    const res = await fetch(apiPath("/api/facilities"), {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id, ...fields }),
-    });
-    const data = await res.json();
-    if (!res.ok) return setError(data.error ?? "Could not update facility");
-    setError(null);
-    await reload();
+    try {
+      const res = await fetch(apiPath("/api/facilities"), {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id, ...fields }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "Could not update facility");
+        return;
+      }
+      setError(null);
+      await reload();
+    } catch {
+      setError("Could not update facility");
+    }
+  }
+
+  async function deleteFacility(id: string) {
+    if (!confirm("Delete this facility? This cannot be undone.")) return;
+    try {
+      const res = await fetch(apiPath("/api/facilities"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ op: "delete", id }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "Could not delete facility");
+        return;
+      }
+      setError(null);
+      await reload();
+    } catch {
+      setError("Could not delete facility");
+    }
   }
 
   function startEdit(f: Facility) {
@@ -183,7 +221,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
               </div>
               <div className="grid gap-1.5">
                 <Label>Max booking (minutes)</Label>
-                <Input type="number" min={15} step={15} value={maxMinutes} onChange={(e) => setMaxMinutes(e.target.value)} placeholder="blank = building/3 h" />
+                <Input type="number" min={15} step={15} value={maxMinutes} onChange={(e) => setMaxMinutes(e.target.value)} placeholder="blank = no limit" />
               </div>
             </div>
             <div className="grid gap-1.5">
@@ -220,7 +258,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       </Card>
 
       {building?.facilities.map((f) => {
-        const effMax = f.maxMinutes ?? building.maxMinutes;
+        const effMax = f.maxMinutes;
         return (
           <Card key={f.id} className={f.active ? undefined : "opacity-60"}>
             <CardContent className="p-5">
@@ -233,10 +271,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                     {building.name}{f.capacity ? ` · capacity ${f.capacity}` : ""}
                   </p>
                   <p className="mt-1 text-xs font-medium text-primary">
-                    Max {effMax ? capLabel(effMax) : "3 h (default)"} per booking
-                    {f.maxMinutes && building.maxMinutes && f.maxMinutes !== building.maxMinutes
-                      ? ` (building default: ${capLabel(building.maxMinutes)})`
-                      : ""}
+                    Max {effMax !== null ? capLabel(effMax) : "No limit"} per booking
                   </p>
                   {f.roleLimits.length > 0 && (
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -246,6 +281,9 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                         </Badge>
                       ))}
                     </div>
+                  )}
+                  {f.roleLimits.length === 0 && f.maxMinutes === null && (
+                    <p className="mt-1 text-xs text-muted-foreground">No booking time limit — any duration is allowed.</p>
                   )}
                   {f.description && <p className="mt-1 text-sm text-muted-foreground">{f.description}</p>}
                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -269,7 +307,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                         </div>
                         <div className="grid gap-1">
                           <Label className="text-xs">Max booking (minutes)</Label>
-                          <Input type="number" min={15} step={15} value={String(editForm.maxMinutes ?? "")} onChange={(e) => setEditForm((p) => ({ ...p, maxMinutes: e.target.value }))} placeholder="blank = building/3 h" />
+                          <Input type="number" min={15} step={15} value={String(editForm.maxMinutes ?? "")} onChange={(e) => setEditForm((p) => ({ ...p, maxMinutes: e.target.value }))} placeholder="blank = no limit" />
                         </div>
                       </div>
                       <div className="grid gap-1">
@@ -326,23 +364,20 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                     </div>
                   )}
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" onClick={() => (editingId === f.id ? setEditingId(null) : startEdit(f))}>
                     <Pencil className="h-3.5 w-3.5" /> Edit
                   </Button>
                   <Button variant="outline" size="sm" className="text-red-600" onClick={() => patchFacility(f.id, { active: !f.active })}>
                     {f.active ? "Deactivate" : "Reactivate"}
                   </Button>
+                  <Button variant="outline" size="sm" className="text-red-600" onClick={() => deleteFacility(f.id)}>
+                    Delete
+                  </Button>
                 </div>
               </div>
 
-              <PocManager
-                scope="facility"
-                scopeId={f.id}
-                initialPocs={f.pocs}
-                onError={setError}
-                note="POCs marked “(from building)” were inherited from the building POC list."
-              />
+              <PocManager scope="facility" scopeId={f.id} initialPocs={f.pocs} onError={setError} />
             </CardContent>
           </Card>
         );
