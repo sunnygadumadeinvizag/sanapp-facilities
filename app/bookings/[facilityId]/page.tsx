@@ -8,6 +8,7 @@ import { BookingClient, type SlotItem } from "../../components/BookingClient";
 import { Badge } from "@/components/ui/badge";
 import { istDateKey, istMinute, SLOT_MAX_MINUTES } from "@/lib/ist";
 import { capLabel } from "@/lib/limits";
+import { isPocOfFacility } from "@/lib/poc";
 
 export const dynamic = "force-dynamic";
 
@@ -163,8 +164,11 @@ export default async function BookPage({
           name: me.name,
           primaryRole: me.primaryRole ?? "",
           role: local?.role ?? "USER",
-          isApprover: local?.isApprover ?? false,
-          isPoc: local?.isPoc ?? false,
+          // POC of THIS facility or its building (or an app ADMIN) — the
+          // per-building / per-facility POC model.
+          isPocHere:
+            (local?.role ?? "USER") === "ADMIN" ||
+            (local ? await isPocOfFacility(local.id, facility.id) : false),
         }}
         eligible={eligible}
         nowMin={nowMin}

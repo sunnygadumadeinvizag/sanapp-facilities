@@ -1,7 +1,7 @@
 "use client";
 import { apiPath } from "sanapp-common-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, FileText, Loader2, Pencil, Search, Trash2 } from "lucide-react";
+import { CalendarClock, FileText, Loader2, Pencil, Search, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,9 +37,24 @@ type Building = { id: string; name: string; facilities: { id: string; name: stri
 const PAGE_SIZES = [10, 20, 50, 100];
 const STATUSES = ["ALL", "CONFIRMED", "CANCELLED"] as const;
 
-export function AdminBookingsTab({ onError, today }: { onError: (s: string | null) => void; today: string }) {
+export function AdminBookingsTab({
+  onError,
+  today,
+}: {
+  onError?: (s: string | null) => void;
+  today: string;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  function fail(msg: string) {
+    setError(msg);
+    onError?.(msg);
+  }
   const [bookings, setBookings] = useState<AdminBooking[] | null>(null);
-  const [users, setUsers] = useState<LocalUser[]>([]);
+  // User filter — searched by username/name via the SSO registry (max 25
+  // results), never a full user listing.
+  const [userQuery, setUserQuery] = useState("");
+  const [userResults, setUserResults] = useState<LocalUser[]>([]);
+  const [pickedUser, setPickedUser] = useState<LocalUser | null>(null);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [statusFilter, setStatusFilter] = useState<(typeof STATUSES)[number]>("ALL");
   const [userId, setUserId] = useState("");
@@ -81,9 +96,9 @@ export function AdminBookingsTab({ onError, today }: { onError: (s: string | nul
       setBookings(data.bookings);
       setSelected(new Set());
     } catch (err) {
-      onError(err instanceof Error ? err.message : "Could not load bookings");
+      fail(err instanceof Error ? err.message : "Could not load bookings");
     }
-  }, [buildUrl, onError]);
+  }, [buildUrl]);
 
   useEffect(() => {
     void load();
@@ -91,16 +106,26 @@ export function AdminBookingsTab({ onError, today }: { onError: (s: string | nul
 
   useEffect(() => {
     void (async () => {
-      const [uRes, bRes] = await Promise.all([
-        fetch(apiPath("/api/users"), { cache: "no-store" }),
-        fetch(apiPath("/api/buildings"), { cache: "no-store" }),
-      ]);
-      const uData = await uRes.json().catch(() => ({ users: [] }));
+      const bRes = await fetch(apiPath("/api/buildings?all=1"), { cache: "no-store" });
       const bData = await bRes.json().catch(() => ({ buildings: [] }));
-      setUsers(uData.users ?? []);
       setBuildings(bData.buildings ?? []);
     })();
   }, []);
+
+  // Debounced user search — type-ahead against the SSO registry.
+  useEffect(() => {
+    const who = userQuery.trim();
+    if (who.length < 2) {
+      setUserResults([]);
+      return;
+    }
+    const t = window.setTimeout(async () => {
+      const res = await fetch(apiPath(`/api/users?kind=sso&q=${encodeURIComponent(who)}`), { cache: "no-store" });
+      const data = await res.json().catch(() => ({ users: [] }));
+      if (res.ok) setUserResults(data.users ?? []);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [userQuery]);
 
   async function cancelMany(ids: string[]) {
     if (ids.length === 0) return;
@@ -111,8 +136,12 @@ export function AdminBookingsTab({ onError, today }: { onError: (s: string | nul
       { method: "DELETE" }
     );
     const data = await res.json();
-    if (!res.ok) return onError(data.error ?? "Could not cancel");
-    onError(null);
+    if (!res.ok) {
+      fail(data.error ?? "Could not cancel");
+      return;
+    }
+    setError(null);
+    onError?.(null);
     setSelected(new Set());
     await load();
   }
@@ -165,19 +194,60 @@ export function AdminBookingsTab({ onError, today }: { onError: (s: string | nul
 
   return (
     <div className="grid gap-3">
+      {error && (
+        <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      )}
       {/* Filter bar */}
       <div className="grid gap-3 rounded-lg border p-3 md:grid-cols-2 xl:grid-cols-4">
         <div className="grid gap-1">
           <Label className="text-xs text-muted-foreground">User</Label>
-          <Select value={userId} onValueChange={(v) => { setUserId(v); setPage(1); }}>
-            <SelectTrigger><SelectValue placeholder="All users" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all">All users</SelectItem>
-              {users.map((u) => (
-                <SelectItem key={u.id} value={u.id}>{u.name} (@{u.username})</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {pickedUser ? (
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="gap-1.5 py-1 pl-2.5 pr-1">
+                <span>{pickedUser.name} <span className="font-normal opacity-70">@{pickedUser.username}</span></span>
+                <button
+                  type="button"
+                  aria-label="Clear user filter"
+                  title="Clear user filter"
+                  className="rounded-sm px-1 hover:bg-black/10"
+                  onClick={() => { setPickedUser(null); setUserId(""); setPage(1); }}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </Badge>
+            </div>
+          ) : (
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                className="pl-8"
+                placeholder="Search user by name / username…"
+                value={userQuery}
+                onChange={(e) => setUserQuery(e.target.value)}
+                aria-label="Filter by user"
+              />
+              {userResults.length > 0 && (
+                <div className="absolute z-10 mt-1 w-full max-h-56 overflow-auto rounded-md border bg-background shadow-md">
+                  {userResults.map((u) => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      className="block w-full px-3 py-2 text-left text-sm hover:bg-accent"
+                      onClick={() => {
+                        setPickedUser(u);
+                        setUserId(u.id);
+                        setUserQuery("");
+                        setUserResults([]);
+                        setPage(1);
+                      }}
+                    >
+                      {u.name} <span className="text-muted-foreground">@{u.username}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <div className="grid gap-1">
           <Label className="text-xs text-muted-foreground">Search</Label>

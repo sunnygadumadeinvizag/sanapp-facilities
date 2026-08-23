@@ -17,6 +17,20 @@ export async function isAdmin(): Promise<boolean> {
   return user?.role === "ADMIN";
 }
 
+/**
+ * True when the current session may use the app admin console: the local app
+ * ADMIN role, or a central SUPER_ADMIN (matches what the sidebar shows).
+ */
+export async function isAdminSession(): Promise<boolean> {
+  const store = await cookies();
+  const session = store.get("app4_session")?.value;
+  const me = session ? await verifyAppSession(session) : null;
+  if (!me) return false;
+  if (me.ssoRole === "SUPER_ADMIN") return true;
+  const user = await prisma.appUser.findUnique({ where: { username: me.username } });
+  return user?.role === "ADMIN";
+}
+
 const SSO_BASE_URL = process.env.SSO_BASE_URL ?? "";
 const SSO_ADMIN_KEY = process.env.SSO_ADMIN_KEY ?? "";
 

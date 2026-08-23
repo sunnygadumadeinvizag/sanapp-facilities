@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { currentUser, isAdmin } from "@/lib/auth";
+import { propagateBuildingPocsToFacility } from "@/lib/poc";
 
 export async function GET(request: NextRequest) {
   const user = await currentUser();
@@ -8,12 +9,22 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const buildingId = searchParams.get("buildingId");
+  // Admins may also see deactivated facilities (admin tracking).
+  const all = searchParams.get("all") === "1" && (await isAdmin());
   const facilities = await prisma.facility.findMany({
-    where: buildingId ? { buildingId, active: true } : { active: true },
+    where: buildingId
+      ? { buildingId, ...(all ? {} : { active: true }) }
+      : all
+        ? {}
+        : { active: true },
     orderBy: { name: "asc" },
     include: {
       building: { select: { id: true, name: true, maxMinutes: true } },
       roleLimits: { select: { role: true, maxMinutes: true } },
+      pocs: {
+        include: { user: { select: { id: true, name: true, username: true } } },
+        orderBy: { createdAt: "asc" },
+      },
     },
   });
   return NextResponse.json({ facilities });
@@ -66,6 +77,8 @@ export async function POST(request: NextRequest) {
       roleLimits: { create: roleLimits },
     },
   });
+  // A new facility inherits the building's POCs automatically.
+  await propagateBuildingPocsToFacility(buildingId, facility.id);
   return NextResponse.json({ facility }, { status: 201 });
 }
 

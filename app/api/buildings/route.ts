@@ -2,17 +2,25 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { currentUser, isAdmin } from "@/lib/auth";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
+  // Admins may also see deactivated buildings (admin tracking); everyone
+  // else only the active ones.
+  const all = new URL(request.url).searchParams.get("all") === "1" && (await isAdmin());
+
   const buildings = await prisma.building.findMany({
-    where: { active: true },
+    where: all ? {} : { active: true },
     orderBy: [{ order: "asc" }, { name: "asc" }],
     include: {
       facilities: {
-        where: { active: true },
+        where: all ? {} : { active: true },
         select: { id: true, name: true },
+      },
+      pocs: {
+        include: { user: { select: { id: true, name: true, username: true } } },
+        orderBy: { createdAt: "asc" },
       },
     },
   });

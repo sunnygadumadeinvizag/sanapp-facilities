@@ -41,8 +41,8 @@ export type BookingMe = {
   name: string;
   primaryRole: string;
   role: string;
-  isApprover: boolean;
-  isPoc: boolean;
+  /** POC of this facility or its building (or an app ADMIN). */
+  isPocHere: boolean;
 };
 
 const WEEK_DAYS = 7;
@@ -129,8 +129,7 @@ export function BookingClient({
   onEdited?: () => void;
 }) {
   const router = useRouter();
-  const canApprover = me.isApprover || me.role === "ADMIN";
-  const canPoc = me.isPoc || me.role === "ADMIN";
+  const canPoc = me.isPocHere || me.role === "ADMIN";
   const isAdmin = me.role === "ADMIN";
 
   // Live IST clock: keeps the past-time shading and the conflict checks fresh
@@ -467,7 +466,7 @@ export function BookingClient({
         <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           This facility is restricted to specific primary roles. Your role ({me.primaryRole || "not set"}) is not
           in the allowed list.
-          {canApprover ? " You can still block a slot for an eligible user using approval access." : ""}
+          {canPoc ? " As the POC of this facility you can still block a slot for an eligible user." : ""}
         </div>
       )}
 
@@ -558,7 +557,7 @@ export function BookingClient({
           {/* Booking details */}
           <Card>
           <CardContent className="p-4 space-y-4">
-            {!editBooking && canApprover && (
+            {!editBooking && canPoc && (
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox checked={forOther} onCheckedChange={(v) => setForOther(v === true)} />
                 Block these ranges for another user (approval access)

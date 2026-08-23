@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
 import { currentUser, listSsoUsers } from "@/lib/auth";
+import { isPocOfFacility } from "@/lib/poc";
 import {
   PDF_MAX_BYTES,
   SLOT_MAX_MINUTES,
@@ -113,7 +114,15 @@ export async function GET(request: NextRequest) {
 
   const listWhere: Record<string, unknown> = {};
   if (status === "CONFIRMED" || status === "CANCELLED") listWhere.status = status;
-  if (userId) listWhere.userId = userId;
+  if (userId) {
+    // The admin user filter searches the SSO registry, so accept the local
+    // id, the SSO id or the username and resolve to the local user.
+    const local = await prisma.appUser.findFirst({
+      where: { OR: [{ id: userId }, { ssoUserId: userId }, { username: userId }] },
+      select: { id: true },
+    });
+    listWhere.userId = local?.id ?? "__no_user__";
+  }
   if (facilityFilter) listWhere.facilityId = facilityFilter;
   if (buildingId) listWhere.facility = { buildingId };
   if (dateFrom && DATE_RE.test(dateFrom)) listWhere.date = { gte: dateFrom, ...(listWhere.date ?? {}) };
@@ -279,13 +288,18 @@ export async function POST(request: NextRequest) {
   }
 
   // Booking type is derived from the duration:
-  //   ≤ 3 hours  → SELF (any eligible user) or ON_BEHALF (approver, for another user)
+  //   ≤ 3 hours  → SELF (any eligible user) or ON_BEHALF (POC, for another user)
   //   > 3 hours  → LONG (POC only, on their own name)
+  // POC = POC of this facility OR of its building (or an app ADMIN).
+  const pocHere = user.role === "ADMIN" || (await isPocOfFacility(user.id, facilityId));
   let type: "SELF" | "ON_BEHALF" | "LONG" = "SELF";
   if (duration > SLOT_MAX_MINUTES) {
     type = "LONG";
-    if (!user.isPoc && user.role !== "ADMIN") {
-      return bad("Only designated POCs (or an app ADMIN) can book slots longer than 3 hours", 403);
+    if (!pocHere) {
+      return bad(
+        "Only the POC of this facility / building (or an app ADMIN) can book slots longer than 3 hours. Please ask a POC to book it for you.",
+        403
+      );
     }
     if (forUserId) {
       return bad("Long bookings (> 3 hours) are made on the booker's own name", 400);
@@ -293,8 +307,8 @@ export async function POST(request: NextRequest) {
   } else {
     if (forUserId) {
       type = "ON_BEHALF";
-      if (!user.isApprover && user.role !== "ADMIN") {
-        return bad("Only users with approval access (or an app ADMIN) can block a slot for another user", 403);
+      if (!pocHere) {
+        return bad("Only a POC of this facility / building (or an app ADMIN) can block a slot for another user", 403);
       }
     }
   }

@@ -12,6 +12,9 @@ const nextConfig: NextConfig = {
     root: MONOREPO_ROOT,
   },
   outputFileTracingRoot: MONOREPO_ROOT,
+  // Next 16 blocks cross-origin dev chunks/HMR; allow the local proxy host
+  // (local-proxy.js serves the apps at http://localintranet.iipe.ac.in/*).
+  allowedDevOrigins: ["localintranet.iipe.ac.in"],
   // In production behind Apache this app is served at https://intranet.iipe.ac.in/app1
   basePath: process.env.BASE_PATH || "",
   // Expose the basePath to the proxy (middleware) so it can strip the prefix.

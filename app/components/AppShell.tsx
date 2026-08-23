@@ -15,7 +15,8 @@ import { roleLabel } from "@/lib/labels";
 const SSO_BASE_URL = process.env.SSO_BASE_URL ?? "http://localhost:3000";
 const MAIN_BASE_URL = process.env.MAIN_BASE_URL ?? "http://localhost:3001";
 
-export type SidebarItem = { label: string; href: string; active?: boolean };
+/** A sidebar entry — either a link, or a non-clickable section heading. */
+export type SidebarItem = { label: string; href?: string; active?: boolean; heading?: boolean };
 
 export async function AppShell({
   me,
@@ -24,7 +25,17 @@ export async function AppShell({
   children,
 }: {
   me: AppUserSession;
-  active?: "home" | "my-bookings" | "admin" | "my-apps" | "applications" | "account" | "notifications";
+  active?:
+    | "home"
+    | "my-bookings"
+    | "admin"
+    | "admin-buildings"
+    | "admin-facilities"
+    | "admin-bookings"
+    | "my-apps"
+    | "applications"
+    | "account"
+    | "notifications";
   sidebarItems?: SidebarItem[];
   children: ReactNode;
 }) {
@@ -46,7 +57,17 @@ export async function AppShell({
     : [
         { label: "Facilities Home", href: "/", active: active === "home" },
         { label: "My Bookings", href: "/my-bookings", active: active === "my-bookings" },
-        ...(isAdmin ? [{ label: "App Admin", href: "/admin", active: active === "admin" }] : []),
+        // The app admin console — visible only to app admins (app ADMIN role
+        // or a central SUPER_ADMIN).
+        ...(isAdmin
+          ? [
+              { label: "App Admin Console", heading: true },
+              { label: "Admin Overview", href: "/admin", active: active === "admin" },
+              { label: "Buildings & POCs", href: "/admin/buildings", active: active === "admin-buildings" },
+              { label: "Facilities & POCs", href: "/admin/facilities", active: active === "admin-facilities" },
+              { label: "All Bookings", href: "/admin/all-bookings", active: active === "admin-bookings" },
+            ]
+          : []),
         { label: "App Notifications", href: "/notifications", active: active === "notifications" },
       ];
 
@@ -81,6 +102,11 @@ export async function AppShell({
         ),
       }}
       sidebarItems={effectiveSidebar}
+      footerLinks={[
+        { label: "Facilities Home", href: "/" },
+        { label: "My Bookings", href: "/my-bookings" },
+        { label: "Notifications", href: "/notifications" },
+      ]}
     >
       <SessionGuard channel="sanapp-facilities-session" />
       {children}

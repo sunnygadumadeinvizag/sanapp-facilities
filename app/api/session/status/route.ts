@@ -31,9 +31,17 @@ export async function GET() {
       cache: "no-store",
     });
     const data = checkRes.ok ? await checkRes.json() : { valid: false };
+    // The SSO session must belong to the SAME user as this app's session —
+    // a valid session for a DIFFERENT user (account switched after an
+    // incomplete logout) must not keep the old user signed in here.
+    const appUsername = meta.user?.username ?? "";
+    const sameUser =
+      data.valid !== true ||
+      typeof data.username !== "string" ||
+      data.username.toLowerCase() === appUsername.toLowerCase();
     return NextResponse.json({
-      valid: data.valid === true,
-      reason: data.valid === true ? undefined : "sso_session_invalid",
+      valid: data.valid === true && sameUser,
+      reason: data.valid !== true ? "sso_session_invalid" : sameUser ? undefined : "sso_user_changed",
     });
   } catch {
     // SSO unreachable — do not sign the user out over a transient network error.

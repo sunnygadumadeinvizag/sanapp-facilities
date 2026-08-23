@@ -46,15 +46,18 @@ model AppUser {
   // (which primary roles may book) can be enforced locally.
   primaryRole String?
   role        Role      @default(USER)
-  // Approval access — may block slots (≤ 3 hours) for other users.
+  // DEPRECATED — POC/approval access is now scoped per building and per
+  // facility (BuildingPoc / FacilityPoc). The columns are kept only so old
+  // databases keep working; no code reads them anymore.
   isApprover  Boolean   @default(false)
-  // POC — may block slots longer than 3 hours on their own name.
   isPoc       Boolean   @default(false)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   bookings    Booking[] @relation("Booker")
   onBehalf    Booking[] @relation("ForUser")
   cancellations Booking[] @relation("CancelledBy")
+  buildingPocs  BuildingPoc[]
+  facilityPocs  FacilityPoc[]
 }
 
 model Building {
@@ -70,6 +73,21 @@ model Building {
   active      Boolean    @default(true)
   createdAt   DateTime   @default(now())
   facilities  Facility[]
+  pocs        BuildingPoc[]
+}
+
+// Building-level POC. A building POC is automatically POC of every facility
+// in the building (propagated as FacilityPoc rows with fromBuilding = true),
+// including facilities added later.
+model BuildingPoc {
+  id         String   @id @default(uuid())
+  buildingId String
+  building   Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  userId     String
+  user       AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([buildingId, userId])
 }
 
 model Facility {
@@ -89,6 +107,23 @@ model Facility {
   active       Boolean   @default(true)
   createdAt    DateTime  @default(now())
   bookings     Booking[]
+  pocs         FacilityPoc[]
+}
+
+// Facility-level POC. Rows with fromBuilding = true were auto-added because
+// the user is a POC of the facility's building; they are removed again when
+// the building POC is removed. Rows with fromBuilding = false were added
+// explicitly for this single facility.
+model FacilityPoc {
+  id          String   @id @default(uuid())
+  facilityId  String
+  facility    Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  userId      String
+  user        AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromBuilding Boolean @default(false)
+  createdAt   DateTime @default(now())
+
+  @@unique([facilityId, userId])
 }
 
 model Booking {
