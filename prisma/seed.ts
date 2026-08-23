@@ -1,6 +1,24 @@
 import "dotenv/config";
 import { prisma } from "../src/lib/prisma";
 
+type BuildingSeed = {
+  name: string;
+  code: string;
+  description: string;
+  location: string;
+  maxMinutes?: number | null;
+};
+
+type FacilitySeed = {
+  key: string;
+  building: string;
+  name: string;
+  description: string;
+  capacity: number;
+  allowedRoles: readonly string[];
+  maxMinutes?: number | null;
+};
+
 async function main() {
   console.log("Seeding sanapp_facilities_db (Facilities Booking) …");
 
@@ -31,20 +49,24 @@ async function main() {
   // ------------------------------------------------------------------
   // Buildings
   // ------------------------------------------------------------------
-  const buildings = [
+  // Buildings — Eastern Academic Block (EAB) holds the 9 AV rooms from the printed sheet:
+  //   SH-01/02 Seminar Halls, CL-01/02 Computer Labs, CR-A206/C206/A306 60-seaters, BR (4F), AUD (4F).
+  //   EAB has no duration limit (maxMinutes = null); same for every AV facility.
+  const buildings: BuildingSeed[] = [
+    { name: "Eastern Academic Block", code: "EAB", description: "Eastern Academic Block — AV facilities (Seminar Halls, Computer Labs, 60-seater Classrooms, Board Room and Auditorium).", location: "Main Campus", maxMinutes: null },
     { name: "Main Academic Block", code: "MAB", description: "Classrooms, faculty cabins and the central lecture halls.", location: "Main Campus" },
     { name: "Library & Learning Centre", code: "LIB", description: "Reading halls, digital resource rooms and group study areas.", location: "Main Campus" },
     { name: "Administration Building", code: "ADM", description: "Administrative offices and meeting rooms.", location: "Main Campus" },
     { name: "Sports Complex", code: "SPT", description: "Indoor courts, gymnasium and multipurpose hall.", location: "North Campus" },
     { name: "Guest House", code: "GH", description: "Visitor accommodation and conference facilities.", location: "South Campus" },
-  ] as const;
+  ];
 
   const buildingIds: Record<string, string> = {};
   for (const [i, b] of buildings.entries()) {
     const row = await prisma.building.upsert({
       where: { id: `seed-${b.code}` },
-      update: { name: b.name, code: b.code, description: b.description, location: b.location, order: i, active: true },
-      create: { id: `seed-${b.code}`, name: b.name, code: b.code, description: b.description, location: b.location, order: i, active: true },
+      update: { name: b.name, code: b.code, description: b.description, location: b.location, order: i, active: true, maxMinutes: b.maxMinutes },
+      create: { id: `seed-${b.code}`, name: b.name, code: b.code, description: b.description, location: b.location, order: i, active: true, maxMinutes: b.maxMinutes },
     });
     buildingIds[b.code] = row.id;
   }
@@ -59,7 +81,7 @@ async function main() {
   const STAFF = ["STAFF_TEACHING", "STAFF_NON_TEACHING"] as const;
   const ACADEMIC = ["STAFF_TEACHING", "STAFF_NON_TEACHING", "STUDENT", "SCHOLAR"] as const;
 
-  const facilities = [
+  const facilities: FacilitySeed[] = [
     // Main Academic Block
     { key: "mab-seminar", building: "MAB", name: "Seminar Hall (Capacity 120)", description: "Projector, sound system and video-conferencing. Ideal for seminars and workshops.", capacity: 120, allowedRoles: ACADEMIC },
     { key: "mab-classroom-a", building: "MAB", name: "Classroom A", description: "Smart classroom with 60 seats.", capacity: 60, allowedRoles: ACADEMIC },
@@ -76,7 +98,18 @@ async function main() {
     // Guest House
     { key: "gh-conference", building: "GH", name: "Guest House Conference Hall", description: "Conference facility for external visitors.", capacity: 35, allowedRoles: STAFF },
     { key: "gh-lounge", building: "GH", name: "Guest Lounge", description: "Lounge for visitors and guests.", capacity: 20, allowedRoles: ALL },
-  ] as const;
+    // Eastern Academic Block — AV facilities (sheet in screenshot). No duration
+    // limit — each room overrides building/platform caps with maxMinutes: null.
+    { key: "eab-sh01", building: "EAB", name: "Seminar Hall 01", description: "Eastern Academic Block — 2nd Floor AV seminar hall. Sheet SH-01 (29 seats).", capacity: 29, allowedRoles: ALL, maxMinutes: null },
+    { key: "eab-sh02", building: "EAB", name: "Seminar Hall 02", description: "Eastern Academic Block — 2nd Floor AV seminar hall. Sheet SH-02 (29 seats).", capacity: 29, allowedRoles: ALL, maxMinutes: null },
+    { key: "eab-cl01", building: "EAB", name: "Computer Lab 01", description: "Eastern Academic Block — 3rd Floor AV computer lab. Sheet CL-01 (27 seats).", capacity: 27, allowedRoles: ALL, maxMinutes: null },
+    { key: "eab-cl02", building: "EAB", name: "Computer Lab 02", description: "Eastern Academic Block — 3rd Floor AV computer lab. Sheet CL-02 (27 seats).", capacity: 27, allowedRoles: ALL, maxMinutes: null },
+    { key: "eab-cr-a206", building: "EAB", name: "60-Seater Classroom A-206", description: "Eastern Academic Block — 1st Floor Room A-206. Sheet CR-A206 60-Seater A-206 (25 seats).", capacity: 25, allowedRoles: ALL, maxMinutes: null },
+    { key: "eab-cr-c206", building: "EAB", name: "60-Seater Classroom C-206", description: "Eastern Academic Block — 1st Floor Room C-206. Sheet CR-C206 60-Seater C-206 (25 seats).", capacity: 25, allowedRoles: ALL, maxMinutes: null },
+    { key: "eab-cr-a306", building: "EAB", name: "60-Seater Classroom A-306", description: "Eastern Academic Block — 2nd Floor Room A-306. Sheet CR-A306 60-Seater A-306 (25 seats).", capacity: 25, allowedRoles: ALL, maxMinutes: null },
+    { key: "eab-br", building: "EAB", name: "Board Room (4F)", description: "Eastern Academic Block — 4th Floor board room. Sheet BR Board Room (4F) (21 seats).", capacity: 21, allowedRoles: ALL, maxMinutes: null },
+    { key: "eab-aud", building: "EAB", name: "Auditorium (4F)", description: "Eastern Academic Block — 4th Floor auditorium. Sheet AUD Auditorium (4F) (45 seats).", capacity: 45, allowedRoles: ALL, maxMinutes: null },
+  ];
 
   for (const f of facilities) {
     const buildingId = buildingIds[f.building];
@@ -85,8 +118,9 @@ async function main() {
     if (existing) {
       await prisma.facility.update({
         where: { id: existing.id },
-        data: { description: f.description, capacity: f.capacity, allowedRoles: [...f.allowedRoles] },
+        data: { description: f.description, capacity: f.capacity, allowedRoles: [...f.allowedRoles], maxMinutes: f.maxMinutes },
       });
+      if (f.maxMinutes === null) await prisma.facilityRoleLimit.deleteMany({ where: { facilityId: existing.id } });
     } else {
       await prisma.facility.create({
         data: {
@@ -95,6 +129,7 @@ async function main() {
           description: f.description,
           capacity: f.capacity,
           allowedRoles: [...f.allowedRoles],
+          maxMinutes: f.maxMinutes,
         },
       });
     }

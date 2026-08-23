@@ -21,7 +21,6 @@ export type SidebarItem = { label: string; href?: string; active?: boolean; head
 export async function AppShell({
   me,
   active = "home",
-  sidebarItems,
   children,
 }: {
   me: AppUserSession;
@@ -36,7 +35,6 @@ export async function AppShell({
     | "applications"
     | "account"
     | "notifications";
-  sidebarItems?: SidebarItem[];
   children: ReactNode;
 }) {
   const ssoRole =
@@ -52,24 +50,24 @@ export async function AppShell({
     fallback: "Facilities",
   });
 
-  const effectiveSidebar: SidebarItem[] = sidebarItems && sidebarItems.length > 0
-    ? sidebarItems
-    : [
-        { label: "Facilities Home", href: "/", active: active === "home" },
-        { label: "My Bookings", href: "/my-bookings", active: active === "my-bookings" },
-        // The app admin console — visible only to app admins (app ADMIN role
-        // or a central SUPER_ADMIN).
-        ...(isAdmin
-          ? [
-              { label: "App Admin Console", heading: true },
-              { label: "Admin Overview", href: "/admin", active: active === "admin" },
-              { label: "Buildings & POCs", href: "/admin/buildings", active: active === "admin-buildings" },
-              { label: "Facilities & POCs", href: "/admin/facilities", active: active === "admin-facilities" },
-              { label: "All Bookings", href: "/admin/all-bookings", active: active === "admin-bookings" },
-            ]
-          : []),
-        { label: "App Notifications", href: "/notifications", active: active === "notifications" },
-      ];
+  // Keep one canonical navigation for every Facilities route. Pages only
+  // provide the active key; they cannot accidentally replace the sidebar.
+  const effectiveSidebar: SidebarItem[] = [
+    { label: "Facilities Home", href: "/", active: active === "home" },
+    { label: "My Bookings", href: "/my-bookings", active: active === "my-bookings" },
+    // The app admin console — visible only to app admins (app ADMIN role
+    // or a central SUPER_ADMIN).
+    ...(isAdmin
+      ? [
+          { label: "App Admin Console", heading: true },
+          { label: "Admin Overview", href: "/admin", active: active === "admin" },
+          { label: "Buildings & POCs", href: "/admin/buildings", active: active === "admin-buildings" },
+          { label: "Facilities & POCs", href: "/admin/facilities", active: active === "admin-facilities" },
+          { label: "All Bookings", href: "/admin/all-bookings", active: active === "admin-bookings" },
+        ]
+      : []),
+    { label: "App Notifications", href: "/notifications", active: active === "notifications" },
+  ];
 
   return (
     <PageShell

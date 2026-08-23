@@ -53,15 +53,7 @@ export default async function NotFoundPage() {
   }
 
   return (
-    <AppShell
-      me={me}
-      active="home"
-      sidebarItems={[
-        { label: "Facilities Home", href: "/" },
-        { label: "My Bookings", href: "/my-bookings" },
-
-      ]}
-    >
+    <AppShell me={me} active="home">
       <NotFoundBody />
     </AppShell>
   );

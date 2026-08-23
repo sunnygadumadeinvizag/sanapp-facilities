@@ -57,13 +57,7 @@ export default async function BuildingPage({
   const nowMin = istMinute();
 
   return (
-    <AppShell
-      me={me}
-      active="home"
-      sidebarItems={[
-        { label: "Facilities Home", href: "/", active: false },
-        { label: "My Bookings", href: "/my-bookings", active: false },      ]}
-    >
+    <AppShell me={me} active="home">
       <div className="mb-3">
         <Breadcrumb
           items={[
