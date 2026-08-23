@@ -5,7 +5,8 @@ export type RoleLimitInput = { role: string; maxMinutes: number };
 export function effectiveMaxMinutes(
   facility: { maxMinutes: number | null },
   roleLimits: RoleLimitInput[],
-  primaryRole: string | null | undefined
+  primaryRole: string | null | undefined,
+  buildingMaxMinutes?: number | null
 ): number | null {
   if (primaryRole) {
     const roleCap = roleLimits.find((r) => r.role === primaryRole);
@@ -15,6 +16,9 @@ export function effectiveMaxMinutes(
   }
   if (facility.maxMinutes && Number.isInteger(facility.maxMinutes) && facility.maxMinutes > 0) {
     return facility.maxMinutes;
+  }
+  if (buildingMaxMinutes && Number.isInteger(buildingMaxMinutes) && buildingMaxMinutes > 0) {
+    return buildingMaxMinutes;
   }
   return null;
 }

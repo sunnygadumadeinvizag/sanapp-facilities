@@ -287,40 +287,19 @@ export async function POST(request: NextRequest) {
     return bad("This facility is not available for booking");
   }
 
-  // Booking type is derived from the duration:
-  //   ≤ 3 hours  → SELF (any eligible user) or ON_BEHALF (POC, for another user)
-  //   > 3 hours  → LONG (POC only, on their own name)
   // POC = POC of this facility OR of its building (or an app ADMIN).
   const pocHere = user.role === "ADMIN" || (await isPocOfFacility(user.id, facilityId));
   let type: "SELF" | "ON_BEHALF" | "LONG" = "SELF";
-  if (duration > SLOT_MAX_MINUTES) {
-    type = "LONG";
-    if (!pocHere) {
-      return bad(
-        "Only the POC of this facility / building (or an app ADMIN) can book slots longer than 3 hours. Please ask a POC to book it for you.",
-        403
-      );
-    }
-    if (forUserId) {
-      return bad("Long bookings (> 3 hours) are made on the booker's own name", 400);
-    }
-  } else {
-    if (forUserId) {
-      type = "ON_BEHALF";
-      if (!pocHere) {
-        return bad("Only a POC of this facility / building (or an app ADMIN) can block a slot for another user", 403);
-      }
-    }
-  }
 
   // Eligibility — which SSO primary roles may book this facility.
   // ADMINs can book any facility regardless of their own primary role.
   // ON_BEHALF bookings check the FOR-user's eligibility, not the booker's.
-  // The on-behalf picker sends the central SSO user id; resolve it to the
-  // local app user and auto-provision a local row for users who have not
-  // signed in to this app yet (their identity lives in the SSO registry).
   let resolvedForUserId: string | null = null;
-  if (type === "ON_BEHALF" && forUserId) {
+  if (forUserId) {
+    type = "ON_BEHALF";
+    if (!pocHere) {
+      return bad("Only a POC of this facility / building (or an app ADMIN) can block a slot for another user", 403);
+    }
     let forUser = await prisma.appUser.findFirst({
       where: { OR: [{ ssoUserId: forUserId }, { id: forUserId }, { username: forUserId }] },
     });
@@ -376,16 +355,24 @@ export async function POST(request: NextRequest) {
   const effMax = effectiveMaxMinutes(
     facility,
     facility.roleLimits.map((r) => ({ role: r.role, maxMinutes: r.maxMinutes })),
-    capRole
+    capRole,
+    facility.building.maxMinutes
   );
+
   if (effMax !== null && duration > effMax && user.role !== "ADMIN") {
-    const fmtMax =
-      effMax % 60 === 0
-        ? `${effMax / 60} hour${effMax === 60 ? "" : "s"}`
-        : `${effMax} minutes`;
-    return bad(
-      `The maximum booking duration for this facility is ${fmtMax}. Please pick a shorter range — or ask the app administrator to raise the limit.`
-    );
+    if (!pocHere) {
+      const fmtMax =
+        effMax % 60 === 0
+          ? `${effMax / 60} hour${effMax === 60 ? "" : "s"}`
+          : `${effMax} minutes`;
+      return bad(
+        `The maximum booking duration for this facility is ${fmtMax}. Please pick a shorter slot — or ask a facility POC to book it for you.`
+      );
+    }
+    if (forUserId) {
+      return bad("Long bookings exceeding the standard limit are made on the booker's own name", 400);
+    }
+    type = "LONG";
   }
 
   // The slot must not be in the past (server time is IST).
@@ -549,7 +536,8 @@ export async function PATCH(request: NextRequest) {
   const effMax = effectiveMaxMinutes(
     facility,
     facility.roleLimits.map((r) => ({ role: r.role, maxMinutes: r.maxMinutes })),
-    capRole
+    capRole,
+    facility.building.maxMinutes
   );
   if (effMax !== null && duration > effMax && user.role !== "ADMIN") {
     const fmtMax =
@@ -557,11 +545,11 @@ export async function PATCH(request: NextRequest) {
         ? `${effMax / 60} hour${effMax === 60 ? "" : "s"}`
         : `${effMax} minutes`;
     return bad(
-      `The maximum booking duration for this facility is ${fmtMax}. Please pick a shorter range — or ask the app administrator to raise the limit.`
+      `The maximum booking duration for this facility is ${fmtMax}. Please pick a shorter slot — or ask the app administrator to raise the limit.`
     );
   }
 
-  const CONFLICT_MSG = "That time range is already booked — please pick a free range";
+  const CONFLICT_MSG = "That time slot is already booked — please pick a free slot";
   let updated: Prisma.BookingGetPayload<{ select: typeof BOOKING_LIST_SELECT }>;
   try {
     updated = await prisma.$transaction(async (tx) => {

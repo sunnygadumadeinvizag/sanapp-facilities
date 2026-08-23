@@ -147,8 +147,8 @@ export function BookingClient({
   }, []);
 
   const effMax = useMemo(
-    () => effectiveMaxMinutes({ maxMinutes }, roleLimits, me.primaryRole),
-    [maxMinutes, roleLimits, me.primaryRole]
+    () => effectiveMaxMinutes({ maxMinutes }, roleLimits, me.primaryRole, buildingMaxMinutes),
+    [maxMinutes, buildingMaxMinutes, roleLimits, me.primaryRole]
   );
   const effMaxLabel = capLabel(effMax);
 
@@ -324,7 +324,10 @@ export function BookingClient({
     return null;
   }
 
-  const anyLong = ranges.some((p) => slotDurationMin(p.range.startDate, p.range.startMin, p.range.endDate, p.range.endMin) > SLOT_MAX_MINUTES);
+  const anyLong = ranges.some((p) => {
+    const dur = slotDurationMin(p.range.startDate, p.range.startMin, p.range.endDate, p.range.endMin);
+    return effMax !== null ? dur > effMax : false;
+  });
   const isOnBehalf = forOther;
   const needPurpose = anyLong || isOnBehalf;
 
@@ -511,20 +514,20 @@ export function BookingClient({
             </CardContent>
           </Card>
 
-          {/* Selected ranges summary */}
+          {/* Selected slots summary */}
           {ranges.length > 0 && (
             <Card>
               <CardContent className="p-4">
                 <div className="mb-2 flex items-center gap-2">
-                  <h4 className="text-sm font-semibold">Selected ranges ({ranges.length})</h4>
+                  <h4 className="text-sm font-semibold">Selected slots ({ranges.length})</h4>
                   {hasOverCap && (
-                    <span className="text-xs text-red-600">Some ranges exceed the {effMaxLabel} limit</span>
+                    <span className="text-xs text-red-600">Some slots exceed the {effMaxLabel} limit</span>
                   )}
                 </div>
                 <div className="flex flex-col gap-2">
                   {ranges.map(({ id, range }) => {
                     const dur = slotDurationMin(range.startDate, range.startMin, range.endDate, range.endMin);
-                    const long = dur > SLOT_MAX_MINUTES;
+                    const long = effMax !== null ? dur > effMax : false;
                     const cap = overCap(range);
                     return (
                       <RangeRow
@@ -545,8 +548,8 @@ export function BookingClient({
                   })}
                 </div>
                 <p className="mt-3 text-xs text-muted-foreground">
-                  Drag on the calendar to add a range — dragging next to an existing one extends it. Use the pencil
-                  to fine-tune From / To, or the crosshair to jump to a range on the calendar.
+                  Drag on the calendar to add a slot — dragging next to an existing one extends it. Use the pencil
+                  to fine-tune From / To, or the crosshair to jump to a slot on the calendar.
                 </p>
               </CardContent>
             </Card>
@@ -558,7 +561,7 @@ export function BookingClient({
             {!editBooking && canPoc && (
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox checked={forOther} onCheckedChange={(v) => setForOther(v === true)} />
-                Block these ranges for another user (approval access)
+                Block these slots for another user
               </label>
             )}
 
@@ -620,7 +623,7 @@ export function BookingClient({
                   onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  {editBooking ? "Optional" : "Optional — applies to all ranges"}
+                  {editBooking ? "Optional" : "Optional — applies to all slots"}
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                 {pdfName && (
@@ -684,7 +687,7 @@ export function BookingClient({
                 (anyLong && !canPoc)
               }
             >
-              {busy ? "Saving…" : editBooking ? "Save changes" : `Confirm ${ranges.length > 1 ? `${ranges.length} ranges` : "booking"}`}
+              {busy ? "Saving…" : editBooking ? "Save changes" : `Confirm ${ranges.length > 1 ? `${ranges.length} slots` : "booking"}`}
             </Button>
           </CardContent>
         </Card>
@@ -800,7 +803,7 @@ function RangeRow({
               variant="ghost"
               size="icon"
               className="h-6 w-6"
-              title="Show this range on the calendar"
+              title="Show this slot on the calendar"
               onClick={onLocate}
             >
               <Crosshair className="h-3.5 w-3.5" />

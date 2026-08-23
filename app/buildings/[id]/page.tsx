@@ -99,9 +99,9 @@ export default async function BuildingPage({
                     {f.description && (
                       <p className="mt-1 text-sm text-muted-foreground">{f.description}</p>
                     )}
-                    {capLabel(f.maxMinutes ?? building.maxMinutes ?? SLOT_MAX_MINUTES) && (
+                    {(f.maxMinutes ?? building.maxMinutes) !== null && (f.maxMinutes ?? building.maxMinutes)! > 0 && (
                       <p className="mt-1 text-xs font-medium text-primary">
-                        Max {capLabel(f.maxMinutes ?? building.maxMinutes ?? SLOT_MAX_MINUTES)} per booking
+                        Max {capLabel(f.maxMinutes ?? building.maxMinutes)} per booking
                       </p>
                     )}
                   </div>
@@ -140,7 +140,7 @@ export default async function BuildingPage({
       )}
 
       <p className="mt-4 text-xs text-muted-foreground">
-        Open a facility to book — the calendar shows 7 days at a time. Drag to select a range and
+        Open a facility to book — the calendar shows 7 days at a time. Drag to select a slot and
         release to add it, including overnight and multi-day blocks. All times are IST (server time).
         Current IST time:{" "}
         {`${String(Math.floor(nowMin / 60)).padStart(2, "0")}:${String(nowMin % 60).padStart(2, "0")}`}.

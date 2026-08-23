@@ -41,7 +41,7 @@ export default async function DashboardPage({
       <p className="iipe-page-sub">
         Book institute facilities — buildings, rooms and slots. All times are{" "}
         <strong>Indian Standard Time (IST)</strong>, server time. Drag on the calendar to pick a
-        range — 15 minutes up to 3 hours (self), longer blocks by designated POCs.
+        slot — 15 minutes minimum, with longer blocks based on facility limits.
       </p>
 
       {params.error && (

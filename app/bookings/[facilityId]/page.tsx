@@ -148,9 +148,11 @@ export default async function BookPage({
           <Badge variant={eligible ? "default" : "secondary"}>
             {eligible ? "You can book this facility" : "Restricted to specific roles"}
           </Badge>
-          <span className="text-xs text-muted-foreground">
-            Max {capLabel(facility.maxMinutes ?? facility.building.maxMinutes ?? SLOT_MAX_MINUTES)} per booking
-          </span>
+          {(facility.maxMinutes ?? facility.building.maxMinutes) !== null && (facility.maxMinutes ?? facility.building.maxMinutes)! > 0 && (
+            <span className="text-xs text-muted-foreground">
+              Max {capLabel(facility.maxMinutes ?? facility.building.maxMinutes)} per booking
+            </span>
+          )}
         </div>
       </div>
 
@@ -178,8 +180,8 @@ export default async function BookPage({
       />
 
       <p className="mt-4 text-xs text-muted-foreground">
-        All times are Indian Standard Time (server time). Drag on the calendar to select a range —
-        release to add it, then drag again to add more. Ranges stay selected until you remove them or
+        All times are Indian Standard Time (server time). Drag on the calendar to select a slot —
+        release to add it, then drag again to add more. Slots stay selected until you remove them or
         confirm the booking. Current IST time:{" "}
         {`${String(Math.floor(nowMin / 60)).padStart(2, "0")}:${String(nowMin % 60).padStart(2, "0")}`}.
       </p>
