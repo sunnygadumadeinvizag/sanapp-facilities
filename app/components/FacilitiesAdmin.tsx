@@ -47,8 +47,38 @@ type BuildingWithFacilities = {
 
 export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: BuildingWithFacilities[] }) {
   const [error, setError] = useState<string | null>(null);
-  const [buildings, setBuildings] = useState<BuildingWithFacilities[]>(initialBuildings);
-  const [buildingId, setBuildingId] = useState(initialBuildings[0]?.id ?? "");
+  const normalizeBuildings = (value: unknown): BuildingWithFacilities[] => {
+    if (!Array.isArray(value)) return [];
+    return value.map((building) => {
+      const b = (building ?? {}) as Partial<BuildingWithFacilities>;
+      return {
+        id: String(b.id ?? ""),
+        name: String(b.name ?? ""),
+        maxMinutes: b.maxMinutes ?? null,
+        active: b.active !== false,
+        facilities: Array.isArray(b.facilities)
+          ? b.facilities.map((facility) => {
+              const f = (facility ?? {}) as Partial<Facility>;
+              return {
+                id: String(f.id ?? ""),
+                name: String(f.name ?? ""),
+                description: f.description ?? null,
+                capacity: f.capacity ?? null,
+                allowedRoles: Array.isArray(f.allowedRoles) ? f.allowedRoles : [],
+                maxMinutes: f.maxMinutes ?? null,
+                roleLimits: Array.isArray(f.roleLimits) ? f.roleLimits : [],
+                active: f.active !== false,
+                pocs: Array.isArray(f.pocs) ? f.pocs : [],
+              };
+            })
+          : [],
+      };
+    });
+  };
+
+  const normalizedInitialBuildings = normalizeBuildings(initialBuildings);
+  const [buildings, setBuildings] = useState<BuildingWithFacilities[]>(normalizedInitialBuildings);
+  const [buildingId, setBuildingId] = useState(normalizedInitialBuildings[0]?.id ?? "");
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -68,8 +98,8 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
         setError((data as { error?: string }).error ?? "Could not reload buildings");
         return;
       }
-      const next = (data as { buildings?: BuildingWithFacilities[] }).buildings;
-      if (!Array.isArray(next)) {
+      const next = normalizeBuildings((data as { buildings?: unknown }).buildings);
+      if (next.length === 0 && Array.isArray((data as { buildings?: unknown }).buildings) && (data as { buildings: unknown[] }).buildings.length > 0) {
         setError("Could not reload buildings");
         return;
       }

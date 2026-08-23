@@ -8,16 +8,36 @@ export async function GET(request: NextRequest) {
 
   const all = new URL(request.url).searchParams.get("all") === "1" && (await isAdmin());
 
-  const buildings = await prisma.building.findMany({
-    where: all ? {} : { active: true },
-    orderBy: [{ order: "asc" }, { name: "asc" }],
-    include: {
-      facilities: {
-        where: all ? {} : { active: true },
-        select: { id: true, name: true, active: true },
-      },
-    },
-  });
+  // The admin facilities editor needs the complete facility shape after each
+  // create/update/delete refresh. Keep the public response lightweight, but
+  // include the editor's nested arrays for the admin `all=1` response.
+  const buildings = all
+    ? await prisma.building.findMany({
+        where: {},
+        orderBy: [{ order: "asc" }, { name: "asc" }],
+        include: {
+          facilities: {
+            orderBy: { name: "asc" },
+            include: {
+              roleLimits: { select: { role: true, maxMinutes: true } },
+              pocs: {
+                include: { user: { select: { id: true, name: true, username: true } } },
+                orderBy: { createdAt: "asc" },
+              },
+            },
+          },
+        },
+      })
+    : await prisma.building.findMany({
+        where: { active: true },
+        orderBy: [{ order: "asc" }, { name: "asc" }],
+        include: {
+          facilities: {
+            where: { active: true },
+            select: { id: true, name: true, active: true },
+          },
+        },
+      });
   return NextResponse.json({ buildings });
 }
 
