@@ -5,7 +5,7 @@ import { fmtMin, fmtSlotRange } from "@/lib/ist";
 import { Button } from "@/components/ui/button";
 
 const CELL_MIN = 15;
-const COL_MIN_W = 150; // minimum px per day column (columns expand to fill the container)
+const COL_MIN_W = 120; // minimum px per day column (columns expand to fill the container)
 const GUTTER_W = 46;
 
 export type BookingBlock = {
@@ -32,11 +32,11 @@ export type FocusRequest = {
 
 /** Zoom ladder: label, px per 15-min cell, minutes between gutter marks. */
 const ZOOMS: { key: string; label: string; cellH: number; mark: number }[] = [
-  { key: "15m", label: "15 min", cellH: 24, mark: 15 },
-  { key: "1h", label: "1 h", cellH: 14, mark: 60 },
-  { key: "2h", label: "2 h", cellH: 9, mark: 120 },
-  { key: "6h", label: "6 h", cellH: 4.5, mark: 360 },
-  { key: "1d", label: "1 d", cellH: 2.5, mark: 360 },
+  { key: "15m", label: "15 min", cellH: 26, mark: 15 },
+  { key: "1h", label: "1 h", cellH: 18, mark: 60 },
+  { key: "2h", label: "2 h", cellH: 11, mark: 120 },
+  { key: "6h", label: "6 h", cellH: 6, mark: 360 },
+  { key: "1d", label: "1 d", cellH: 3.5, mark: 360 },
 ];
 
 function idx(date: string, min: number): number {
@@ -127,10 +127,12 @@ export function TimeGrid({
 }) {
   const [zoomKey, setZoomKey] = useState("1h");
   const zoom = ZOOMS.find((z) => z.key === zoomKey) ?? ZOOMS[1];
-  const colHeight = (24 * 60) / CELL_MIN * zoom.cellH;
+  const colHeight = ((24 * 60) / CELL_MIN) * zoom.cellH;
   const [drag, setDrag] = useState<RangeSelection | null>(null);
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const dragFrom = useRef<{ date: string; min: number } | null>(null);
+  const isPointerDownRef = useRef(false);
+  const pointerStartPosRef = useRef<{ x: number; y: number } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   // Last pointer position + auto-scroll state used while dragging near the edges.
@@ -177,15 +179,15 @@ export function TimeGrid({
     el.scrollTop = Math.max(0, Math.min(startY - 80, max));
   }, [focus, colHeight]);
 
-  // Measure the scroller width so the 7 day columns expand to fill the available
-  // space instead of leaving whitespace on wide screens (150px minimum each).
+  // Measure the scroller width so day columns expand to fill the available
+  // space instead of leaving whitespace on wide screens.
   useEffect(() => {
     const sc = scrollerRef.current;
     if (!sc) return;
     const update = () => {
-      const next = Math.max(COL_MIN_W, (sc.clientWidth - GUTTER_W) / days.length);
+      const available = Math.max(0, sc.clientWidth - GUTTER_W);
+      const next = Math.max(COL_MIN_W, days.length > 0 ? available / days.length : COL_MIN_W);
       setColW((prev) => (Math.abs(prev - next) > 0.5 ? next : prev));
-      // Column width changed -> the pointer's column delta is meaningless mid-drag.
       lastPRef.current = null;
     };
     update();
@@ -199,14 +201,10 @@ export function TimeGrid({
     const el = containerRef.current;
     if (!el) return null;
     const rect = el.getBoundingClientRect();
-    const x = clientX - rect.left;
+    const x = clientX - rect.left; // containerRef starts after the gutter
     const y = clientY - rect.top; // header is outside the grid container
     if (x < 0) return null;
-    // Clamp instead of returning null so a pointer dragged past the last (or
-    // first) day column — or over the time gutter — still resolves to that edge
-    // day; the corner-day auto-scroll/advance logic then keeps the drag moving
-    // into the next/previous week.
-    const dayIdx = Math.max(0, Math.min(days.length - 1, Math.floor((x - GUTTER_W) / colW)));
+    const dayIdx = Math.max(0, Math.min(days.length - 1, Math.floor(x / colW)));
     const min = Math.max(0, Math.min(24 * 60 - CELL_MIN, Math.floor(y / zoom.cellH) * CELL_MIN));
     return { date: days[dayIdx], min };
   }
@@ -221,16 +219,14 @@ export function TimeGrid({
   /**
    * Extend the drag using the last known pointer position (used by pointer moves
    * and the auto-scroll tick). The selection date is a continuous day-column
-   * offset from the drag-start week, so dragging past the last (or first) visible
-   * day column continues into the next (or previous) week day by day — the grid
-   * advances via maybeAdvanceWeek to keep the dragged day in view.
+   * offset from the drag-start week.
    */
   function applyDragFromPointer(x: number, y: number) {
     if (!dragFrom.current) return;
     const el = containerRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const p = (x - rect.left - GUTTER_W) / colW;
+    const p = (x - rect.left) / colW;
     if (lastPRef.current !== null) dragEndColRef.current += p - lastPRef.current;
     lastPRef.current = p;
 
@@ -255,8 +251,8 @@ export function TimeGrid({
       // Cooldown blocked the week advance — pin the overlay to the rendered
       // week's edge so the selection stays visible until the advance can run.
       const rel = dragEndColRef.current - 7 * advanceCountRef.current;
-      const idx = Math.max(0, Math.min(days.length - 1, Math.floor(rel)));
-      endDate = days[idx];
+      const idxRel = Math.max(0, Math.min(days.length - 1, Math.floor(rel)));
+      endDate = days[idxRel];
     }
     const ai = idx(dragFrom.current.date, dragFrom.current.min);
     const bi = idx(endDate, min);
@@ -274,9 +270,6 @@ export function TimeGrid({
     let h: -1 | 0 | 1 = clientX > r.right - EDGE_ZONE ? 1 : clientX < r.left + EDGE_ZONE ? -1 : 0;
     let v: -1 | 0 | 1 = clientY > r.bottom - EDGE_ZONE ? 1 : clientY < r.top + EDGE_ZONE ? -1 : 0;
 
-    // Corner days: dragging ON the last (or first) visible day column keeps
-    // auto-scrolling so the selection runs into the following (or previous)
-    // week even though the pointer never leaves the viewport.
     if (h === 0 || v === 0) {
       const cell = cellFromXY(clientX, clientY);
       if (cell) {
@@ -303,9 +296,7 @@ export function TimeGrid({
   }
 
   /**
-   * Advance the rendered week by +-7 days while a drag crosses the week boundary
-   * (cooldown-gated so a held pointer doesn't bounce). applyDragFromPointer
-   * tracks the selection date independently of these advances.
+   * Advance the rendered week by +-7 days while a drag crosses the week boundary.
    */
   function maybeAdvanceWeek(deltaDays: number, hold = false): boolean {
     const now = Date.now();
@@ -340,15 +331,11 @@ export function TimeGrid({
         const before = sc.scrollLeft;
         sc.scrollLeft += scrollDirRef.current.h * SCROLL_STEP;
         if (sc.scrollLeft === before) {
-          // No horizontal scroll room: dragging ON (or past) the last/first day
-          // column continues the selection into the next/previous week. The
-          // corner-zone check keeps an ordinary in-week drag from jumping weeks,
-          // and the longer hold cooldown makes multi-week extension deliberate.
           const el = containerRef.current;
           if (el) {
             const rect = el.getBoundingClientRect();
             const x = lastPosRef.current ? lastPosRef.current.x : 0;
-            const col = (x - rect.left - GUTTER_W) / colW;
+            const col = (x - rect.left) / colW;
             const edge = EDGE_ZONE / colW;
             if (scrollDirRef.current.h > 0 && col >= 7 * (advanceCountRef.current + 1) - edge) {
               const countNow = advanceCountRef.current;
@@ -382,16 +369,15 @@ export function TimeGrid({
     return bookings.some((b) => t >= idx(b.startDate, b.startMin) && t < idx(b.endDate, b.endMin));
   }
 
-  /** Build the normalized range for a completed drag (end cell is inclusive). */
+  /** Build the normalized range for a completed selection/drag. Supports single-tap (a == b). */
   function normalizeRange(
     a: { date: string; min: number },
     b: { date: string; min: number }
   ): RangeSelection | null {
     const ai = idx(a.date, a.min);
     const bi = idx(b.date, b.min);
-    if (ai === bi) return null;
-    const start = ai < bi ? a : b;
-    const end = ai < bi ? b : a;
+    const start = ai <= bi ? a : b;
+    const end = ai <= bi ? b : a;
     const range: RangeSelection = {
       startDate: start.date,
       startMin: start.min,
@@ -402,54 +388,54 @@ export function TimeGrid({
     return range;
   }
 
-  function handlePointerDown(e: React.PointerEvent) {
+  function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (e.button !== 0 && e.pointerType === "mouse") return;
     const cell = cellFromEvent(e);
     if (!cell || isDisabled(cell.date, cell.min)) return;
+    
+    isPointerDownRef.current = true;
+    pointerStartPosRef.current = { x: e.clientX, y: e.clientY };
     dragFrom.current = cell;
     lastPosRef.current = { x: e.clientX, y: e.clientY };
     stopAutoScroll();
+
     const el = containerRef.current;
     const rect = el ? el.getBoundingClientRect() : null;
-    const p0 = rect ? (e.clientX - rect.left - GUTTER_W) / colW : 0;
+    const p0 = rect ? (e.clientX - rect.left) / colW : 0;
     dragStartDateMsRef.current = Date.parse(`${days[0]}T00:00:00Z`);
     dragEndColRef.current = p0;
     lastPRef.current = p0;
     advanceCountRef.current = 0;
+
     setDrag({ startDate: cell.date, startMin: cell.min, endDate: cell.date, endMin: cell.min + CELL_MIN });
     setDragPos({ x: e.clientX, y: e.clientY });
+
     try {
-      e.currentTarget.setPointerCapture(e.pointerId);
+      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     } catch {
-      /* pointer capture is optional — drag still works via move events */
+      /* pointer capture is optional */
     }
   }
 
-  function handlePointerMove(e: React.PointerEvent) {
-    if (!dragFrom.current) return;
+  function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!isPointerDownRef.current || !dragFrom.current) return;
     lastPosRef.current = { x: e.clientX, y: e.clientY };
     setDragPos({ x: e.clientX, y: e.clientY });
-    // Dragging near the scroller edge auto-scrolls so the selection can keep
-    // extending into days/hours that are currently off-screen. Crossing the
-    // week boundary (last/first day column) advances the week inside
-    // applyDragFromPointer, so the drag continues into the next/previous week.
+
+    // Ignore tiny jitter movements
+    if (pointerStartPosRef.current) {
+      const dx = Math.abs(e.clientX - pointerStartPosRef.current.x);
+      const dy = Math.abs(e.clientY - pointerStartPosRef.current.y);
+      if (dx < 4 && dy < 4) {
+        return;
+      }
+    }
+
     startAutoScroll(edgeDirFromPointer(e.clientX, e.clientY));
     applyDragFromPointer(e.clientX, e.clientY);
   }
 
-  function handlePointerUp() {
-    stopAutoScroll();
-    if (!dragFrom.current) {
-      setDrag(null);
-      setDragPos(null);
-      return;
-    }
-    const from = dragFrom.current;
-    const cur = drag;
-    dragFrom.current = null;
-    setDrag(null);
-    setDragPos(null);
-    if (!cur) return;
+  function commitFinalRange(from: { date: string; min: number }, cur: RangeSelection) {
     const range = normalizeRange(from, { date: cur.endDate, min: cur.endMin - CELL_MIN });
     if (!range) return;
     if (conflict(range)) {
@@ -457,7 +443,7 @@ export function TimeGrid({
       return;
     }
 
-    // Extend: merge the drag with any committed range it touches or overlaps.
+    // Extend: merge the selection with any committed range it touches or overlaps.
     const mergeIdx = committed.map((c, i) => (rangesTouch(c, range) ? i : -1)).filter((i) => i >= 0);
     if (mergeIdx.length > 0) {
       const union = mergeIdx.reduce<RangeSelection>((u, i) => {
@@ -477,16 +463,76 @@ export function TimeGrid({
     onCommit(range);
   }
 
-  const marks = Array.from({ length: 24 * 60 / CELL_MIN }, (_, i) => i * CELL_MIN).filter((m) => m % zoom.mark === 0);
+  function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    stopAutoScroll();
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      /* ignore */
+    }
+
+    if (!dragFrom.current) {
+      isPointerDownRef.current = false;
+      pointerStartPosRef.current = null;
+      setDrag(null);
+      setDragPos(null);
+      return;
+    }
+
+    const from = dragFrom.current;
+    const cur = drag;
+    dragFrom.current = null;
+    isPointerDownRef.current = false;
+    pointerStartPosRef.current = null;
+    setDrag(null);
+    setDragPos(null);
+
+    if (!cur) return;
+    commitFinalRange(from, cur);
+  }
+
+  function handlePointerCancel(e: React.PointerEvent<HTMLDivElement>) {
+    stopAutoScroll();
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      /* ignore */
+    }
+
+    // On mobile touchscreens, if pointer was cancelled while user was tapping a slot, commit the tap!
+    if (dragFrom.current && drag) {
+      const from = dragFrom.current;
+      const cur = drag;
+      dragFrom.current = null;
+      isPointerDownRef.current = false;
+      pointerStartPosRef.current = null;
+      setDrag(null);
+      setDragPos(null);
+      commitFinalRange(from, cur);
+      return;
+    }
+
+    dragFrom.current = null;
+    isPointerDownRef.current = false;
+    pointerStartPosRef.current = null;
+    setDrag(null);
+    setDragPos(null);
+  }
+
+  const marks = Array.from({ length: (24 * 60) / CELL_MIN }, (_, i) => i * CELL_MIN).filter((m) => m % zoom.mark === 0);
 
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5 mr-3">
-            <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary/25" /> Drag to select
+        <p className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary/25" /> Tap or drag to select
           </span>
-          <span className="inline-flex items-center gap-1.5 mr-3">
+          <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary" /> Selected
           </span>
           <span className="inline-flex items-center gap-1.5">
@@ -494,6 +540,7 @@ export function TimeGrid({
           </span>
         </p>
         <div className="flex items-center gap-1">
+          <span className="text-[11px] text-muted-foreground mr-1 hidden sm:inline">Zoom:</span>
           {ZOOMS.map((z) => (
             <Button
               key={z.key}
@@ -521,15 +568,15 @@ export function TimeGrid({
       )}
 
       <div ref={scrollerRef} className="overflow-auto rounded-lg border bg-card" style={{ maxHeight: maxHeight ?? "52vh" }}>
-        {/* Day header (sticky) — today is bold but not background-highlighted */}
+        {/* Day header (sticky) — today is bold */}
         <div className="sticky top-0 z-20 flex bg-card border-b">
           <div style={{ width: GUTTER_W }} className="shrink-0" />
           {days.map((d) => (
             <div
               key={d}
               style={{ width: colW }}
-              className={`shrink-0 px-2 py-1.5 text-center border-r ${
-                d === todayKey ? "text-primary font-bold" : "text-muted-foreground"
+              className={`shrink-0 px-2 py-1.5 text-center border-r select-none ${
+                d === todayKey ? "text-primary font-bold bg-primary/5" : "text-muted-foreground"
               }`}
             >
               <div className="text-xs font-medium">
@@ -542,12 +589,12 @@ export function TimeGrid({
         </div>
         <div className="flex">
           {/* Time gutter */}
-          <div style={{ width: GUTTER_W, height: colHeight }} className="shrink-0 relative">
+          <div style={{ width: GUTTER_W, height: colHeight }} className="shrink-0 relative select-none">
             {marks.map((m) => (
               <div
                 key={m}
                 style={{ height: (CELL_MIN / (24 * 60)) * colHeight, top: (m / (24 * 60)) * colHeight }}
-                className={`absolute right-1 -translate-y-1/2 text-muted-foreground ${
+                className={`absolute right-1 -translate-y-1/2 text-muted-foreground pointer-events-none ${
                   zoom.mark <= 15 ? "text-[8px]" : "text-[10px] font-semibold"
                 }`}
               >
@@ -558,17 +605,12 @@ export function TimeGrid({
           {/* Day columns */}
           <div
             ref={containerRef}
-            className="relative flex"
-            style={{ height: colHeight }}
+            className="relative flex select-none touch-none fb-grid"
+            style={{ height: colHeight, touchAction: "none" }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
-            onPointerCancel={() => {
-              stopAutoScroll();
-              dragFrom.current = null;
-              setDrag(null);
-              setDragPos(null);
-            }}
+            onPointerCancel={handlePointerCancel}
           >
             {days.map((d) => (
               <div key={d} className="shrink-0 relative border-r" style={{ width: colW, height: colHeight }}>
@@ -576,7 +618,7 @@ export function TimeGrid({
                 {marks.map((m) => (
                   <div
                     key={m}
-                    className="absolute left-0 right-0 border-t"
+                    className="absolute left-0 right-0 border-t pointer-events-none"
                     style={{
                       top: (m / (24 * 60)) * colHeight,
                       borderColor: m % 60 === 0 ? "var(--iipe-border)" : "rgba(0,0,0,0.04)",
@@ -645,12 +687,12 @@ function SelectionOverlay({
       {frags.map((f) => (
         <div
           key={f.date}
-          className="fb-selection"
+          className="fb-selection flex items-center justify-start overflow-hidden px-1 text-primary-foreground font-semibold"
           style={{
             left: days.indexOf(f.date) * colW + 1,
             width: colW - 2,
             top: (f.topMin / (24 * 60)) * colHeight + 1,
-            height: Math.max(12, ((f.bottomMin - f.topMin) / (24 * 60)) * colHeight - 2),
+            height: Math.max(14, ((f.bottomMin - f.topMin) / (24 * 60)) * colHeight - 2),
             ...(solid
               ? { borderColor: "var(--iipe-primary)", background: "color-mix(in srgb, var(--iipe-primary) 45%, transparent)" }
               : {}),
@@ -658,8 +700,13 @@ function SelectionOverlay({
               ? { borderColor: "var(--iipe-danger)", background: "color-mix(in srgb, var(--iipe-danger) 22%, transparent)" }
               : {}),
           }}
-        />
+        >
+          <span className="text-[10px] leading-none px-1 py-0.5 rounded bg-primary text-white truncate max-w-full pointer-events-none">
+            {fmtMin(f.topMin)}–{fmtMin(f.bottomMin)}
+          </span>
+        </div>
       ))}
     </>
   );
 }
+

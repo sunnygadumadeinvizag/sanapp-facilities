@@ -2,7 +2,19 @@
 import { apiPath } from "sanapp-common-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Crosshair, Loader2, Paperclip, Pencil, X } from "lucide-react";
+import {
+  Calendar as CalendarIcon,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Crosshair,
+  Loader2,
+  Paperclip,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -10,6 +22,21 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { TimeGrid, type BookingBlock, type FocusRequest, type RangeSelection } from "./TimeGrid";
 import { DatePicker } from "./DatePicker";
 import { effectiveMaxMinutes, capLabel } from "@/lib/limits";
@@ -88,6 +115,16 @@ function parseTime(v: string): number | null {
   return h * 60 + mm;
 }
 
+function dayShortName(dateKey: string): string {
+  const d = new Date(`${dateKey}T00:00:00Z`);
+  return d.toLocaleDateString("en-IN", { weekday: "short" });
+}
+
+function fmtDateHeading(dateKey: string): string {
+  const d = new Date(`${dateKey}T00:00:00Z`);
+  return d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+}
+
 export type EditBookingInfo = {
   id: string;
   date: string;
@@ -143,7 +180,6 @@ export function BookingClient({
     tick();
     const t = setInterval(tick, 30_000);
     return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const effMax = useMemo(
@@ -152,8 +188,19 @@ export function BookingClient({
   );
   const effMaxLabel = capLabel(effMax);
 
-  // The calendar always shows a full Monday–Sunday week.
-  const [weekStart, setWeekStart] = useState(() => mondayOf(today));
+  // Active day and view mode (Day / 3-Day / Week) for easy mobile navigation
+  const [activeDay, setActiveDay] = useState(() => editBooking?.date ?? today);
+  const [weekStart, setWeekStart] = useState(() => mondayOf(activeDay));
+  const [viewMode, setViewMode] = useState<"day" | "3day" | "week">("week");
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+
+  // Auto-switch to Day view on mobile screens on initial load
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      setViewMode("day");
+    }
+  }, []);
+
   const [bookings, setBookings] = useState<BookingBlock[]>([]);
   const [loading, setLoading] = useState(false);
   const [ranges, setRanges] = useState<PendingRange[]>(() =>
@@ -189,10 +236,22 @@ export function BookingClient({
   const [success, setSuccess] = useState<string | null>(null);
   const rejectTimer = useRef<number | null>(null);
 
-  const days = useMemo(
+  // Week days for the current weekStart
+  const weekDays = useMemo(
     () => Array.from({ length: WEEK_DAYS }, (_, i) => addDays(weekStart, i)),
     [weekStart]
   );
+
+  // Days currently visible on the TimeGrid based on viewMode
+  const displayedDays = useMemo(() => {
+    if (viewMode === "day") {
+      return [activeDay];
+    }
+    if (viewMode === "3day") {
+      return [activeDay, addDays(activeDay, 1), addDays(activeDay, 2)];
+    }
+    return weekDays;
+  }, [viewMode, activeDay, weekDays]);
 
   const loadBookings = useCallback(
     async (start: string) => {
@@ -266,13 +325,11 @@ export function BookingClient({
   }
 
   /**
-   * Auto-commit a dragged range (called by TimeGrid on pointer release).
-   * When the drag touched/overlapped existing selections, TimeGrid passes
-   * `mergeIndices` — those are replaced by the merged union (extend mode).
+   * Auto-commit a selected/dragged range (called by TimeGrid on pointer release or tap).
    */
   function commitRange(range: RangeSelection, mergeIndices?: number[]) {
     setRanges((prev) => {
-      // In edit mode there is exactly one range — a new drag replaces it.
+      // In edit mode there is exactly one range — a new selection replaces it.
       if (editBooking) {
         return [{ id: prev[0]?.id ?? ++idRef.current, range }];
       }
@@ -337,6 +394,49 @@ export function BookingClient({
   }
   const hasOverCap = ranges.some((p) => overCap(p.range));
 
+  // Navigation helpers for Previous / Next / Today
+  function handlePrev() {
+    if (viewMode === "day") {
+      const prev = addDays(activeDay, -1);
+      setActiveDay(prev);
+      setWeekStart(mondayOf(prev));
+    } else if (viewMode === "3day") {
+      const prev = addDays(activeDay, -3);
+      setActiveDay(prev);
+      setWeekStart(mondayOf(prev));
+    } else {
+      const prevWeek = addDays(weekStart, -WEEK_DAYS);
+      setWeekStart(prevWeek);
+      setActiveDay(prevWeek);
+    }
+  }
+
+  function handleNext() {
+    if (viewMode === "day") {
+      const next = addDays(activeDay, 1);
+      setActiveDay(next);
+      setWeekStart(mondayOf(next));
+    } else if (viewMode === "3day") {
+      const next = addDays(activeDay, 3);
+      setActiveDay(next);
+      setWeekStart(mondayOf(next));
+    } else {
+      const nextWeek = addDays(weekStart, WEEK_DAYS);
+      setWeekStart(nextWeek);
+      setActiveDay(nextWeek);
+    }
+  }
+
+  function handleToday() {
+    setActiveDay(clock.today);
+    setWeekStart(mondayOf(clock.today));
+  }
+
+  function selectDayPill(d: string) {
+    setActiveDay(d);
+    setWeekStart(mondayOf(d));
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (ranges.length === 0) return;
@@ -344,13 +444,10 @@ export function BookingClient({
     setError(null);
     setSuccess(null);
 
-    // One batchId for every range in this submission (grouped as one booking).
     // Edit mode: PATCH the single existing booking.
     if (editBooking) {
       const { range } = ranges[0];
       try {
-        // When the attachment changes (upload/remove), send multipart so the
-        // file rides along; otherwise plain JSON with the slot fields.
         const wantPdfChange = pdf !== null || pdfClear;
         const payload = wantPdfChange ? new FormData() : null;
         if (payload) {
@@ -384,7 +481,6 @@ export function BookingClient({
         setSuccess("Booking updated.");
         setBusy(false);
         onEdited?.();
-        // Next appends the basePath to router.push, so pass the unprefixed path.
         window.setTimeout(() => router.push("/my-bookings"), 800);
         return;
       } catch (err) {
@@ -444,8 +540,8 @@ export function BookingClient({
     <div>
       {/* Day's schedule chips */}
       <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="secondary" className="gap-1">
-          <span>{clock.today}</span>
+        <Badge variant="secondary" className="gap-1 font-medium">
+          <span>Today: {clock.today}</span>
         </Badge>
         {todaySlots.length > 0 ? (
           todaySlots.map((s) => (
@@ -472,94 +568,235 @@ export function BookingClient({
       )}
 
       <div className="mt-4 space-y-4">
-        <Card>
-            <CardContent className="p-4">
-              {/* Week navigation */}
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1">
-                  <Button variant="outline" size="icon" onClick={() => setWeekStart((w) => addDays(w, -WEEK_DAYS))}>
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <Button variant="outline" size="icon" onClick={() => setWeekStart((w) => addDays(w, WEEK_DAYS))}>
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setWeekStart(mondayOf(clock.today))}>
-                    Today
-                  </Button>
-                </div>
-                <span className="text-sm font-medium">
-                  {days[0]} — {days[days.length - 1]}
-                </span>
-                {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+        <Card className="shadow-sm">
+          <CardContent className="p-3 sm:p-4 space-y-3">
+            {/* Calendar Controls Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
+              {/* Previous / Next / Today */}
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" className="h-8 w-8" onClick={handlePrev} title="Previous">
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleNext} title="Next">
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={handleToday}>
+                  Today
+                </Button>
               </div>
 
-              {rejectMsg && (
-                <div className="mb-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {rejectMsg}
+              {/* Current Date / Range Display */}
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground text-center">
+                {viewMode === "day" && <span>{fmtDateHeading(activeDay)}</span>}
+                {viewMode === "3day" && (
+                  <span>
+                    {fmtDateHeading(activeDay).split(",")[1]?.trim() ?? activeDay} —{" "}
+                    {fmtDateHeading(addDays(activeDay, 2)).split(",")[1]?.trim() ?? addDays(activeDay, 2)}
+                  </span>
+                )}
+                {viewMode === "week" && (
+                  <span>
+                    {weekDays[0]} — {weekDays[weekDays.length - 1]}
+                  </span>
+                )}
+                {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+              </div>
+
+              {/* View Mode Switcher + Quick Add Button */}
+              <div className="flex items-center gap-2 ml-auto">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs text-primary border-primary/40 hover:bg-primary/5"
+                  onClick={() => setShowQuickAdd(true)}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <Clock className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Add by time</span>
+                </Button>
+
+                <div className="flex items-center rounded-lg border bg-muted/50 p-0.5 text-xs">
+                  <Button
+                    type="button"
+                    variant={viewMode === "day" ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setViewMode("day")}
+                  >
+                    1 Day
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={viewMode === "3day" ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setViewMode("3day")}
+                  >
+                    3 Days
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={viewMode === "week" ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setViewMode("week")}
+                  >
+                    Week
+                  </Button>
                 </div>
-              )}
+              </div>
+            </div>
 
-              <TimeGrid
-                days={days}
-                bookings={bookings}
-                committed={ranges.map((p) => p.range)}
-                onCommit={commitRange}
-                onReject={rejectRange}
-          nowMin={clock.nowMin}
-          todayKey={clock.today}
-                maxHeight="60vh"
-                onAutoAdvance={(d) => setWeekStart((w) => addDays(w, d))}
-                focus={focusReq}
-              />
-            </CardContent>
-          </Card>
+            {/* Day Selector Pills Bar (Always accessible, great for mobile!) */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+              {weekDays.map((d) => {
+                const isCurrentActive =
+                  viewMode === "day"
+                    ? d === activeDay
+                    : viewMode === "3day"
+                    ? d >= activeDay && d <= addDays(activeDay, 2)
+                    : false;
+                const isToday = d === clock.today;
+                const bookedCount = bookings.filter((b) => b.startDate <= d && b.endDate >= d).length;
+                const hasSelected = ranges.some((r) => r.range.startDate <= d && r.range.endDate >= d);
 
-          {/* Selected slots summary */}
-          {ranges.length > 0 && (
-            <Card>
-              <CardContent className="p-4">
-                <div className="mb-2 flex items-center gap-2">
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => selectDayPill(d)}
+                    className={`flex-1 min-w-[58px] sm:min-w-[70px] py-1.5 px-2 rounded-lg border text-center transition-all flex flex-col items-center justify-center gap-0.5 ${
+                      isCurrentActive
+                        ? "bg-primary text-primary-foreground border-primary shadow-sm ring-2 ring-primary/20 font-bold"
+                        : "bg-card hover:bg-muted/70 text-foreground border-border"
+                    }`}
+                  >
+                    <span className="text-[10px] uppercase tracking-wider font-semibold opacity-90">
+                      {dayShortName(d)}
+                    </span>
+                    <span className="text-xs font-bold leading-none">
+                      {d.slice(8)}
+                    </span>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      {isToday && (
+                        <span
+                          className={`inline-block h-1.5 w-1.5 rounded-full ${
+                            isCurrentActive ? "bg-white" : "bg-primary"
+                          }`}
+                          title="Today"
+                        />
+                      )}
+                      {hasSelected && (
+                        <span
+                          className={`inline-block h-1.5 w-1.5 rounded-full ${
+                            isCurrentActive ? "bg-amber-300" : "bg-primary"
+                          }`}
+                          title="Selected slot on this day"
+                        />
+                      )}
+                      {bookedCount > 0 && (
+                        <span
+                          className={`inline-block h-1.5 w-1.5 rounded-full ${
+                            isCurrentActive ? "bg-red-300" : "bg-red-500"
+                          }`}
+                          title={`${bookedCount} booked slot(s)`}
+                        />
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {rejectMsg && (
+              <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {rejectMsg}
+              </div>
+            )}
+
+            <TimeGrid
+              days={displayedDays}
+              bookings={bookings}
+              committed={ranges.map((p) => p.range)}
+              onCommit={commitRange}
+              onReject={rejectRange}
+              nowMin={clock.nowMin}
+              todayKey={clock.today}
+              maxHeight="58vh"
+              onAutoAdvance={(delta) => {
+                const nextWeek = addDays(weekStart, delta);
+                setWeekStart(nextWeek);
+                setActiveDay(nextWeek);
+              }}
+              focus={focusReq}
+            />
+
+            <p className="text-[11px] text-muted-foreground">
+              Tip: Tap any slot cell to select it. Tap adjacent slots to extend, or drag across hours.
+              On mobile phones, switch to <strong>1 Day</strong> view for full-width time slots.
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Selected slots summary */}
+        {ranges.length > 0 && (
+          <Card className="shadow-sm">
+            <CardContent className="p-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
                   <h4 className="text-sm font-semibold">Selected slots ({ranges.length})</h4>
                   {hasOverCap && (
-                    <span className="text-xs text-red-600">Some slots exceed the {effMaxLabel} limit</span>
+                    <span className="text-xs text-red-600 font-medium">Some slots exceed the {effMaxLabel} limit</span>
                   )}
                 </div>
-                <div className="flex flex-col gap-2">
-                  {ranges.map(({ id, range }) => {
-                    const dur = slotDurationMin(range.startDate, range.startMin, range.endDate, range.endMin);
-                    const long = effMax !== null ? dur > effMax : false;
-                    const cap = overCap(range);
-                    return (
-                      <RangeRow
-                        key={id}
-                        range={range}
-                        dur={dur}
-                        long={long}
-                        cap={cap}
-                        effMaxLabel={effMaxLabel}
-                        forOther={forOther}
-                        onRemove={() => removeRange(id)}
-                        onSave={(next) => updateRange(id, next)}
-                        onLocate={() => {
-                          setFocusReq({ range, nonce: ++focusNonce.current });
-                        }}
-                      />
-                    );
-                  })}
-                </div>
-                <p className="mt-3 text-xs text-muted-foreground">
-                  Drag on the calendar to add a slot — dragging next to an existing one extends it. Use the pencil
-                  to fine-tune From / To, or the crosshair to jump to a slot on the calendar.
-                </p>
-              </CardContent>
-            </Card>
-          )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                  onClick={() => setRanges([])}
+                >
+                  Clear all
+                </Button>
+              </div>
+              <div className="flex flex-col gap-2">
+                {ranges.map(({ id, range }) => {
+                  const dur = slotDurationMin(range.startDate, range.startMin, range.endDate, range.endMin);
+                  const long = effMax !== null ? dur > effMax : false;
+                  const cap = overCap(range);
+                  return (
+                    <RangeRow
+                      key={id}
+                      range={range}
+                      dur={dur}
+                      long={long}
+                      cap={cap}
+                      effMaxLabel={effMaxLabel}
+                      forOther={forOther}
+                      onRemove={() => removeRange(id)}
+                      onSave={(next) => updateRange(id, next)}
+                      onLocate={() => {
+                        setActiveDay(range.startDate);
+                        setWeekStart(mondayOf(range.startDate));
+                        setFocusReq({ range, nonce: ++focusNonce.current });
+                      }}
+                    />
+                  );
+                })}
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Click the pencil icon on any slot to fine-tune From / To times, or the crosshair to scroll to it on the calendar.
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
-          {/* Booking details */}
-          <Card>
+        {/* Booking details */}
+        <Card className="shadow-sm">
           <CardContent className="p-4 space-y-4">
             {!editBooking && canPoc && (
-              <label className="flex items-center gap-2 text-sm">
+              <label className="flex items-center gap-2 text-sm font-medium">
                 <Checkbox checked={forOther} onCheckedChange={(v) => setForOther(v === true)} />
                 Block these slots for another user
               </label>
@@ -571,6 +808,7 @@ export function BookingClient({
                 <Input
                   value={forQuery}
                   placeholder="e.g. sanyasi or Sanyasi Naidu"
+                  className="mt-1"
                   onChange={(e) => {
                     setForQuery(e.target.value);
                     setForUserId("");
@@ -578,14 +816,14 @@ export function BookingClient({
                   }}
                 />
                 {forResults.length > 0 && (
-                  <div className="mt-2 flex flex-col gap-1">
+                  <div className="mt-2 flex flex-col gap-1 max-h-48 overflow-y-auto rounded-md border p-1 bg-card shadow-sm">
                     {forResults.map((u) => (
                       <Button
                         key={u.id}
                         type="button"
-                        variant="outline"
+                        variant="ghost"
                         size="sm"
-                        className="justify-start"
+                        className="justify-start text-xs"
                         onClick={() => {
                           setForUserId(u.id);
                           setForQuery(`${u.name} (@${u.username})`);
@@ -622,45 +860,45 @@ export function BookingClient({
                   className="mt-1"
                   onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
                 />
-                <p className="text-[11px] text-muted-foreground">
-                  {editBooking ? "Optional" : "Optional — applies to all slots"}
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  {editBooking ? "Optional" : "Optional — applies to all slots in this booking"}
                 </p>
-                <div className="flex flex-wrap items-center gap-2">
-                {pdfName && (
-                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                    <Paperclip className="h-3 w-3" /> {pdfName}
-                  </span>
-                )}
-                {!pdfName && existingPdfName && editBooking && (
-                  <span className="inline-flex items-center gap-2 text-xs">
-                    <a
-                      href={apiPath("/api/bookings/" + editBooking.id + "/pdf")}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-primary hover:underline"
-                    >
-                      <Paperclip className="h-3 w-3" /> {existingPdfName}
-                    </a>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 px-1.5 text-[11px] text-red-600 hover:text-red-700"
-                      onClick={() => {
-                        setPdfClear(true);
-                        setPdf(null);
-                        setPdfName("");
-                      }}
-                    >
-                      Remove
-                    </Button>
-                  </span>
-                )}
-                {pdfClear && !pdfName && (
-                  <span className="text-xs font-medium text-red-600">
-                    Current attachment will be removed when you save.
-                  </span>
-                )}
+                <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                  {pdfName && (
+                    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground font-medium">
+                      <Paperclip className="h-3 w-3" /> {pdfName}
+                    </span>
+                  )}
+                  {!pdfName && existingPdfName && editBooking && (
+                    <span className="inline-flex items-center gap-2 text-xs">
+                      <a
+                        href={apiPath("/api/bookings/" + editBooking.id + "/pdf")}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
+                      >
+                        <Paperclip className="h-3 w-3" /> {existingPdfName}
+                      </a>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-1.5 text-[11px] text-red-600 hover:text-red-700"
+                        onClick={() => {
+                          setPdfClear(true);
+                          setPdf(null);
+                          setPdfName("");
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </span>
+                  )}
+                  {pdfClear && !pdfName && (
+                    <span className="text-xs font-medium text-red-600">
+                      Current attachment will be removed when you save.
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -692,6 +930,21 @@ export function BookingClient({
           </CardContent>
         </Card>
       </div>
+
+      {/* Quick Add Slot Modal */}
+      <QuickAddSlotDialog
+        open={showQuickAdd}
+        onOpenChange={setShowQuickAdd}
+        initialDate={activeDay}
+        todayKey={clock.today}
+        nowMin={clock.nowMin}
+        bookings={bookings}
+        onAddSlot={(range) => {
+          commitRange(range);
+          setActiveDay(range.startDate);
+          setWeekStart(mondayOf(range.startDate));
+        }}
+      />
     </div>
   );
 }
@@ -760,19 +1013,19 @@ function RangeRow({
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <div>
               <Label className="text-[10px] uppercase text-muted-foreground">From date</Label>
-              <DatePicker value={startDate} onChange={setStartDate} className="w-full" />
+              <DatePicker value={startDate} onChange={setStartDate} className="w-full mt-1" />
             </div>
             <div>
               <Label className="text-[10px] uppercase text-muted-foreground">From time (IST)</Label>
-              <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="h-8 text-xs" />
+              <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="h-8 text-xs mt-1" />
             </div>
             <div>
               <Label className="text-[10px] uppercase text-muted-foreground">To date</Label>
-              <DatePicker value={endDate} onChange={setEndDate} className="w-full" />
+              <DatePicker value={endDate} onChange={setEndDate} className="w-full mt-1" />
             </div>
             <div>
               <Label className="text-[10px] uppercase text-muted-foreground">To time (IST)</Label>
-              <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="h-8 text-xs" />
+              <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="h-8 text-xs mt-1" />
             </div>
           </div>
           {err && <p className="text-xs text-red-600">{err}</p>}
@@ -790,19 +1043,19 @@ function RangeRow({
           <Badge variant={long ? "destructive" : cap ? "outline" : "default"}>
             {fmtSlotRange(range.startDate, range.startMin, range.endDate, range.endMin)}
           </Badge>
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs text-muted-foreground font-medium">
             {dur < 60 ? `${dur} min` : `${(dur / 60).toFixed(dur % 60 ? 1 : 0)} h`}
           </span>
           <Badge variant="secondary">
             {long ? "Long (POC)" : forOther ? "On-behalf block" : "Self"}
           </Badge>
-          {cap && <span className="text-xs text-red-600">over {effMaxLabel} limit</span>}
+          {cap && <span className="text-xs text-red-600 font-semibold">over {effMaxLabel} limit</span>}
           <span className="ml-auto flex items-center gap-1">
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className="h-6 w-6"
+              className="h-7 w-7 text-muted-foreground hover:text-foreground"
               title="Show this slot on the calendar"
               onClick={onLocate}
             >
@@ -812,18 +1065,204 @@ function RangeRow({
               type="button"
               variant="ghost"
               size="icon"
-              className="h-6 w-6"
+              className="h-7 w-7 text-muted-foreground hover:text-foreground"
               title="Edit From / To"
               onClick={() => setEditing(true)}
             >
               <Pencil className="h-3.5 w-3.5" />
             </Button>
-            <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={onRemove}>
-              <X className="h-3.5 w-3.5" />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-red-600 hover:text-red-700 hover:bg-red-50"
+              onClick={onRemove}
+              title="Remove this slot"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
             </Button>
           </span>
         </div>
       )}
     </div>
+  );
+}
+
+/** Quick Modal to select a slot by Date, Start Time, and Duration / End Time */
+function QuickAddSlotDialog({
+  open,
+  onOpenChange,
+  initialDate,
+  todayKey,
+  nowMin,
+  bookings,
+  onAddSlot,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initialDate: string;
+  todayKey: string;
+  nowMin: number;
+  bookings: BookingBlock[];
+  onAddSlot: (range: RangeSelection) => void;
+}) {
+  const [date, setDate] = useState(initialDate);
+  const [startTime, setStartTime] = useState("10:00");
+  const [durationMin, setDurationMin] = useState(60);
+  const [customEndTime, setCustomEndTime] = useState("11:00");
+  const [useCustomEnd, setUseCustomEnd] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setDate(initialDate);
+      setErr(null);
+    }
+  }, [open, initialDate]);
+
+  // Sync customEndTime when startTime or durationMin changes
+  useEffect(() => {
+    const s = parseTime(startTime);
+    if (s !== null) {
+      const e = s + durationMin;
+      if (e <= 1440) {
+        setCustomEndTime(fmtMin(e));
+      }
+    }
+  }, [startTime, durationMin]);
+
+  function handleAdd() {
+    const sMin = parseTime(startTime);
+    if (sMin === null) {
+      setErr("Please enter a valid start time (HH:MM).");
+      return;
+    }
+    const eMin = useCustomEnd ? parseTime(customEndTime) : sMin + durationMin;
+    if (eMin === null || eMin <= sMin) {
+      setErr("End time must be after start time.");
+      return;
+    }
+    if (slotIndex(date, sMin) <= slotIndex(todayKey, nowMin)) {
+      setErr("Selected start time must be in the future.");
+      return;
+    }
+    const range: RangeSelection = {
+      startDate: date,
+      startMin: sMin,
+      endDate: date,
+      endMin: eMin,
+    };
+    // Conflict check
+    const [s, e] = absMin(range);
+    const overlaps = bookings.some((b) => {
+      return s < slotIndex(b.endDate, b.endMin) && e > slotIndex(b.startDate, b.startMin);
+    });
+    if (overlaps) {
+      setErr("That time slot overlaps an already-booked slot.");
+      return;
+    }
+    setErr(null);
+    onAddSlot(range);
+    onOpenChange(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Clock className="h-5 w-5 text-primary" />
+            Quick Add Slot
+          </DialogTitle>
+          <DialogDescription>
+            Select a date, start time, and duration to add a slot to your booking.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          <div>
+            <Label className="text-xs font-semibold">Date</Label>
+            <div className="mt-1">
+              <DatePicker value={date} onChange={setDate} className="w-full" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs font-semibold">Start Time (IST)</Label>
+              <Input
+                type="time"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label className="text-xs font-semibold">End Time (IST)</Label>
+              <Input
+                type="time"
+                value={customEndTime}
+                disabled={!useCustomEnd}
+                onChange={(e) => {
+                  setCustomEndTime(e.target.value);
+                  setUseCustomEnd(true);
+                }}
+                className={`mt-1 ${!useCustomEnd ? "bg-muted text-muted-foreground" : ""}`}
+              />
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <Label className="text-xs font-semibold">Quick Duration</Label>
+              <button
+                type="button"
+                onClick={() => setUseCustomEnd(!useCustomEnd)}
+                className="text-[11px] text-primary hover:underline"
+              >
+                {useCustomEnd ? "Use presets" : "Custom end time"}
+              </button>
+            </div>
+            <div className="grid grid-cols-4 gap-1.5">
+              {[
+                { label: "15 min", min: 15 },
+                { label: "30 min", min: 30 },
+                { label: "1 hour", min: 60 },
+                { label: "2 hours", min: 120 },
+              ].map((d) => (
+                <Button
+                  key={d.min}
+                  type="button"
+                  size="sm"
+                  variant={!useCustomEnd && durationMin === d.min ? "default" : "outline"}
+                  className="h-8 text-xs px-1"
+                  onClick={() => {
+                    setDurationMin(d.min);
+                    setUseCustomEnd(false);
+                  }}
+                >
+                  {d.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {err && (
+            <div className="rounded-md border border-red-300 bg-red-50 p-2.5 text-xs text-red-700">
+              {err}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={handleAdd}>
+            Add Slot
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
