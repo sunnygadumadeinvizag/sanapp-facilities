@@ -90,6 +90,42 @@ async function hasConflict(
   return false;
 }
 
+/** Who holds the confirmed booking overlapping this range (for the 409 payload). */
+async function conflictDetails(
+  facilityId: string,
+  startDate: string,
+  endDate: string,
+  startMin: number,
+  endMin: number
+) {
+  const startIdx = slotIndex(startDate, startMin);
+  const endIdx = slotIndex(endDate, endMin);
+  const rows = await prisma.booking.findMany({
+    where: { facilityId, status: "CONFIRMED" },
+    select: {
+      date: true,
+      endDate: true,
+      startMin: true,
+      endMin: true,
+      user: { select: { name: true } },
+      forUser: { select: { name: true } },
+    },
+  });
+  for (const b of rows) {
+    const bEnd = endDayOf(b.date, b.endDate);
+    if (startIdx < slotIndex(bEnd, b.endMin) && endIdx > slotIndex(b.date, b.startMin)) {
+      return {
+        booker: b.forUser?.name ?? b.user?.name ?? null,
+        date: b.date,
+        endDate: bEnd,
+        startMin: b.startMin,
+        endMin: b.endMin,
+      };
+    }
+  }
+  return null;
+}
+
 export async function GET(request: NextRequest) {
   const user = await currentUser();
   if (!user) return bad("unauthorized", 401);
@@ -423,7 +459,8 @@ export async function POST(request: NextRequest) {
     });
   } catch (e) {
     if (e instanceof SlotConflict || isExclusionViolation(e)) {
-      return bad(CONFLICT_MSG, 409);
+      const details = await conflictDetails(facilityId, startDate, endDate, startMin, endMin).catch(() => null);
+      return NextResponse.json({ error: CONFLICT_MSG, conflict: details }, { status: 409 });
     }
     throw e;
   }
@@ -581,7 +618,8 @@ export async function PATCH(request: NextRequest) {
     });
   } catch (e) {
     if (e instanceof SlotConflict || isExclusionViolation(e)) {
-      return bad(CONFLICT_MSG, 409);
+      const details = await conflictDetails(booking.facilityId, startDate, endDate, startMin, endMin).catch(() => null);
+      return NextResponse.json({ error: CONFLICT_MSG, conflict: details }, { status: 409 });
     }
     throw e;
   }

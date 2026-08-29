@@ -3,6 +3,7 @@ import { apiPath } from "sanapp-common-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   Calendar as CalendarIcon,
   ChevronLeft,
   ChevronRight,
@@ -106,6 +107,13 @@ function rangesTouch(a: RangeSelection, b: RangeSelection): boolean {
   return aS <= bE && aE >= bS;
 }
 
+/** Strict overlap — sharing a boundary (adjacent slots) is allowed. */
+function rangesOverlapStrict(a: RangeSelection, b: RangeSelection): boolean {
+  const [aS, aE] = absMin(a);
+  const [bS, bE] = absMin(b);
+  return aS < bE && aE > bS;
+}
+
 function parseTime(v: string): number | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
   if (!m) return null;
@@ -124,6 +132,19 @@ function fmtDateHeading(dateKey: string): string {
   const d = new Date(`${dateKey}T00:00:00Z`);
   return d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 }
+
+/** Details of a slot the server says was booked while the user was filling the form. */
+export type ConflictInfo = {
+  /** The range this user tried to book. */
+  range: RangeSelection;
+  /** Who holds the conflicting booking (booker or the user it is blocked for). */
+  booker: string | null;
+  /** The already-booked slot that collided. */
+  date: string;
+  endDate: string;
+  startMin: number;
+  endMin: number;
+};
 
 export type EditBookingInfo = {
   id: string;
@@ -219,6 +240,13 @@ export function BookingClient({
       : []
   );
   const idRef = useRef(editBooking ? 1 : 0);
+  // Mirror of `ranges` so event handlers can validate against the current
+  // selection synchronously (state updates are async).
+  const rangesRef = useRef<PendingRange[]>(ranges);
+  function applyRanges(next: PendingRange[]) {
+    rangesRef.current = next;
+    setRanges(next);
+  }
   const [focusReq, setFocusReq] = useState<FocusRequest | null>(null);
   const focusNonce = useRef(0);
   const [rejectMsg, setRejectMsg] = useState<string | null>(null);
@@ -235,6 +263,9 @@ export function BookingClient({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const rejectTimer = useRef<number | null>(null);
+  // Set when the server rejects a slot because someone else booked it while
+  // this user was completing the form (the classic two-user race).
+  const [conflictModal, setConflictModal] = useState<ConflictInfo | null>(null);
 
   // Week days for the current weekStart
   const weekDays = useMemo(
@@ -328,30 +359,38 @@ export function BookingClient({
    * Auto-commit a selected/dragged range (called by TimeGrid on pointer release or tap).
    */
   function commitRange(range: RangeSelection, mergeIndices?: number[]) {
-    setRanges((prev) => {
-      // In edit mode there is exactly one range — a new selection replaces it.
-      if (editBooking) {
-        return [{ id: prev[0]?.id ?? ++idRef.current, range }];
-      }
-      if (mergeIndices && mergeIndices.length > 0) {
-        const keep = prev.filter((_, i) => !mergeIndices.includes(i));
-        const id = prev[mergeIndices[0]]?.id ?? ++idRef.current;
-        return [{ id, range }, ...keep];
-      }
-      return [...prev, { id: ++idRef.current, range }];
-    });
+    const prev = rangesRef.current;
+    // In edit mode there is exactly one range — a new selection replaces it.
+    if (editBooking) {
+      applyRanges([{ id: prev[0]?.id ?? ++idRef.current, range }]);
+      return;
+    }
+    if (mergeIndices && mergeIndices.length > 0) {
+      const keep = prev.filter((_, i) => !mergeIndices.includes(i));
+      const id = prev[mergeIndices[0]]?.id ?? ++idRef.current;
+      applyRanges([{ id, range }, ...keep]);
+      return;
+    }
+    // A new slot may not overlap a slot already picked for this booking —
+    // otherwise one booking would claim the same time twice.
+    if (prev.some((p) => rangesOverlapStrict(p.range, range))) {
+      rejectRange("That time is already part of this booking — remove or edit the selected slot first.");
+      return;
+    }
+    applyRanges([...prev, { id: ++idRef.current, range }]);
   }
 
-  function rejectRange() {
+  function rejectRange(msg?: string) {
     setRejectMsg(
-      "That range overlaps an already-booked slot or the past — nothing was added."
+      msg ??
+        "That range overlaps an already-booked slot or the past — nothing was added."
     );
     if (rejectTimer.current) window.clearTimeout(rejectTimer.current);
     rejectTimer.current = window.setTimeout(() => setRejectMsg(null), 4000);
   }
 
   function removeRange(id: number) {
-    setRanges((prev) => prev.filter((p) => p.id !== id));
+    applyRanges(rangesRef.current.filter((p) => p.id !== id));
   }
 
   /** Validate and apply a From/To edit; merges any other selection it now touches. */
@@ -366,18 +405,20 @@ export function BookingClient({
       return s < slotIndex(b.endDate, b.endMin) && e > slotIndex(b.startDate, b.startMin);
     });
     if (overlapsBooking) return "That range overlaps an already-booked slot.";
-    setRanges((prev) => {
-      let merged = next;
-      const absorbed = new Set<number>();
-      for (const p of prev) {
-        if (p.id === id) continue;
-        if (rangesTouch(merged, p.range)) {
-          merged = unionRange(merged, p.range);
-          absorbed.add(p.id);
-        }
+    // May not overlap another slot picked for this same booking.
+    if (rangesRef.current.some((p) => p.id !== id && rangesOverlapStrict(p.range, next))) {
+      return "That range overlaps another slot selected in this booking.";
+    }
+    let merged = next;
+    const absorbed = new Set<number>();
+    for (const p of rangesRef.current) {
+      if (p.id === id) continue;
+      if (rangesTouch(merged, p.range)) {
+        merged = unionRange(merged, p.range);
+        absorbed.add(p.id);
       }
-      return [{ id, range: merged }, ...prev.filter((p) => p.id !== id && !absorbed.has(p.id))];
-    });
+    }
+    applyRanges([{ id, range: merged }, ...rangesRef.current.filter((p) => p.id !== id && !absorbed.has(p.id))]);
     return null;
   }
 
@@ -477,7 +518,24 @@ export function BookingClient({
               }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Could not update the booking");
+        if (!res.ok) {
+          // Someone booked the slot while this user was editing — show the
+          // "booked just now" modal instead of a bare inline error.
+          if (res.status === 409 && data.conflict) {
+            setConflictModal({
+              range,
+              booker: data.conflict.booker ?? null,
+              date: data.conflict.date ?? range.startDate,
+              endDate: data.conflict.endDate ?? range.endDate,
+              startMin: data.conflict.startMin ?? range.startMin,
+              endMin: data.conflict.endMin ?? range.endMin,
+            });
+            await loadBookings(weekStart);
+            setBusy(false);
+            return;
+          }
+          throw new Error(data.error ?? "Could not update the booking");
+        }
         setSuccess("Booking updated.");
         setBusy(false);
         onEdited?.();
@@ -493,7 +551,9 @@ export function BookingClient({
     const batchId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
     const created: string[] = [];
     const failed: string[] = [];
-    for (const { range } of ranges) {
+    let conflictHit: ConflictInfo | null = null;
+    for (let i = 0; i < ranges.length; i++) {
+      const { range } = ranges[i];
       const form = new FormData();
       form.set("facilityId", facility.id);
       form.set("batchId", batchId);
@@ -507,11 +567,36 @@ export function BookingClient({
       try {
         const res = await fetch(apiPath("/api/bookings"), { method: "POST", body: form });
         const data = await res.json();
-        if (res.ok) created.push(data.booking?.id ?? "");
-        else failed.push(data.error ?? "Could not create the booking");
+        if (res.ok) {
+          created.push(data.booking?.id ?? "");
+          continue;
+        }
+        if (res.status === 409) {
+          // Lost the race: someone booked this slot while the form was open.
+          conflictHit = {
+            range,
+            booker: data.conflict?.booker ?? null,
+            date: data.conflict?.date ?? range.startDate,
+            endDate: data.conflict?.endDate ?? range.endDate,
+            startMin: data.conflict?.startMin ?? range.startMin,
+            endMin: data.conflict?.endMin ?? range.endMin,
+          };
+          // Keep the conflicting slot plus the not-yet-tried ones so the user
+          // can refresh availability and retry; already-booked ones are dropped.
+          applyRanges(ranges.slice(i));
+          break;
+        }
+        failed.push(data.error ?? "Could not create the booking");
       } catch {
         failed.push("Network error while creating a booking");
       }
+    }
+
+    if (conflictHit) {
+      setConflictModal(conflictHit);
+      await loadBookings(weekStart);
+      setBusy(false);
+      return;
     }
 
     if (created.length > 0) {
@@ -531,7 +616,7 @@ export function BookingClient({
     setForUserId("");
     setForQuery("");
     setForResults([]);
-    setRanges([]);
+    applyRanges([]);
     await loadBookings(weekStart);
     setBusy(false);
   }
@@ -755,7 +840,7 @@ export function BookingClient({
                   variant="ghost"
                   size="sm"
                   className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-                  onClick={() => setRanges([])}
+                  onClick={() => applyRanges([])}
                 >
                   Clear all
                 </Button>
@@ -939,12 +1024,63 @@ export function BookingClient({
         todayKey={clock.today}
         nowMin={clock.nowMin}
         bookings={bookings}
+        pendingRanges={rangesRef.current.map((p) => p.range)}
         onAddSlot={(range) => {
           commitRange(range);
           setActiveDay(range.startDate);
           setWeekStart(mondayOf(range.startDate));
         }}
       />
+
+      {/* "Booked just now" race-conflict modal */}
+      <Dialog open={conflictModal !== null} onOpenChange={(o) => { if (!o) setConflictModal(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="h-5 w-5" />
+              Slot booked just now
+            </DialogTitle>
+            <DialogDescription>
+              Someone else booked this slot while you were completing your booking.
+            </DialogDescription>
+          </DialogHeader>
+          {conflictModal && (
+            <div className="space-y-2 py-1 text-sm">
+              <p>
+                The slot{" "}
+                <span className="font-semibold">
+                  {fmtSlotRange(conflictModal.range.startDate, conflictModal.range.startMin, conflictModal.range.endDate, conflictModal.range.endMin)}
+                </span>{" "}
+                is no longer available.
+              </p>
+              {conflictModal.booker && (
+                <p>
+                  It was booked just now by{" "}
+                  <span className="font-semibold">{conflictModal.booker}</span>{" "}
+                  ({fmtSlotRange(conflictModal.date, conflictModal.startMin, conflictModal.endDate, conflictModal.endMin)}).
+                </p>
+              )}
+              <p className="text-muted-foreground">
+                Please refresh to get the latest slot availability, then pick a free slot.
+              </p>
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setConflictModal(null)}>
+              Close
+            </Button>
+            <Button
+              type="button"
+              onClick={async () => {
+                setConflictModal(null);
+                await loadBookings(weekStart);
+              }}
+            >
+              Refresh availability
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1088,7 +1224,7 @@ function RangeRow({
   );
 }
 
-/** Quick Modal to select a slot by Date, Start Time, and Duration / End Time */
+/** Quick Modal to select a slot by Date range, Start Time, and Duration / End Time */
 function QuickAddSlotDialog({
   open,
   onOpenChange,
@@ -1096,6 +1232,7 @@ function QuickAddSlotDialog({
   todayKey,
   nowMin,
   bookings,
+  pendingRanges,
   onAddSlot,
 }: {
   open: boolean;
@@ -1104,9 +1241,12 @@ function QuickAddSlotDialog({
   todayKey: string;
   nowMin: number;
   bookings: BookingBlock[];
+  /** Slots already picked for this booking — a new slot may not overlap them. */
+  pendingRanges: RangeSelection[];
   onAddSlot: (range: RangeSelection) => void;
 }) {
   const [date, setDate] = useState(initialDate);
+  const [endDate, setEndDate] = useState(initialDate);
   const [startTime, setStartTime] = useState("10:00");
   const [durationMin, setDurationMin] = useState(60);
   const [customEndTime, setCustomEndTime] = useState("11:00");
@@ -1116,20 +1256,21 @@ function QuickAddSlotDialog({
   useEffect(() => {
     if (open) {
       setDate(initialDate);
+      setEndDate(initialDate);
       setErr(null);
     }
   }, [open, initialDate]);
 
-  // Sync customEndTime when startTime or durationMin changes
+  // When a duration preset is active, keep the displayed To date / end time in
+  // sync (this also carries the end across midnight onto the next day).
   useEffect(() => {
+    if (useCustomEnd) return;
     const s = parseTime(startTime);
-    if (s !== null) {
-      const e = s + durationMin;
-      if (e <= 1440) {
-        setCustomEndTime(fmtMin(e));
-      }
-    }
-  }, [startTime, durationMin]);
+    if (s === null) return;
+    const endAbs = slotIndex(date, s) + durationMin;
+    setEndDate(new Date(endAbs * 60000).toISOString().slice(0, 10));
+    setCustomEndTime(fmtMin(endAbs % 1440));
+  }, [startTime, durationMin, date, useCustomEnd]);
 
   function handleAdd() {
     const sMin = parseTime(startTime);
@@ -1137,28 +1278,51 @@ function QuickAddSlotDialog({
       setErr("Please enter a valid start time (HH:MM).");
       return;
     }
-    const eMin = useCustomEnd ? parseTime(customEndTime) : sMin + durationMin;
-    if (eMin === null || eMin <= sMin) {
-      setErr("End time must be after start time.");
+    let endDt = endDate;
+    let eMin: number | null;
+    if (useCustomEnd) {
+      eMin = parseTime(customEndTime);
+      if (eMin === null) {
+        setErr("Please enter a valid end time (HH:MM).");
+        return;
+      }
+    } else {
+      const endAbs = slotIndex(date, sMin) + durationMin;
+      endDt = new Date(endAbs * 60000).toISOString().slice(0, 10);
+      eMin = endAbs % 1440;
+    }
+    if (endDt < date) {
+      setErr("End date cannot be before the start date.");
       return;
     }
-    if (slotIndex(date, sMin) <= slotIndex(todayKey, nowMin)) {
+    const startAbs = slotIndex(date, sMin);
+    const endAbs = slotIndex(endDt, eMin ?? 0);
+    if (endAbs <= startAbs) {
+      setErr("End must be after the start.");
+      return;
+    }
+    if (startAbs <= slotIndex(todayKey, nowMin)) {
       setErr("Selected start time must be in the future.");
       return;
     }
     const range: RangeSelection = {
       startDate: date,
       startMin: sMin,
-      endDate: date,
-      endMin: eMin,
+      endDate: endDt,
+      endMin: eMin ?? 0,
     };
-    // Conflict check
+    // Conflict checks: already-booked slots on the server…
     const [s, e] = absMin(range);
-    const overlaps = bookings.some((b) => {
+    const overlapsBooked = bookings.some((b) => {
       return s < slotIndex(b.endDate, b.endMin) && e > slotIndex(b.startDate, b.startMin);
     });
-    if (overlaps) {
+    if (overlapsBooked) {
       setErr("That time slot overlaps an already-booked slot.");
+      return;
+    }
+    // …and slots already picked for this same booking.
+    if (pendingRanges.some((p) => rangesOverlapStrict(p, range))) {
+      setErr("That time slot overlaps one you already selected for this booking.");
       return;
     }
     setErr(null);
@@ -1175,15 +1339,34 @@ function QuickAddSlotDialog({
             Quick Add Slot
           </DialogTitle>
           <DialogDescription>
-            Select a date, start time, and duration to add a slot to your booking.
+            Select a date range, start time, and duration to add a slot to your booking.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
-          <div>
-            <Label className="text-xs font-semibold">Date</Label>
-            <div className="mt-1">
-              <DatePicker value={date} onChange={setDate} className="w-full" />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs font-semibold">From date</Label>
+              <div className="mt-1">
+                <DatePicker
+                  value={date}
+                  onChange={(d) => {
+                    setDate(d);
+                    if (endDate < d) setEndDate(d);
+                  }}
+                  className="w-full"
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs font-semibold">To date</Label>
+              <div className="mt-1">
+                <DatePicker
+                  value={endDate}
+                  onChange={setEndDate}
+                  className="w-full"
+                />
+              </div>
             </div>
           </div>
 
