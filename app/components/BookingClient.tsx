@@ -62,7 +62,11 @@ export type SlotItem = {
   startMin: number;
   endMin: number;
   bookerName: string;
+  bookerUsername?: string;
+  bookerPrimaryRole?: string | null;
   forName: string | null;
+  forUsername?: string | null;
+  forPrimaryRole?: string | null;
 };
 
 export type BookingMe = {
@@ -149,10 +153,12 @@ export type EditBookingInfo = {
   startMin: number;
   endMin: number;
   purpose: string | null;
+  isPublicPurpose?: boolean;
   type: "SELF" | "ON_BEHALF" | "LONG";
   forUserId?: string | null;
   /** Name of the PDF currently attached to this booking (if any). */
   pdfName?: string | null;
+  isPublicAttachment?: boolean;
 };
 
 export function BookingClient({
@@ -251,9 +257,11 @@ export function BookingClient({
   const [forResults, setForResults] = useState<{ id: string; username: string; name: string }[]>([]);
   const [forUserId, setForUserId] = useState(editBooking?.forUserId ?? "");
   const [purpose, setPurpose] = useState(editBooking?.purpose ?? "");
+  const [isPublicPurpose, setIsPublicPurpose] = useState(editBooking?.isPublicPurpose ?? false);
   const [pdfName, setPdfName] = useState("");
   const [pdf, setPdf] = useState<File | null>(null);
   const [pdfClear, setPdfClear] = useState(false);
+  const [isPublicAttachment, setIsPublicAttachment] = useState(editBooking?.isPublicAttachment ?? false);
   const existingPdfName = editBooking?.pdfName ?? null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -297,7 +305,20 @@ export function BookingClient({
               endDate: b.endDate || b.date,
               startMin: b.startMin,
               endMin: b.endMin,
-              label: `${fmtMin(b.startMin)}–${fmtMin(b.endMin)} · ${b.forUser?.name ?? b.user?.name ?? ""}`,
+              label: b.forUser
+                ? `${b.forUser.name} (@${b.forUser.username})`
+                : `${b.user?.name} (@${b.user?.username})`,
+              bookerName: b.user?.name ?? "Unknown",
+              bookerUsername: b.user?.username ?? "",
+              bookerPrimaryRole: b.user?.primaryRole ?? null,
+              forName: b.forUser?.name ?? null,
+              forUsername: b.forUser?.username ?? null,
+              forPrimaryRole: b.forUser?.primaryRole ?? null,
+              purpose: b.purpose ?? null,
+              isPublicPurpose: Boolean(b.isPublicPurpose),
+              pdf: Boolean(b.pdf),
+              pdfName: b.pdfName ?? null,
+              isPublicAttachment: Boolean(b.isPublicAttachment),
             }))
           );
         }
@@ -490,6 +511,8 @@ export function BookingClient({
           payload.set("startMin", String(range.startMin));
           payload.set("endMin", String(range.endMin));
           if (purpose.trim()) payload.set("purpose", purpose.trim());
+          payload.set("isPublicPurpose", isPublicPurpose ? "1" : "0");
+          payload.set("isPublicAttachment", isPublicAttachment ? "1" : "0");
           if (pdfClear && !pdf) payload.set("pdfClear", "1");
           if (pdf) payload.set("pdf", pdf, pdf.name);
         }
@@ -506,6 +529,8 @@ export function BookingClient({
                   startMin: range.startMin,
                   endMin: range.endMin,
                   purpose: purpose.trim() || null,
+                  isPublicPurpose,
+                  isPublicAttachment,
                 }),
               }),
         });
@@ -554,6 +579,8 @@ export function BookingClient({
       form.set("startMin", String(range.startMin));
       form.set("endMin", String(range.endMin));
       if (purpose.trim()) form.set("purpose", purpose.trim());
+      form.set("isPublicPurpose", isPublicPurpose ? "1" : "0");
+      form.set("isPublicAttachment", isPublicAttachment ? "1" : "0");
       if (isOnBehalf && forUserId) form.set("forUserId", forUserId);
       if (pdf) form.set("pdf", pdf, pdf.name);
       try {
@@ -626,9 +653,14 @@ export function BookingClient({
               key={s.id}
               variant="outline"
               className="gap-1 text-red-700 border-red-300 bg-red-50"
-              title={s.forName ? `Blocked for ${s.forName}` : undefined}
+              title={
+                s.forName
+                  ? `Blocked for ${s.forName} (@${s.forUsername || "—"} · ${s.forPrimaryRole || "User"}) by ${s.bookerName} (@${s.bookerUsername || "—"} · ${s.bookerPrimaryRole || "User"})`
+                  : `Booked by ${s.bookerName} (@${s.bookerUsername || "—"} · ${s.bookerPrimaryRole || "User"})`
+              }
             >
-              {fmtMin(s.startMin)}–{fmtMin(s.endMin)} IST · {s.forName ?? s.bookerName}
+              {fmtMin(s.startMin)}–{fmtMin(s.endMin)} IST ·{" "}
+              {s.forName ? `${s.forName} (@${s.forUsername || "—"})` : `${s.bookerName} (@${s.bookerUsername || "—"})`}
             </Badge>
           ))
         ) : (
@@ -868,6 +900,21 @@ export function BookingClient({
                   value={purpose}
                   onChange={(e) => setPurpose(e.target.value)}
                 />
+                <div className="mt-2.5 flex items-start gap-2">
+                  <Checkbox
+                    id={`public-purpose-${facility.id}`}
+                    checked={isPublicPurpose}
+                    onCheckedChange={(v) => setIsPublicPurpose(v === true)}
+                  />
+                  <div className="grid gap-0.5 leading-none">
+                    <Label htmlFor={`public-purpose-${facility.id}`} className="text-xs font-medium cursor-pointer">
+                      Description can be viewed by all
+                    </Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      If unchecked, only you, facility POCs, and app administrators can view the description.
+                    </p>
+                  </div>
+                </div>
               </div>
               <div>
                 <Label>Attachment (PDF, max 1 MB)</Label>
@@ -916,6 +963,22 @@ export function BookingClient({
                       Current attachment will be removed when you save.
                     </span>
                   )}
+                </div>
+
+                <div className="mt-2.5 flex items-start gap-2">
+                  <Checkbox
+                    id={`public-attachment-${facility.id}`}
+                    checked={isPublicAttachment}
+                    onCheckedChange={(v) => setIsPublicAttachment(v === true)}
+                  />
+                  <div className="grid gap-0.5 leading-none">
+                    <Label htmlFor={`public-attachment-${facility.id}`} className="text-xs font-medium cursor-pointer">
+                      Attachment can be viewed by all
+                    </Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      If unchecked, only you, facility POCs, and app administrators can download the attachment.
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>

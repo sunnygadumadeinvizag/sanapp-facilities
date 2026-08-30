@@ -42,8 +42,8 @@ export default async function BookPage({
         where: { date: istDateKey(), status: "CONFIRMED" },
         orderBy: { startMin: "asc" },
         include: {
-          user: { select: { id: true, username: true, name: true } },
-          forUser: { select: { id: true, username: true, name: true } },
+          user: { select: { id: true, username: true, name: true, primaryRole: true } },
+          forUser: { select: { id: true, username: true, name: true, primaryRole: true } },
         },
       },
     },
@@ -61,9 +61,11 @@ export default async function BookPage({
     startMin: number;
     endMin: number;
     purpose: string | null;
+    isPublicPurpose: boolean;
     type: "SELF" | "ON_BEHALF" | "LONG";
     forUserId: string | null;
     pdfName: string | null;
+    isPublicAttachment: boolean;
   } | null = null;
   if (editId) {
     const b = await prisma.booking.findUnique({
@@ -76,11 +78,13 @@ export default async function BookPage({
         startMin: true,
         endMin: true,
         purpose: true,
+        isPublicPurpose: true,
         type: true,
         forUserId: true,
         userId: true,
         status: true,
         pdfName: true,
+        isPublicAttachment: true,
       },
     });
     if (
@@ -96,9 +100,11 @@ export default async function BookPage({
         startMin: b.startMin,
         endMin: b.endMin,
         purpose: b.purpose,
+        isPublicPurpose: b.isPublicPurpose,
         type: b.type,
         forUserId: b.forUserId,
         pdfName: b.pdfName,
+        isPublicAttachment: b.isPublicAttachment,
       };
     }
   }
@@ -113,7 +119,11 @@ export default async function BookPage({
     startMin: b.startMin,
     endMin: b.endMin,
     bookerName: b.user.name,
+    bookerUsername: b.user.username,
+    bookerPrimaryRole: b.user.primaryRole,
     forName: b.forUser?.name ?? null,
+    forUsername: b.forUser?.username ?? null,
+    forPrimaryRole: b.forUser?.primaryRole ?? null,
   }));
 
   // ADMINs can book any facility (the server bypasses restrictions).

@@ -28,6 +28,7 @@ function endDayOf(date: string, endDate: string): string {
 
 const BOOKING_LIST_SELECT = {
   id: true,
+  facilityId: true,
   batchId: true,
   type: true,
   status: true,
@@ -36,7 +37,11 @@ const BOOKING_LIST_SELECT = {
   startMin: true,
   endMin: true,
   purpose: true,
+  isPublicPurpose: true,
   pdfName: true,
+  isPublicAttachment: true,
+  userId: true,
+  forUserId: true,
   facility: {
     select: {
       id: true,
@@ -44,12 +49,57 @@ const BOOKING_LIST_SELECT = {
       building: { select: { id: true, name: true } },
     },
   },
-  user: { select: { id: true, username: true, name: true } },
-  forUser: { select: { id: true, username: true, name: true } },
+  user: { select: { id: true, username: true, name: true, primaryRole: true } },
+  forUser: { select: { id: true, username: true, name: true, primaryRole: true } },
   cancelledAt: true,
   cancelReason: true,
-  cancelledBy: { select: { id: true, username: true, name: true } },
+  cancelledBy: { select: { id: true, username: true, name: true, primaryRole: true } },
 };
+
+/** Redact private fields (purpose, attachment) if viewer is not authorized */
+async function formatBookingForViewer(
+  b: any,
+  viewerUser: { id: string; role: string },
+  pocFacilityMap?: Map<string, boolean>
+) {
+  const isAdmin = viewerUser.role === "ADMIN";
+  const isBooker = b.userId === viewerUser.id || b.forUserId === viewerUser.id;
+  let isPoc = false;
+  if (!isAdmin && !isBooker && b.facilityId) {
+    if (pocFacilityMap?.has(b.facilityId)) {
+      isPoc = pocFacilityMap.get(b.facilityId)!;
+    } else {
+      isPoc = await isPocOfFacility(viewerUser.id, b.facilityId);
+      pocFacilityMap?.set(b.facilityId, isPoc);
+    }
+  }
+  const canViewPrivate = isAdmin || isBooker || isPoc;
+
+  const canSeePurpose = Boolean(b.isPublicPurpose) || canViewPrivate;
+  const canSeeAttachment = Boolean(b.isPublicAttachment) || canViewPrivate;
+
+  return {
+    id: b.id,
+    batchId: b.batchId,
+    type: b.type,
+    status: b.status,
+    date: b.date,
+    endDate: endDayOf(b.date, b.endDate),
+    startMin: b.startMin,
+    endMin: b.endMin,
+    facility: b.facility,
+    user: b.user,
+    forUser: b.forUser,
+    purpose: canSeePurpose ? b.purpose : null,
+    isPublicPurpose: Boolean(b.isPublicPurpose),
+    pdf: canSeeAttachment ? Boolean(b.pdfName) : false,
+    pdfName: canSeeAttachment ? b.pdfName : null,
+    isPublicAttachment: Boolean(b.isPublicAttachment),
+    cancelledAt: b.cancelledAt,
+    cancelReason: b.cancelReason,
+    cancelledBy: b.cancelledBy,
+  };
+}
 
 /** Raised inside a booking transaction when the slot conflicts — maps to HTTP 409. */
 class SlotConflict extends Error {}
@@ -107,15 +157,15 @@ async function conflictDetails(
       endDate: true,
       startMin: true,
       endMin: true,
-      user: { select: { name: true } },
-      forUser: { select: { name: true } },
+      user: { select: { name: true, username: true, primaryRole: true } },
+      forUser: { select: { name: true, username: true, primaryRole: true } },
     },
   });
   for (const b of rows) {
     const bEnd = endDayOf(b.date, b.endDate);
     if (startIdx < slotIndex(bEnd, b.endMin) && endIdx > slotIndex(b.date, b.startMin)) {
       return {
-        booker: b.forUser?.name ?? b.user?.name ?? null,
+        booker: b.forUser?.name ? `${b.forUser.name} (@${b.forUser.username})` : b.user?.name ? `${b.user.name} (@${b.user.username})` : null,
         date: b.date,
         endDate: bEnd,
         startMin: b.startMin,
@@ -178,6 +228,8 @@ export async function GET(request: NextRequest) {
     ];
   }
 
+  const pocMap = new Map<string, boolean>();
+
   if (all) {
     if (user.role !== "ADMIN") return bad("forbidden", 403);
     const rows = await prisma.booking.findMany({
@@ -185,11 +237,7 @@ export async function GET(request: NextRequest) {
       orderBy: [{ date: "desc" }, { startMin: "desc" }],
       select: BOOKING_LIST_SELECT,
     });
-    const bookings = rows.map(({ pdfName, ...rest }) => ({
-      ...rest,
-      endDate: endDayOf(rest.date, rest.endDate),
-      pdf: Boolean(pdfName),
-    }));
+    const bookings = await Promise.all(rows.map((r) => formatBookingForViewer(r, user, pocMap)));
     return NextResponse.json({ bookings });
   }
 
@@ -200,11 +248,7 @@ export async function GET(request: NextRequest) {
       orderBy: [{ date: "asc" }, { startMin: "asc" }],
       select: BOOKING_LIST_SELECT,
     });
-    const bookings = rows.map(({ pdfName, ...rest }) => ({
-      ...rest,
-      endDate: endDayOf(rest.date, rest.endDate),
-      pdf: Boolean(pdfName),
-    }));
+    const bookings = await Promise.all(rows.map((r) => formatBookingForViewer(r, user, pocMap)));
     return NextResponse.json({ bookings });
   }
 
@@ -219,16 +263,11 @@ export async function GET(request: NextRequest) {
     });
     const fromIdx = slotIndex(from, 0);
     const toIdx = slotIndex(to, 1440);
-    const bookings = rows
-      .filter((b) => {
-        const bEnd = endDayOf(b.date, b.endDate);
-        return slotIndex(b.date, b.startMin) < toIdx && slotIndex(bEnd, b.endMin) > fromIdx;
-      })
-      .map(({ pdfName, ...rest }) => ({
-        ...rest,
-        endDate: endDayOf(rest.date, rest.endDate),
-        pdf: Boolean(pdfName),
-      }));
+    const filtered = rows.filter((b) => {
+      const bEnd = endDayOf(b.date, b.endDate);
+      return slotIndex(b.date, b.startMin) < toIdx && slotIndex(bEnd, b.endMin) > fromIdx;
+    });
+    const bookings = await Promise.all(filtered.map((r) => formatBookingForViewer(r, user, pocMap)));
     return NextResponse.json({ bookings });
   }
 
@@ -239,11 +278,7 @@ export async function GET(request: NextRequest) {
     orderBy: { startMin: "asc" },
     select: BOOKING_LIST_SELECT,
   });
-  const bookings = rows.map(({ pdfName, ...rest }) => ({
-    ...rest,
-    endDate: endDayOf(rest.date, rest.endDate),
-    pdf: Boolean(pdfName),
-  }));
+  const bookings = await Promise.all(rows.map((r) => formatBookingForViewer(r, user, pocMap)));
   return NextResponse.json({ bookings });
 }
 
@@ -260,7 +295,19 @@ export async function POST(request: NextRequest) {
 
   if (ct.includes("multipart/form-data")) {
     const form = await request.formData();
-    for (const key of ["facilityId", "date", "endDate", "startDate", "startMin", "endMin", "purpose", "forUserId", "batchId"]) {
+    for (const key of [
+      "facilityId",
+      "date",
+      "endDate",
+      "startDate",
+      "startMin",
+      "endMin",
+      "purpose",
+      "isPublicPurpose",
+      "isPublicAttachment",
+      "forUserId",
+      "batchId",
+    ]) {
       const v = form.get(key);
       if (v !== null && v !== undefined && typeof v === "string") body[key] = v;
     }
@@ -288,6 +335,14 @@ export async function POST(request: NextRequest) {
   const startMin = Number(body.startMin);
   const endMin = Number(body.endMin);
   const purpose = String(body.purpose ?? "").trim();
+  const isPublicPurpose =
+    body.isPublicPurpose === true ||
+    body.isPublicPurpose === "true" ||
+    body.isPublicPurpose === "1";
+  const isPublicAttachment =
+    body.isPublicAttachment === true ||
+    body.isPublicAttachment === "true" ||
+    body.isPublicAttachment === "1";
   const forUserId = String(body.forUserId ?? "").trim();
   const batchId = String(body.batchId ?? "").trim() || undefined;
 
@@ -446,14 +501,16 @@ export async function POST(request: NextRequest) {
           startMin,
           endMin,
           purpose: purpose || null,
+          isPublicPurpose,
           // Buffer -> Uint8Array<ArrayBuffer> for Prisma Bytes.
           pdf: pdf ? (() => { const b = new Uint8Array(pdf.byteLength); b.set(pdf); return b; })() : undefined,
           pdfName: pdfName ?? undefined,
+          isPublicAttachment,
         },
         include: {
           facility: { select: { id: true, name: true, building: { select: { id: true, name: true } } } },
-          user: { select: { id: true, username: true, name: true } },
-          forUser: { select: { id: true, username: true, name: true } },
+          user: { select: { id: true, username: true, name: true, primaryRole: true } },
+          forUser: { select: { id: true, username: true, name: true, primaryRole: true } },
         },
       });
     });
@@ -490,7 +547,16 @@ export async function PATCH(request: NextRequest) {
   let pdfClear = false;
   if (ct.includes("multipart/form-data")) {
     const form = await request.formData();
-    for (const key of ["id", "startDate", "endDate", "startMin", "endMin", "purpose"]) {
+    for (const key of [
+      "id",
+      "startDate",
+      "endDate",
+      "startMin",
+      "endMin",
+      "purpose",
+      "isPublicPurpose",
+      "isPublicAttachment",
+    ]) {
       const v = form.get(key);
       if (v !== null && v !== undefined && typeof v === "string") body[key] = v;
     }
@@ -601,6 +667,18 @@ export async function PATCH(request: NextRequest) {
         endMin,
         purpose,
       };
+      if (body.isPublicPurpose !== undefined) {
+        data.isPublicPurpose =
+          body.isPublicPurpose === true ||
+          body.isPublicPurpose === "true" ||
+          body.isPublicPurpose === "1";
+      }
+      if (body.isPublicAttachment !== undefined) {
+        data.isPublicAttachment =
+          body.isPublicAttachment === true ||
+          body.isPublicAttachment === "true" ||
+          body.isPublicAttachment === "1";
+      }
       if (pdf && pdfName) {
         const b = new Uint8Array(pdf.byteLength);
         b.set(pdf);

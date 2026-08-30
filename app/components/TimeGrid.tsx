@@ -3,6 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtMin, fmtSlotRange } from "@/lib/ist";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Clock, Globe, Lock, Paperclip, ShieldCheck, User, Users } from "lucide-react";
+import { apiPath } from "sanapp-common-ui";
 
 const CELL_MIN = 15;
 const COL_MIN_W = 120; // minimum px per day column (columns expand to fill the container)
@@ -15,6 +26,17 @@ export type BookingBlock = {
   startMin: number;
   endMin: number;
   label: string;
+  bookerName?: string;
+  bookerUsername?: string;
+  bookerPrimaryRole?: string | null;
+  forName?: string | null;
+  forUsername?: string | null;
+  forPrimaryRole?: string | null;
+  purpose?: string | null;
+  isPublicPurpose?: boolean;
+  pdf?: boolean;
+  pdfName?: string | null;
+  isPublicAttachment?: boolean;
 };
 
 export type RangeSelection = {
@@ -144,8 +166,18 @@ export function TimeGrid({
   // Day columns expand to fill the container width (measured from the scroller).
   const [colW, setColW] = useState(COL_MIN_W);
 
+  const [selectedBooking, setSelectedBooking] = useState<BookingBlock | null>(null);
+
   const bookedFragments = useMemo(
-    () => bookings.flatMap((b) => fragments(b, days).map((f) => ({ ...f, label: b.label, id: b.id }))),
+    () =>
+      bookings.flatMap((b) =>
+        fragments(b, days).map((f) => ({
+          ...f,
+          label: b.label,
+          id: b.id,
+          booking: b,
+        }))
+      ),
     [bookings, days]
   );
 
@@ -569,20 +601,64 @@ export function TimeGrid({
             ))}
 
             {/* Booked overlays */}
-            {bookedFragments.map((f) => (
-              <div
-                key={f.id + f.date}
-                className="fb-booked"
-                style={{
-                  left: days.indexOf(f.date) * colW + 2,
-                  width: colW - 4,
-                  top: (f.topMin / (24 * 60)) * colHeight + 1,
-                  height: Math.max(14, ((f.bottomMin - f.topMin) / (24 * 60)) * colHeight - 2),
-                }}
-              >
-                <span className="fb-booked-label">{f.label}</span>
-              </div>
-            ))}
+            {bookedFragments.map((f) => {
+              const b = f.booking;
+              const heightPx = Math.max(16, ((f.bottomMin - f.topMin) / (24 * 60)) * colHeight - 2);
+              const isShort = heightPx < 28;
+
+              return (
+                <div
+                  key={f.id + f.date}
+                  className="fb-booked cursor-pointer pointer-events-auto hover:brightness-90 transition-all shadow-xs"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedBooking(b);
+                  }}
+                  title="Click to view booking details"
+                  style={{
+                    left: days.indexOf(f.date) * colW + 2,
+                    width: colW - 4,
+                    top: (f.topMin / (24 * 60)) * colHeight + 1,
+                    height: heightPx,
+                  }}
+                >
+                  <div className="flex flex-col justify-start w-full overflow-hidden leading-tight">
+                    {/* Primary line: Name & Username */}
+                    <div className="flex items-center gap-1 font-semibold text-[11px] truncate text-foreground">
+                      <span className="truncate">
+                        {b.forName ? `${b.forName} (@${b.forUsername})` : b.bookerName ? `${b.bookerName} (@${b.bookerUsername})` : b.label}
+                      </span>
+                      {b.pdf && (
+                        <span title="Has attachment" className="inline-flex shrink-0">
+                          <Paperclip className="h-3 w-3 text-primary" />
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Role & Booker details */}
+                    {!isShort && (
+                      <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1 mt-0.5">
+                        <span className="font-medium text-foreground/80">
+                          {b.forName ? b.forPrimaryRole || "User" : b.bookerPrimaryRole || "User"}
+                        </span>
+                        {b.forName && (
+                          <span className="truncate opacity-80">
+                            · by {b.bookerName}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Purpose preview if space permits */}
+                    {heightPx > 48 && b.purpose && (
+                      <div className="text-[9px] text-muted-foreground italic truncate mt-0.5 opacity-90">
+                        "{b.purpose}"
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
 
             {/* Committed selection overlays */}
             {committed.map((r, i) => (
@@ -594,6 +670,144 @@ export function TimeGrid({
           </div>
         </div>
       </div>
+
+      {/* Booked Slot Details Modal */}
+      <Dialog open={selectedBooking !== null} onOpenChange={(o) => { if (!o) setSelectedBooking(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Clock className="h-5 w-5 text-primary" />
+              Booking Details
+            </DialogTitle>
+            <DialogDescription>
+              {selectedBooking && fmtSlotRange(selectedBooking.startDate, selectedBooking.startMin, selectedBooking.endDate, selectedBooking.endMin)} IST
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedBooking && (
+            <div className="space-y-4 py-2 text-sm">
+              {/* Booker Information */}
+              <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <User className="h-4 w-4 text-primary" />
+                  <span className="font-semibold text-xs text-muted-foreground uppercase tracking-wider">Booked By</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-muted-foreground block text-[11px]">Name:</span>
+                    <span className="font-semibold text-foreground text-sm">{selectedBooking.bookerName || "Unknown"}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block text-[11px]">User ID:</span>
+                    <span className="font-mono font-medium text-foreground">@{selectedBooking.bookerUsername || "—"}</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-muted-foreground block text-[11px]">Primary Role:</span>
+                    <Badge variant="secondary" className="mt-0.5 text-xs font-semibold">
+                      {selectedBooking.bookerPrimaryRole || "USER"}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+
+              {/* On Behalf Of Information (if applicable) */}
+              {selectedBooking.forName && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4 text-amber-700" />
+                    <span className="font-semibold text-xs text-amber-800 uppercase tracking-wider">Blocked On Behalf Of</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <span className="text-muted-foreground block text-[11px]">Name:</span>
+                      <span className="font-semibold text-foreground text-sm">{selectedBooking.forName}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground block text-[11px]">User ID:</span>
+                      <span className="font-mono font-medium text-foreground">@{selectedBooking.forUsername || "—"}</span>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="text-muted-foreground block text-[11px]">Primary Role:</span>
+                      <Badge variant="outline" className="mt-0.5 text-xs font-semibold border-amber-300 bg-amber-100/60 text-amber-900">
+                        {selectedBooking.forPrimaryRole || "USER"}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Description / Purpose */}
+              <div className="rounded-lg border p-3 space-y-1.5 bg-card">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    {selectedBooking.isPublicPurpose ? (
+                      <>
+                        <Globe className="h-3.5 w-3.5 text-emerald-600" />
+                        <span>Description (Public)</span>
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span>Description (Private)</span>
+                      </>
+                    )}
+                  </span>
+                  <Badge variant={selectedBooking.isPublicPurpose ? "outline" : "secondary"} className="text-[10px]">
+                    {selectedBooking.isPublicPurpose ? "Viewable by all" : "Private"}
+                  </Badge>
+                </div>
+                {selectedBooking.purpose ? (
+                  <p className="text-xs text-foreground whitespace-pre-wrap bg-muted/30 p-2 rounded border">
+                    {selectedBooking.purpose}
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic flex items-center gap-1 py-1">
+                    <Lock className="h-3 w-3" />
+                    <span>Description is private to booker and administrators.</span>
+                  </p>
+                )}
+              </div>
+
+              {/* Attachment */}
+              <div className="rounded-lg border p-3 space-y-2 bg-card">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <Paperclip className="h-3.5 w-3.5 text-primary" />
+                    <span>Attachment</span>
+                  </span>
+                  {selectedBooking.pdf && (
+                    <Badge variant={selectedBooking.isPublicAttachment ? "outline" : "secondary"} className="text-[10px]">
+                      {selectedBooking.isPublicAttachment ? "Public" : "Private"}
+                    </Badge>
+                  )}
+                </div>
+                {selectedBooking.pdf ? (
+                  <Button asChild variant="outline" size="sm" className="w-full gap-1.5 text-xs text-primary border-primary/30">
+                    <a
+                      href={apiPath(`/api/bookings/${selectedBooking.id}/pdf`)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <Paperclip className="h-3.5 w-3.5" />
+                      <span>{selectedBooking.pdfName || "View attached PDF"}</span>
+                    </a>
+                  </Button>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic">
+                    {selectedBooking.isPublicAttachment ? "No attachment uploaded." : "No attachment uploaded (or private)."}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setSelectedBooking(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

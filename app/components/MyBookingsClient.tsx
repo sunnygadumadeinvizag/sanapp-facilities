@@ -29,12 +29,15 @@ export type MyBooking = {
   startMin: number;
   endMin: number;
   purpose: string | null;
+  isPublicPurpose?: boolean;
   pdf: boolean;
+  isPublicAttachment?: boolean;
   cancelledAt: string | null;
   cancelReason: string | null;
-  cancelledBy: { id: string; username: string; name: string } | null;
+  cancelledBy: { id: string; username: string; name: string; primaryRole?: string | null } | null;
   facility: { id: string; name: string; building: { id: string; name: string } };
-  forUser: { id: string; username: string; name: string } | null;
+  user?: { id: string; username: string; name: string; primaryRole?: string | null };
+  forUser: { id: string; username: string; name: string; primaryRole?: string | null } | null;
 };
 
 const TYPE_BADGE: Record<MyBooking["type"], { label: string; cls: string }> = {

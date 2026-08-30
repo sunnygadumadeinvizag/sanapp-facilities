@@ -151,10 +151,12 @@ model Booking {
   startMin   Int
   endMin     Int
   purpose    String? // required for ON_BEHALF and LONG bookings
+  isPublicPurpose Boolean @default(false)
   // Optional PDF attachment (max 1 MB) — stored in the DB so it survives
   // redeploys and stays inside the application's own database.
   pdf        Bytes?
   pdfName    String?
+  isPublicAttachment Boolean @default(false)
   createdAt  DateTime      @default(now())
   // Cancellation history — who cancelled, when, and why (set on cancel).
   cancelledAt   DateTime?

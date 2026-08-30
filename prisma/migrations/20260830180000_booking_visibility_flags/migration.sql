@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "isPublicPurpose" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "isPublicAttachment" BOOLEAN NOT NULL DEFAULT false;

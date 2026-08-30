@@ -22,13 +22,15 @@ type AdminBooking = {
   startMin: number;
   endMin: number;
   purpose: string | null;
+  isPublicPurpose?: boolean;
   pdf: boolean;
+  isPublicAttachment?: boolean;
   facility: { id: string; name: string; building: { id: string; name: string } };
-  user: { id: string; name: string; username: string };
-  forUser: { id: string; name: string; username: string } | null;
+  user: { id: string; name: string; username: string; primaryRole?: string | null };
+  forUser: { id: string; name: string; username: string; primaryRole?: string | null } | null;
   cancelledAt: string | null;
   cancelReason: string | null;
-  cancelledBy: { id: string; name: string; username: string } | null;
+  cancelledBy: { id: string; name: string; username: string; primaryRole?: string | null } | null;
 };
 
 type LocalUser = { id: string; username: string; name: string };
@@ -356,9 +358,11 @@ export function AdminBookingsTab({
                           · {dur < 60 ? `${dur} min` : `${(dur / 60).toFixed(dur % 60 ? 1 : 0)} h`}
                         </span>
                       </div>
-                      <div className="mt-0.5 text-xs text-muted-foreground">
-                        {b.user.name} (@{b.user.username})
-                        {b.forUser ? ` → blocked for ${b.forUser.name} (@${b.forUser.username})` : ""}
+                      <div className="mt-0.5 text-xs text-muted-foreground flex flex-wrap items-center gap-1">
+                        <span>Booked by: <strong className="text-foreground">{b.user.name}</strong> (@{b.user.username}{b.user.primaryRole ? ` · ${b.user.primaryRole}` : ""})</span>
+                        {b.forUser && (
+                          <span> → blocked for: <strong className="text-foreground">{b.forUser.name}</strong> (@{b.forUser.username}{b.forUser.primaryRole ? ` · ${b.forUser.primaryRole}` : ""})</span>
+                        )}
                       </div>
                       {b.purpose && <p className="mt-1 text-sm">{b.purpose}</p>}
                       {b.status === "CANCELLED" && (
