@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DatePicker } from "./DatePicker";
+import { CancelBookingModal } from "./CancelBookingModal";
 import { fmtIstDateTime, fmtMin, fmtSlotRange, slotDurationMin } from "@/lib/ist";
 
 type AdminBooking = {
@@ -70,6 +71,8 @@ export function AdminBookingsTab({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [cancelTargetIds, setCancelTargetIds] = useState<string[] | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
 
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -130,23 +133,34 @@ export function AdminBookingsTab({
     return () => window.clearTimeout(t);
   }, [userQuery]);
 
-  async function cancelMany(ids: string[]) {
+  function requestCancel(ids: string[]) {
     if (ids.length === 0) return;
-    const reason = window.prompt(`Reason for cancelling ${ids.length} booking(s) (optional):`) ?? null;
-    if (reason === null) return;
-    const res = await fetch(
-      apiPath(`/api/bookings?id=${ids.join(",")}&reason=${encodeURIComponent(reason)}`),
-      { method: "DELETE" }
-    );
-    const data = await res.json();
-    if (!res.ok) {
-      fail(data.error ?? "Could not cancel");
-      return;
+    setCancelTargetIds(ids);
+  }
+
+  async function handleConfirmCancel(reason: string) {
+    if (!cancelTargetIds || cancelTargetIds.length === 0) return;
+    setCancelBusy(true);
+    try {
+      const res = await fetch(
+        apiPath(`/api/bookings?id=${cancelTargetIds.join(",")}&reason=${encodeURIComponent(reason)}`),
+        { method: "DELETE" }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        fail(data.error ?? "Could not cancel");
+        return;
+      }
+      setError(null);
+      onError?.(null);
+      setSelected(new Set());
+      setCancelTargetIds(null);
+      await load();
+    } catch {
+      fail("Failed to cancel booking(s)");
+    } finally {
+      setCancelBusy(false);
     }
-    setError(null);
-    onError?.(null);
-    setSelected(new Set());
-    await load();
   }
 
   const sorted = useMemo(() => {
@@ -312,7 +326,7 @@ export function AdminBookingsTab({
         <span className="text-sm text-muted-foreground">{total} booking{total === 1 ? "" : "s"} match</span>
         <span className="ml-auto" />
         {selected.size > 0 && (
-          <Button variant="destructive" size="sm" onClick={() => cancelMany([...selected])}>
+          <Button variant="destructive" size="sm" onClick={() => requestCancel([...selected])}>
             <Trash2 className="h-3.5 w-3.5" /> Cancel selected ({selected.size})
           </Button>
         )}
@@ -400,7 +414,7 @@ export function AdminBookingsTab({
                           size="icon"
                           className="h-8 w-8 text-red-600 hover:text-red-700"
                           title="Cancel booking"
-                          onClick={() => cancelMany([b.id])}
+                          onClick={() => requestCancel([b.id])}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
@@ -439,6 +453,17 @@ export function AdminBookingsTab({
           </Button>
         </div>
       </div>
+
+      {/* Cancel Confirmation Modal */}
+      <CancelBookingModal
+        open={cancelTargetIds !== null}
+        onOpenChange={(open) => {
+          if (!open) setCancelTargetIds(null);
+        }}
+        count={cancelTargetIds?.length ?? 0}
+        onConfirm={handleConfirmCancel}
+        busy={cancelBusy}
+      />
     </div>
   );
 }

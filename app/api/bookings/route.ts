@@ -730,8 +730,9 @@ export async function DELETE(request: NextRequest) {
   // one id, or several comma-separated ids for bulk cancellation.
   const { searchParams } = new URL(request.url);
   const idParam = searchParams.get("id");
-  const reason = (searchParams.get("reason") ?? "").trim().slice(0, 500) || null;
+  const reason = (searchParams.get("reason") ?? "").trim().slice(0, 500);
   if (!idParam) return bad("id is required");
+  if (!reason) return bad("Reason for cancellation is required");
   const ids = idParam.split(",").map((s) => s.trim()).filter(Boolean);
 
   const rows = await prisma.booking.findMany({ where: { id: { in: ids } } });

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DatePicker } from "./DatePicker";
+import { CancelBookingModal } from "./CancelBookingModal";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -66,8 +67,10 @@ export function MyBookingsClient({ today, canEdit }: { today: string; canEdit: b
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(10);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [cancelTargetIds, setCancelTargetIds] = useState<string[] | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
 
   // Debounce the search box so we don't hit the API on every keystroke.
   useEffect(() => {
@@ -139,32 +142,28 @@ export function MyBookingsClient({ today, canEdit }: { today: string; canEdit: b
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  async function cancelOne(id: string) {
-    const reason = window.prompt("Reason for cancelling (optional):") ?? null;
-    if (reason === null) return;
-    await doCancel([id], reason);
-  }
-
-  async function cancelSelected() {
-    const ids = [...selected];
+  function requestCancel(ids: string[]) {
     if (ids.length === 0) return;
-    const reason = window.prompt(`Reason for cancelling ${ids.length} booking(s) (optional):`) ?? null;
-    if (reason === null) return;
-    await doCancel(ids, reason);
+    setCancelTargetIds(ids);
   }
 
-  async function doCancel(ids: string[], reason: string) {
+  async function handleConfirmCancel(reason: string) {
+    if (!cancelTargetIds || cancelTargetIds.length === 0) return;
+    setCancelBusy(true);
     try {
       const res = await fetch(
-        apiPath(`/api/bookings?id=${ids.join(",")}&reason=${encodeURIComponent(reason)}`),
+        apiPath(`/api/bookings?id=${cancelTargetIds.join(",")}&reason=${encodeURIComponent(reason)}`),
         { method: "DELETE" }
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not cancel");
       setSelected(new Set());
+      setCancelTargetIds(null);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not cancel");
+    } finally {
+      setCancelBusy(false);
     }
   }
 
@@ -220,7 +219,7 @@ export function MyBookingsClient({ today, canEdit }: { today: string; canEdit: b
             </TabsList>
           </Tabs>
           {selected.size > 0 && (
-            <Button variant="destructive" size="sm" onClick={cancelSelected}>
+            <Button variant="destructive" size="sm" onClick={() => requestCancel([...selected])}>
               <Trash2 className="h-3.5 w-3.5" /> Cancel selected ({selected.size})
             </Button>
           )}
@@ -275,7 +274,7 @@ export function MyBookingsClient({ today, canEdit }: { today: string; canEdit: b
                   canEdit={canEdit}
                   selected={selected}
                   onToggle={toggle}
-                  onCancel={cancelOne}
+                  onCancel={(id) => requestCancel([id])}
                 />
               ))
             : pagedSlots.map((b) => (
@@ -287,7 +286,7 @@ export function MyBookingsClient({ today, canEdit }: { today: string; canEdit: b
                   canEdit={canEdit}
                   selected={selected}
                   onToggle={toggle}
-                  onCancel={cancelOne}
+                  onCancel={(id) => requestCancel([id])}
                 />
               ))}
         </div>
@@ -326,6 +325,17 @@ export function MyBookingsClient({ today, canEdit }: { today: string; canEdit: b
           </Button>
         </div>
       </div>
+
+      {/* Cancel Confirmation Modal */}
+      <CancelBookingModal
+        open={cancelTargetIds !== null}
+        onOpenChange={(open) => {
+          if (!open) setCancelTargetIds(null);
+        }}
+        count={cancelTargetIds?.length ?? 0}
+        onConfirm={handleConfirmCancel}
+        busy={cancelBusy}
+      />
     </div>
   );
 }
