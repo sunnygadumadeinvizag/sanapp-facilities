@@ -103,6 +103,7 @@ export async function POST(request: NextRequest) {
           : null,
       allowedRoles,
       maxMinutes,
+      hasAvSupport: Boolean((body as { hasAvSupport?: unknown }).hasAvSupport),
       roleLimits: { create: roleLimits },
     },
   });
@@ -133,6 +134,7 @@ export async function PATCH(request: NextRequest) {
     data.maxMinutes = Number(b.maxMinutes);
   }
   if (typeof b.active === "boolean") data.active = b.active;
+  if (typeof b.hasAvSupport === "boolean") data.hasAvSupport = b.hasAvSupport;
 
   let facility;
   try {

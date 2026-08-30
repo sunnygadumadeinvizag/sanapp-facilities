@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Facility" ADD COLUMN IF NOT EXISTS "hasAvSupport" BOOLEAN NOT NULL DEFAULT false;

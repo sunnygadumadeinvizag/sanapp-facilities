@@ -104,6 +104,8 @@ model Facility {
   maxMinutes   Int?
   // Per-primary-role maximums (role -> maxMinutes), overriding maxMinutes.
   roleLimits   FacilityRoleLimit[]
+  // Whether AV technician support requests are allowed for this facility
+  hasAvSupport Boolean   @default(false)
   active       Boolean   @default(true)
   createdAt    DateTime  @default(now())
   bookings     Booking[]

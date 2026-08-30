@@ -171,7 +171,7 @@ export default async function BookPage({
       </div>
 
       <BookingClient
-        facility={{ id: facility.id, name: facility.name }}
+        facility={{ id: facility.id, name: facility.name, hasAvSupport: facility.hasAvSupport }}
         editBooking={editBooking}
         buildingName={facility.building.name}
         today={today}

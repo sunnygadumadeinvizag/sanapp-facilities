@@ -33,6 +33,7 @@ type Facility = {
   allowedRoles: string[];
   maxMinutes: number | null;
   roleLimits: RoleLimit[];
+  hasAvSupport: boolean;
   active: boolean;
   pocs: Poc[];
 };
@@ -67,6 +68,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                 allowedRoles: Array.isArray(f.allowedRoles) ? f.allowedRoles : [],
                 maxMinutes: f.maxMinutes ?? null,
                 roleLimits: Array.isArray(f.roleLimits) ? f.roleLimits : [],
+                hasAvSupport: Boolean(f.hasAvSupport),
                 active: f.active !== false,
                 pocs: Array.isArray(f.pocs) ? f.pocs : [],
               };
@@ -86,6 +88,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
   const [allowedRoles, setAllowedRoles] = useState<string[]>([]);
   const [maxMinutes, setMaxMinutes] = useState("");
   const [roleLimits, setRoleLimits] = useState<Record<string, string>>({});
+  const [hasAvSupport, setHasAvSupport] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Record<string, unknown>>({});
@@ -131,6 +134,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
         capacity: capacity ? Number(capacity) : null,
         allowedRoles,
         maxMinutes: maxMinutes === "" ? null : Number(maxMinutes),
+        hasAvSupport,
         roleLimits: Object.entries(roleLimits)
           .filter(([, v]) => v !== "" && Number(v) > 0)
           .map(([role, v]) => ({ role, maxMinutes: Number(v) })),
@@ -139,7 +143,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
     const data = await res.json();
     if (!res.ok) return setError(data.error ?? "Could not create facility");
     setError(null);
-    setName(""); setDescription(""); setCapacity(""); setAllowedRoles([]); setMaxMinutes(""); setRoleLimits({});
+    setName(""); setDescription(""); setCapacity(""); setAllowedRoles([]); setMaxMinutes(""); setRoleLimits({}); setHasAvSupport(false);
     await reload();
   }
 
@@ -190,6 +194,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       capacity: f.capacity ? String(f.capacity) : "",
       allowedRoles: f.allowedRoles,
       maxMinutes: f.maxMinutes ? String(f.maxMinutes) : "",
+      hasAvSupport: f.hasAvSupport,
       roleLimits: Object.fromEntries(f.roleLimits.map((r) => [r.role, String(r.maxMinutes)])),
     });
   }
@@ -201,6 +206,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       capacity: editForm.capacity === "" ? null : Number(editForm.capacity),
       allowedRoles: Array.isArray(editForm.allowedRoles) ? editForm.allowedRoles : f.allowedRoles,
       maxMinutes: editForm.maxMinutes === "" || editForm.maxMinutes === null ? null : Number(editForm.maxMinutes),
+      hasAvSupport: Boolean(editForm.hasAvSupport),
       roleLimits: Object.entries((editForm.roleLimits as Record<string, string>) ?? {})
         .filter(([, v]) => v !== "" && Number(v) > 0)
         .map(([role, v]) => ({ role, maxMinutes: Number(v) })),
@@ -282,6 +288,21 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                 ))}
               </div>
             </div>
+            <div className="rounded-md border p-3 bg-muted/20">
+              <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
+                <Checkbox
+                  checked={hasAvSupport}
+                  onCheckedChange={(v) => setHasAvSupport(v === true)}
+                  className="mt-0.5"
+                />
+                <div>
+                  <span>Allow AV Technician Support Requests</span>
+                  <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                    When enabled, users booking this facility can request on-site AV technician support.
+                  </p>
+                </div>
+              </label>
+            </div>
             <div><Button type="submit">Add facility</Button></div>
           </form>
         </CardContent>
@@ -316,7 +337,12 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                     <p className="mt-1 text-xs text-muted-foreground">No booking time limit — any duration is allowed.</p>
                   )}
                   {f.description && <p className="mt-1 text-sm text-muted-foreground">{f.description}</p>}
-                  <div className="mt-2 flex flex-wrap gap-1.5">
+                  <div className="mt-2 flex flex-wrap gap-1.5 items-center">
+                    {f.hasAvSupport && (
+                      <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-900 font-medium">
+                        AV Support Allowed
+                      </Badge>
+                    )}
                     {f.allowedRoles.length === 0 ? (
                       <Badge>Open to all</Badge>
                     ) : (
@@ -386,6 +412,23 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                             />
                           ))}
                         </div>
+                      </div>
+                      <div className="rounded-md border p-2.5 bg-muted/20">
+                        <label className="flex items-start gap-2 text-xs font-medium cursor-pointer">
+                          <Checkbox
+                            checked={Boolean(editForm.hasAvSupport)}
+                            onCheckedChange={(v) =>
+                              setEditForm((p) => ({ ...p, hasAvSupport: v === true }))
+                            }
+                            className="mt-0.5"
+                          />
+                          <div>
+                            <span>Allow AV Technician Support Requests</span>
+                            <p className="text-[11px] text-muted-foreground font-normal">
+                              Users booking this facility will have the option to request AV technician assistance.
+                            </p>
+                          </div>
+                        </label>
                       </div>
                       <div className="flex gap-2">
                         <Button size="sm" onClick={() => saveEdit(f)}>Save changes</Button>

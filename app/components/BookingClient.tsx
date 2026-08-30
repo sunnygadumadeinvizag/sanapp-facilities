@@ -178,7 +178,7 @@ export function BookingClient({
   editBooking = null,
   onEdited,
 }: {
-  facility: { id: string; name: string };
+  facility: { id: string; name: string; hasAvSupport?: boolean };
   buildingName: string;
   today: string;
   todaySlots: SlotItem[];
@@ -775,8 +775,9 @@ export function BookingClient({
 
 
             {rejectMsg && (
-              <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {rejectMsg}
+              <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-900 shadow-xs animate-in fade-in slide-in-from-top-1 duration-200">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700" />
+                <span className="font-medium">{rejectMsg}</span>
               </div>
             )}
 
@@ -999,27 +1000,29 @@ export function BookingClient({
               </div>
             </div>
 
-            {/* AV Technician Support Checkbox */}
-            <div className="rounded-lg border-2 border-amber-300/80 bg-amber-50/70 p-3.5 flex items-start gap-3 shadow-xs">
-              <Checkbox
-                id={`av-support-${facility.id}`}
-                checked={needAvSupport}
-                onCheckedChange={(v) => setNeedAvSupport(v === true)}
-                className="mt-0.5 border-amber-400 data-[state=checked]:bg-amber-600 data-[state=checked]:border-amber-600"
-              />
-              <div className="grid gap-0.5 leading-none">
-                <Label htmlFor={`av-support-${facility.id}`} className="text-xs font-bold text-amber-950 cursor-pointer flex flex-wrap items-center gap-1.5">
-                  <Headphones className="h-3.5 w-3.5 text-amber-700 shrink-0" />
-                  <span>Need AV Technician Support during this slot</span>
-                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-amber-400 bg-amber-100 text-amber-900 font-medium">
-                    Public Notice
-                  </Badge>
-                </Label>
-                <p className="text-[11px] text-amber-800 leading-relaxed mt-0.5">
-                  Checking this adds an <strong>AV Support</strong> indicator visible to everyone on the calendar so AV technicians are notified and ready to assist during your session.
-                </p>
+            {/* AV Technician Support Checkbox - Only shown if enabled by App Admin for this facility */}
+            {facility.hasAvSupport && (
+              <div className="rounded-lg border-2 border-amber-300/80 bg-amber-50/70 p-3.5 flex items-start gap-3 shadow-xs animate-in fade-in duration-200">
+                <Checkbox
+                  id={`av-support-${facility.id}`}
+                  checked={needAvSupport}
+                  onCheckedChange={(v) => setNeedAvSupport(v === true)}
+                  className="mt-0.5 border-amber-400 data-[state=checked]:bg-amber-600 data-[state=checked]:border-amber-600"
+                />
+                <div className="grid gap-0.5 leading-none">
+                  <Label htmlFor={`av-support-${facility.id}`} className="text-xs font-bold text-amber-950 cursor-pointer flex flex-wrap items-center gap-1.5">
+                    <Headphones className="h-3.5 w-3.5 text-amber-700 shrink-0" />
+                    <span>Need AV Technician Support during this slot</span>
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-amber-400 bg-amber-100 text-amber-900 font-medium">
+                      Public Notice
+                    </Badge>
+                  </Label>
+                  <p className="text-[11px] text-amber-800 leading-relaxed mt-0.5">
+                    Checking this adds an <strong>AV Support</strong> indicator visible to everyone on the calendar so AV technicians are notified and ready to assist during your session.
+                  </p>
+                </div>
               </div>
-            </div>
+            )}
 
             {error && (
               <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>

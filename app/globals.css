@@ -125,3 +125,28 @@ h6 {
   z-index: 6;
   pointer-events: none;
 }
+
+/* Touch-friendly scrollbar for booking calendar */
+.fb-scroller {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.25) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+.fb-scroller::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+.fb-scroller::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 6px;
+}
+.fb-scroller::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 6px;
+  border: 1.5px solid transparent;
+  background-clip: content-box;
+}
+.fb-scroller::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.38);
+}
+

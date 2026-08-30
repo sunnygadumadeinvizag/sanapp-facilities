@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Clock, Globe, Headphones, Lock, Paperclip, ShieldCheck, User, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Globe, Headphones, Lock, Paperclip, ShieldCheck, User, Users } from "lucide-react";
 import { apiPath } from "sanapp-common-ui";
 
 const CELL_MIN = 15;
@@ -134,7 +134,7 @@ export function TimeGrid({
    */
   onCommit: (range: RangeSelection, mergeIndices?: number[]) => void;
   /** Called when a completed drag conflicts (booking/past) and is rejected. */
-  onReject?: () => void;
+  onReject?: (msg?: string) => void;
   nowMin: number;
   todayKey: string;
   /** Scroll-area max height (e.g. "52vh" in dialogs, "60vh" on full pages). */
@@ -353,7 +353,15 @@ export function TimeGrid({
   function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (e.button !== 0 && e.pointerType === "mouse") return;
     const cell = cellFromEvent(e);
-    if (!cell || isDisabled(cell.date, cell.min)) return;
+    if (!cell) return;
+    if (cell.date < todayKey || (cell.date === todayKey && cell.min < nowMin)) {
+      onReject?.("You cannot book a slot in the past (Indian Standard Time).");
+      return;
+    }
+    if (isDisabled(cell.date, cell.min)) {
+      onReject?.("That slot is already booked or unavailable.");
+      return;
+    }
     
     isPointerDownRef.current = true;
     pointerStartPosRef.current = { x: e.clientX, y: e.clientY };
@@ -392,8 +400,12 @@ export function TimeGrid({
   function commitFinalRange(from: { date: string; min: number }, cur: RangeSelection) {
     const range = normalizeRange(from, { date: cur.endDate, min: cur.endMin - CELL_MIN });
     if (!range) return;
+    if (range.startDate < todayKey || (range.startDate === todayKey && range.startMin < nowMin)) {
+      onReject?.("You cannot book a slot in the past (Indian Standard Time).");
+      return;
+    }
     if (conflict(range)) {
-      onReject?.();
+      onReject?.("That range overlaps an already-booked slot.");
       return;
     }
 
@@ -487,8 +499,92 @@ export function TimeGrid({
 
   const marks = Array.from({ length: (24 * 60) / CELL_MIN }, (_, i) => i * CELL_MIN).filter((m) => m % zoom.mark === 0);
 
+  function scrollToMinute(min: number) {
+    if (!scrollerRef.current) return;
+    const targetY = (min / (24 * 60)) * colHeight - 30;
+    scrollerRef.current.scrollTo({ top: Math.max(0, targetY), behavior: "smooth" });
+  }
+
+  function scrollHorizontal(dir: "left" | "right") {
+    if (!scrollerRef.current) return;
+    const delta = dir === "left" ? -colW * 2 : colW * 2;
+    scrollerRef.current.scrollBy({ left: delta, behavior: "smooth" });
+  }
+
   return (
     <div>
+      {/* Mobile & Desktop Time Jumpers / Scroll Navigation Bar */}
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-1.5 text-xs bg-muted/30 p-1.5 rounded-lg border">
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none py-0.5 max-w-full">
+          <span className="text-[11px] text-muted-foreground font-medium mr-0.5 shrink-0 flex items-center gap-1">
+            <Clock className="h-3 w-3" /> Jump:
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-[11px] font-semibold shrink-0 bg-primary/10 hover:bg-primary/20 border-primary/30 text-primary"
+            onClick={() => scrollToMinute(nowMin)}
+          >
+            Now ({fmtMin(nowMin)})
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-[11px] shrink-0 border"
+            onClick={() => scrollToMinute(8 * 60)}
+          >
+            Morning (8 AM)
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-[11px] shrink-0 border"
+            onClick={() => scrollToMinute(13 * 60)}
+          >
+            Afternoon (1 PM)
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-[11px] shrink-0 border"
+            onClick={() => scrollToMinute(18 * 60)}
+          >
+            Evening (6 PM)
+          </Button>
+        </div>
+
+        {days.length > 1 && (
+          <div className="flex items-center gap-1 ml-auto shrink-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-[11px] shrink-0 flex items-center gap-0.5"
+              onClick={() => scrollHorizontal("left")}
+              title="Scroll left"
+            >
+              <ChevronLeft className="h-3 w-3" />
+              <span>Left</span>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-[11px] shrink-0 flex items-center gap-0.5"
+              onClick={() => scrollHorizontal("right")}
+              title="Scroll right"
+            >
+              <span>Right</span>
+              <ChevronRight className="h-3 w-3" />
+            </Button>
+          </div>
+        )}
+      </div>
+
       <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="inline-flex items-center gap-1.5">
@@ -532,7 +628,7 @@ export function TimeGrid({
         </div>
       )}
 
-      <div ref={scrollerRef} className="overflow-auto rounded-lg border bg-card" style={{ maxHeight: maxHeight ?? "52vh" }}>
+      <div ref={scrollerRef} className="overflow-auto rounded-lg border bg-card fb-scroller" style={{ maxHeight: maxHeight ?? "52vh" }}>
         {/* Day header (sticky) — today is bold */}
         <div className="sticky top-0 z-20 flex bg-card border-b">
           <div style={{ width: GUTTER_W }} className="shrink-0" />
