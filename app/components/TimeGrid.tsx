@@ -139,23 +139,10 @@ export function TimeGrid({
   const lastPosRef = useRef<{ x: number; y: number } | null>(null);
   const scrollDirRef = useRef<{ h: -1 | 0 | 1; v: -1 | 0 | 1 }>({ h: 0, v: 0 });
   const autoScrollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastAdvanceRef = useRef(0);
-  // Longer cooldown for the edge-hold week extension (deliberate multi-week drags).
-  const lastHoldAdvanceRef = useRef(0);
-  // Always-fresh reference to applyDragFromPointer — its days closure changes
-  // when the week advances, so ticks must call the latest version.
+  // Always-fresh reference to applyDragFromPointer
   const applyDragRef = useRef<(x: number, y: number) => void>(() => {});
   // Day columns expand to fill the container width (measured from the scroller).
   const [colW, setColW] = useState(COL_MIN_W);
-  // Drag state for week-boundary continuation: dragStartDateMsRef is days[0] at
-  // pointer-down; dragEndColRef is the pointer's continuous day-column offset
-  // from that date (one column = one day; it may exceed the visible 0..6 range);
-  // advanceCountRef counts the +7/-7 week advances the grid made during the drag
-  // so the rendered week stays in sync with the dragged day.
-  const dragStartDateMsRef = useRef(0);
-  const dragEndColRef = useRef(0);
-  const lastPRef = useRef<number | null>(null);
-  const advanceCountRef = useRef(0);
 
   const bookedFragments = useMemo(
     () => bookings.flatMap((b) => fragments(b, days).map((f) => ({ ...f, label: b.label, id: b.id }))),
@@ -188,7 +175,6 @@ export function TimeGrid({
       const available = Math.max(0, sc.clientWidth - GUTTER_W);
       const next = Math.max(COL_MIN_W, days.length > 0 ? available / days.length : COL_MIN_W);
       setColW((prev) => (Math.abs(prev - next) > 0.5 ? next : prev));
-      lastPRef.current = null;
     };
     update();
     const ro = new ResizeObserver(update);
@@ -199,11 +185,10 @@ export function TimeGrid({
   /** Resolve a viewport point to a calendar cell (works while the scroller is auto-scrolling). */
   function cellFromXY(clientX: number, clientY: number): { date: string; min: number } | null {
     const el = containerRef.current;
-    if (!el) return null;
+    if (!el || days.length === 0) return null;
     const rect = el.getBoundingClientRect();
     const x = clientX - rect.left; // containerRef starts after the gutter
     const y = clientY - rect.top; // header is outside the grid container
-    if (x < 0) return null;
     const dayIdx = Math.max(0, Math.min(days.length - 1, Math.floor(x / colW)));
     const min = Math.max(0, Math.min(24 * 60 - CELL_MIN, Math.floor(y / zoom.cellH) * CELL_MIN));
     return { date: days[dayIdx], min };
@@ -217,43 +202,18 @@ export function TimeGrid({
   const SCROLL_STEP = 12; // px per 16ms tick while dragging near an edge
 
   /**
-   * Extend the drag using the last known pointer position (used by pointer moves
-   * and the auto-scroll tick). The selection date is a continuous day-column
-   * offset from the drag-start week.
+   * Extend the drag using the pointer position.
    */
   function applyDragFromPointer(x: number, y: number) {
     if (!dragFrom.current) return;
     const el = containerRef.current;
-    if (!el) return;
+    if (!el || days.length === 0) return;
     const rect = el.getBoundingClientRect();
-    const p = (x - rect.left) / colW;
-    if (lastPRef.current !== null) dragEndColRef.current += p - lastPRef.current;
-    lastPRef.current = p;
-
-    // Keep the rendered week in line with the drag end (cooldown-gated).
-    let blocked = false;
-    let guard = 0;
-    while (Math.floor(dragEndColRef.current / 7) !== advanceCountRef.current && guard < 4) {
-      const want = Math.floor(dragEndColRef.current / 7);
-      const delta = want > advanceCountRef.current ? 7 : -7;
-      if (!maybeAdvanceWeek(delta)) {
-        blocked = true;
-        break;
-      }
-      guard++;
-    }
-
+    const dayIdx = Math.max(0, Math.min(days.length - 1, Math.floor((x - rect.left) / colW)));
     const py = y - rect.top;
     const min = Math.max(0, Math.min(24 * 60 - CELL_MIN, Math.floor(py / zoom.cellH) * CELL_MIN));
-    const dayMs = dragStartDateMsRef.current + Math.floor(dragEndColRef.current * 1440) * 60000;
-    let endDate = new Date(dayMs).toISOString().slice(0, 10);
-    if (blocked) {
-      // Cooldown blocked the week advance — pin the overlay to the rendered
-      // week's edge so the selection stays visible until the advance can run.
-      const rel = dragEndColRef.current - 7 * advanceCountRef.current;
-      const idxRel = Math.max(0, Math.min(days.length - 1, Math.floor(rel)));
-      endDate = days[idxRel];
-    }
+    const endDate = days[dayIdx];
+
     const ai = idx(dragFrom.current.date, dragFrom.current.min);
     const bi = idx(endDate, min);
     const start = ai <= bi ? dragFrom.current : { date: endDate, min };
@@ -295,20 +255,6 @@ export function TimeGrid({
     return { h, v };
   }
 
-  /**
-   * Advance the rendered week by +-7 days while a drag crosses the week boundary.
-   */
-  function maybeAdvanceWeek(deltaDays: number, hold = false): boolean {
-    const now = Date.now();
-    const ref = hold ? lastHoldAdvanceRef : lastAdvanceRef;
-    const cooldown = hold ? 1500 : 700;
-    if (now - ref.current < cooldown) return false;
-    if (!onAutoAdvance) return false;
-    ref.current = now;
-    advanceCountRef.current += deltaDays > 0 ? 1 : -1;
-    onAutoAdvance(deltaDays);
-    return true;
-  }
 
   function startAutoScroll(dir: { h: -1 | 0 | 1; v: -1 | 0 | 1 }) {
     if (dir.h === 0 && dir.v === 0) {
@@ -328,24 +274,7 @@ export function TimeGrid({
       const sc = scrollerRef.current;
       if (!sc) return;
       if (scrollDirRef.current.h !== 0) {
-        const before = sc.scrollLeft;
         sc.scrollLeft += scrollDirRef.current.h * SCROLL_STEP;
-        if (sc.scrollLeft === before) {
-          const el = containerRef.current;
-          if (el) {
-            const rect = el.getBoundingClientRect();
-            const x = lastPosRef.current ? lastPosRef.current.x : 0;
-            const col = (x - rect.left) / colW;
-            const edge = EDGE_ZONE / colW;
-            if (scrollDirRef.current.h > 0 && col >= 7 * (advanceCountRef.current + 1) - edge) {
-              const countNow = advanceCountRef.current;
-              if (maybeAdvanceWeek(7, true)) dragEndColRef.current = Math.max(dragEndColRef.current, 7 * (countNow + 1));
-            } else if (scrollDirRef.current.h < 0 && col <= 7 * advanceCountRef.current + edge) {
-              const countNow = advanceCountRef.current;
-              if (maybeAdvanceWeek(-7, true)) dragEndColRef.current = Math.min(dragEndColRef.current, 7 * countNow - 1);
-            }
-          }
-        }
       }
       if (scrollDirRef.current.v !== 0) sc.scrollTop += scrollDirRef.current.v * SCROLL_STEP;
       if (lastPosRef.current) applyDragRef.current(lastPosRef.current.x, lastPosRef.current.y);
@@ -399,19 +328,11 @@ export function TimeGrid({
     lastPosRef.current = { x: e.clientX, y: e.clientY };
     stopAutoScroll();
 
-    const el = containerRef.current;
-    const rect = el ? el.getBoundingClientRect() : null;
-    const p0 = rect ? (e.clientX - rect.left) / colW : 0;
-    dragStartDateMsRef.current = Date.parse(`${days[0]}T00:00:00Z`);
-    dragEndColRef.current = p0;
-    lastPRef.current = p0;
-    advanceCountRef.current = 0;
-
     setDrag({ startDate: cell.date, startMin: cell.min, endDate: cell.date, endMin: cell.min + CELL_MIN });
     setDragPos({ x: e.clientX, y: e.clientY });
 
     try {
-      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+      containerRef.current?.setPointerCapture(e.pointerId);
     } catch {
       /* pointer capture is optional */
     }
@@ -466,8 +387,8 @@ export function TimeGrid({
   function handlePointerUp(e: React.PointerEvent<HTMLDivElement>) {
     stopAutoScroll();
     try {
-      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-        e.currentTarget.releasePointerCapture(e.pointerId);
+      if (containerRef.current?.hasPointerCapture(e.pointerId)) {
+        containerRef.current.releasePointerCapture(e.pointerId);
       }
     } catch {
       /* ignore */
@@ -482,7 +403,8 @@ export function TimeGrid({
     }
 
     const from = dragFrom.current;
-    const cur = drag;
+    let cur = drag;
+    const startPos = pointerStartPosRef.current;
     dragFrom.current = null;
     isPointerDownRef.current = false;
     pointerStartPosRef.current = null;
@@ -490,30 +412,37 @@ export function TimeGrid({
     setDragPos(null);
 
     if (!cur) return;
+
+    // Check if it was a single tap (< 6px movement)
+    if (startPos) {
+      const dx = Math.abs(e.clientX - startPos.x);
+      const dy = Math.abs(e.clientY - startPos.y);
+      if (dx < 6 && dy < 6) {
+        // Tapped a single slot: default to 1-hour slot (or max available without conflict)
+        const preferredEndMin = Math.min(24 * 60, from.min + 60);
+        const tapRange: RangeSelection = {
+          startDate: from.date,
+          startMin: from.min,
+          endDate: from.date,
+          endMin: preferredEndMin,
+        };
+        if (!conflict(tapRange)) {
+          cur = tapRange;
+        }
+      }
+    }
+
     commitFinalRange(from, cur);
   }
 
   function handlePointerCancel(e: React.PointerEvent<HTMLDivElement>) {
     stopAutoScroll();
     try {
-      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-        e.currentTarget.releasePointerCapture(e.pointerId);
+      if (containerRef.current?.hasPointerCapture(e.pointerId)) {
+        containerRef.current.releasePointerCapture(e.pointerId);
       }
     } catch {
       /* ignore */
-    }
-
-    // On mobile touchscreens, if pointer was cancelled while user was tapping a slot, commit the tap!
-    if (dragFrom.current && drag) {
-      const from = dragFrom.current;
-      const cur = drag;
-      dragFrom.current = null;
-      isPointerDownRef.current = false;
-      pointerStartPosRef.current = null;
-      setDrag(null);
-      setDragPos(null);
-      commitFinalRange(from, cur);
-      return;
     }
 
     dragFrom.current = null;

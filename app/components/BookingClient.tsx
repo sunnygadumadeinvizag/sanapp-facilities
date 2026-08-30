@@ -123,10 +123,6 @@ function parseTime(v: string): number | null {
   return h * 60 + mm;
 }
 
-function dayShortName(dateKey: string): string {
-  const d = new Date(`${dateKey}T00:00:00Z`);
-  return d.toLocaleDateString("en-IN", { weekday: "short" });
-}
 
 function fmtDateHeading(dateKey: string): string {
   const d = new Date(`${dateKey}T00:00:00Z`);
@@ -473,10 +469,6 @@ export function BookingClient({
     setWeekStart(mondayOf(clock.today));
   }
 
-  function selectDayPill(d: string) {
-    setActiveDay(d);
-    setWeekStart(mondayOf(d));
-  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -691,14 +683,13 @@ export function BookingClient({
               <div className="flex items-center gap-2 ml-auto">
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="default"
                   size="sm"
-                  className="h-8 gap-1.5 text-xs text-primary border-primary/40 hover:bg-primary/5"
+                  className="h-8 gap-1.5 text-xs font-semibold px-3 shadow-xs"
                   onClick={() => setShowQuickAdd(true)}
                 >
                   <Plus className="h-3.5 w-3.5" />
-                  <Clock className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Add by time</span>
+                  <span>Add by time</span>
                 </Button>
 
                 <div className="flex items-center rounded-lg border bg-muted/50 p-0.5 text-xs">
@@ -733,66 +724,6 @@ export function BookingClient({
               </div>
             </div>
 
-            {/* Day Selector Pills Bar (Always accessible, great for mobile!) */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-              {weekDays.map((d) => {
-                const isCurrentActive =
-                  viewMode === "day"
-                    ? d === activeDay
-                    : viewMode === "3day"
-                    ? d >= activeDay && d <= addDays(activeDay, 2)
-                    : false;
-                const isToday = d === clock.today;
-                const bookedCount = bookings.filter((b) => b.startDate <= d && b.endDate >= d).length;
-                const hasSelected = ranges.some((r) => r.range.startDate <= d && r.range.endDate >= d);
-
-                return (
-                  <button
-                    key={d}
-                    type="button"
-                    onClick={() => selectDayPill(d)}
-                    className={`flex-1 min-w-[58px] sm:min-w-[70px] py-1.5 px-2 rounded-lg border text-center transition-all flex flex-col items-center justify-center gap-0.5 ${
-                      isCurrentActive
-                        ? "bg-primary text-primary-foreground border-primary shadow-sm ring-2 ring-primary/20 font-bold"
-                        : "bg-card hover:bg-muted/70 text-foreground border-border"
-                    }`}
-                  >
-                    <span className="text-[10px] uppercase tracking-wider font-semibold opacity-90">
-                      {dayShortName(d)}
-                    </span>
-                    <span className="text-xs font-bold leading-none">
-                      {d.slice(8)}
-                    </span>
-                    <div className="flex items-center gap-1 mt-0.5">
-                      {isToday && (
-                        <span
-                          className={`inline-block h-1.5 w-1.5 rounded-full ${
-                            isCurrentActive ? "bg-white" : "bg-primary"
-                          }`}
-                          title="Today"
-                        />
-                      )}
-                      {hasSelected && (
-                        <span
-                          className={`inline-block h-1.5 w-1.5 rounded-full ${
-                            isCurrentActive ? "bg-amber-300" : "bg-primary"
-                          }`}
-                          title="Selected slot on this day"
-                        />
-                      )}
-                      {bookedCount > 0 && (
-                        <span
-                          className={`inline-block h-1.5 w-1.5 rounded-full ${
-                            isCurrentActive ? "bg-red-300" : "bg-red-500"
-                          }`}
-                          title={`${bookedCount} booked slot(s)`}
-                        />
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
 
             {rejectMsg && (
               <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -1248,29 +1179,81 @@ function QuickAddSlotDialog({
   const [date, setDate] = useState(initialDate);
   const [endDate, setEndDate] = useState(initialDate);
   const [startTime, setStartTime] = useState("10:00");
-  const [durationMin, setDurationMin] = useState(60);
-  const [customEndTime, setCustomEndTime] = useState("11:00");
-  const [useCustomEnd, setUseCustomEnd] = useState(false);
+  const [endTime, setEndTime] = useState("11:00");
   const [err, setErr] = useState<string | null>(null);
+
+  // Helper to compute smart initial start time (avoid past slots on today)
+  const getSmartInitialTimes = useCallback((targetDate: string) => {
+    let sMin = 10 * 60; // default 10:00 AM
+    if (targetDate === todayKey) {
+      // Pick next round 30-min interval in future
+      const nextMin = Math.ceil((nowMin + 15) / 30) * 30;
+      sMin = Math.min(23 * 60, Math.max(8 * 60, nextMin));
+    }
+    const eMin = Math.min(24 * 60, sMin + 60);
+    return {
+      start: fmtMin(sMin),
+      end: fmtMin(eMin % 1440),
+      endDt: eMin >= 1440 ? addDays(targetDate, 1) : targetDate,
+    };
+  }, [todayKey, nowMin]);
 
   useEffect(() => {
     if (open) {
       setDate(initialDate);
-      setEndDate(initialDate);
+      const { start, end, endDt } = getSmartInitialTimes(initialDate);
+      setStartTime(start);
+      setEndTime(end);
+      setEndDate(endDt);
       setErr(null);
     }
-  }, [open, initialDate]);
+  }, [open, initialDate, getSmartInitialTimes]);
 
-  // When a duration preset is active, keep the displayed To date / end time in
-  // sync (this also carries the end across midnight onto the next day).
-  useEffect(() => {
-    if (useCustomEnd) return;
-    const s = parseTime(startTime);
-    if (s === null) return;
-    const endAbs = slotIndex(date, s) + durationMin;
-    setEndDate(new Date(endAbs * 60000).toISOString().slice(0, 10));
-    setCustomEndTime(fmtMin(endAbs % 1440));
-  }, [startTime, durationMin, date, useCustomEnd]);
+  // Duration in minutes calculated from current date/time values
+  const currentDurationMin = useMemo(() => {
+    const sMin = parseTime(startTime);
+    const eMin = parseTime(endTime);
+    if (sMin === null || eMin === null) return 0;
+    const startAbs = slotIndex(date, sMin);
+    const endAbs = slotIndex(endDate, eMin === 0 && endDate > date ? 1440 : eMin);
+    return Math.max(0, endAbs - startAbs);
+  }, [date, endDate, startTime, endTime]);
+
+  // When user changes date, adjust end date if needed
+  const handleStartDateChange = (newDate: string) => {
+    setDate(newDate);
+    if (endDate < newDate) {
+      setEndDate(newDate);
+    }
+    setErr(null);
+  };
+
+  // Handle duration preset clicks (15m, 30m, 1h, 2h, etc.)
+  const applyPresetDuration = (min: number) => {
+    const sMin = parseTime(startTime);
+    if (sMin === null) return;
+    const endAbs = slotIndex(date, sMin) + min;
+    const newEndDt = new Date(endAbs * 60000).toISOString().slice(0, 10);
+    const newEMin = endAbs % 1440;
+    setEndDate(newEndDt);
+    setEndTime(fmtMin(newEMin));
+    setErr(null);
+  };
+
+  // When user changes Start Time, automatically update End Time by preserving duration
+  const handleStartTimeChange = (newStartTime: string) => {
+    setStartTime(newStartTime);
+    setErr(null);
+    const sMin = parseTime(newStartTime);
+    if (sMin !== null) {
+      const dur = currentDurationMin > 0 ? currentDurationMin : 60;
+      const endAbs = slotIndex(date, sMin) + dur;
+      const newEndDt = new Date(endAbs * 60000).toISOString().slice(0, 10);
+      const newEMin = endAbs % 1440;
+      setEndDate(newEndDt);
+      setEndTime(fmtMin(newEMin));
+    }
+  };
 
   function handleAdd() {
     const sMin = parseTime(startTime);
@@ -1278,27 +1261,23 @@ function QuickAddSlotDialog({
       setErr("Please enter a valid start time (HH:MM).");
       return;
     }
-    let endDt = endDate;
-    let eMin: number | null;
-    if (useCustomEnd) {
-      eMin = parseTime(customEndTime);
-      if (eMin === null) {
-        setErr("Please enter a valid end time (HH:MM).");
-        return;
-      }
-    } else {
-      const endAbs = slotIndex(date, sMin) + durationMin;
-      endDt = new Date(endAbs * 60000).toISOString().slice(0, 10);
-      eMin = endAbs % 1440;
+    const eMin = parseTime(endTime);
+    if (eMin === null) {
+      setErr("Please enter a valid end time (HH:MM).");
+      return;
     }
-    if (endDt < date) {
+    if (endDate < date) {
       setErr("End date cannot be before the start date.");
       return;
     }
     const startAbs = slotIndex(date, sMin);
-    const endAbs = slotIndex(endDt, eMin ?? 0);
+    let endAbs = slotIndex(endDate, eMin);
+    // If end time is 00:00 on the day after start date, that represents 24:00 (midnight of start date)
+    if (eMin === 0 && endDate === addDays(date, 1)) {
+      endAbs = slotIndex(date, 1440);
+    }
     if (endAbs <= startAbs) {
-      setErr("End must be after the start.");
+      setErr("End time must be after the start time.");
       return;
     }
     if (startAbs <= slotIndex(todayKey, nowMin)) {
@@ -1308,8 +1287,8 @@ function QuickAddSlotDialog({
     const range: RangeSelection = {
       startDate: date,
       startMin: sMin,
-      endDate: endDt,
-      endMin: eMin ?? 0,
+      endDate: endDate,
+      endMin: eMin === 0 && endDate === addDays(date, 1) ? 1440 : eMin,
     };
     // Conflict checks: already-booked slots on the server…
     const [s, e] = absMin(range);
@@ -1339,7 +1318,7 @@ function QuickAddSlotDialog({
             Quick Add Slot
           </DialogTitle>
           <DialogDescription>
-            Select a date range, start time, and duration to add a slot to your booking.
+            Select a date, start time, and end time or duration to add a slot.
           </DialogDescription>
         </DialogHeader>
 
@@ -1350,10 +1329,7 @@ function QuickAddSlotDialog({
               <div className="mt-1">
                 <DatePicker
                   value={date}
-                  onChange={(d) => {
-                    setDate(d);
-                    if (endDate < d) setEndDate(d);
-                  }}
+                  onChange={handleStartDateChange}
                   className="w-full"
                 />
               </div>
@@ -1363,7 +1339,10 @@ function QuickAddSlotDialog({
               <div className="mt-1">
                 <DatePicker
                   value={endDate}
-                  onChange={setEndDate}
+                  onChange={(d) => {
+                    setEndDate(d);
+                    setErr(null);
+                  }}
                   className="w-full"
                 />
               </div>
@@ -1375,54 +1354,47 @@ function QuickAddSlotDialog({
               <Label className="text-xs font-semibold">Start Time (IST)</Label>
               <Input
                 type="time"
+                step="900"
                 value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className="mt-1"
+                onChange={(e) => handleStartTimeChange(e.target.value)}
+                className="mt-1 font-medium"
               />
             </div>
             <div>
               <Label className="text-xs font-semibold">End Time (IST)</Label>
               <Input
                 type="time"
-                value={customEndTime}
-                disabled={!useCustomEnd}
+                step="900"
+                value={endTime}
                 onChange={(e) => {
-                  setCustomEndTime(e.target.value);
-                  setUseCustomEnd(true);
+                  setEndTime(e.target.value);
+                  setErr(null);
                 }}
-                className={`mt-1 ${!useCustomEnd ? "bg-muted text-muted-foreground" : ""}`}
+                className="mt-1 font-medium"
               />
             </div>
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <Label className="text-xs font-semibold">Quick Duration</Label>
-              <button
-                type="button"
-                onClick={() => setUseCustomEnd(!useCustomEnd)}
-                className="text-[11px] text-primary hover:underline"
-              >
-                {useCustomEnd ? "Use presets" : "Custom end time"}
-              </button>
-            </div>
-            <div className="grid grid-cols-4 gap-1.5">
+            <Label className="text-xs font-semibold text-muted-foreground mb-1.5 block">
+              Quick Duration Presets
+            </Label>
+            <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6">
               {[
                 { label: "15 min", min: 15 },
                 { label: "30 min", min: 30 },
+                { label: "45 min", min: 45 },
                 { label: "1 hour", min: 60 },
                 { label: "2 hours", min: 120 },
+                { label: "3 hours", min: 180 },
               ].map((d) => (
                 <Button
                   key={d.min}
                   type="button"
                   size="sm"
-                  variant={!useCustomEnd && durationMin === d.min ? "default" : "outline"}
+                  variant={currentDurationMin === d.min ? "default" : "outline"}
                   className="h-8 text-xs px-1"
-                  onClick={() => {
-                    setDurationMin(d.min);
-                    setUseCustomEnd(false);
-                  }}
+                  onClick={() => applyPresetDuration(d.min)}
                 >
                   {d.label}
                 </Button>
@@ -1430,9 +1402,21 @@ function QuickAddSlotDialog({
             </div>
           </div>
 
+          <div className="rounded-lg bg-muted/50 border p-2.5 text-xs flex items-center justify-between">
+            <span className="text-muted-foreground">Calculated Duration:</span>
+            <span className="font-semibold text-foreground">
+              {currentDurationMin > 0
+                ? currentDurationMin < 60
+                  ? `${currentDurationMin} min`
+                  : `${Math.floor(currentDurationMin / 60)}h ${currentDurationMin % 60 ? `${currentDurationMin % 60}m` : ""}`.trim()
+                : "—"}
+            </span>
+          </div>
+
           {err && (
-            <div className="rounded-md border border-red-300 bg-red-50 p-2.5 text-xs text-red-700">
-              {err}
+            <div className="rounded-md border border-red-300 bg-red-50 p-2.5 text-xs text-red-700 font-medium flex items-center gap-1.5">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" />
+              <span>{err}</span>
             </div>
           )}
         </div>
@@ -1449,3 +1433,4 @@ function QuickAddSlotDialog({
     </Dialog>
   );
 }
+
