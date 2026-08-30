@@ -12,7 +12,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ChevronLeft, ChevronRight, Clock, Globe, Headphones, Lock, Paperclip, ShieldCheck, User, Users } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  ChevronsDown,
+  ChevronsUp,
+  Clock,
+  Globe,
+  Headphones,
+  Lock,
+  Paperclip,
+  ShieldCheck,
+  User,
+  Users,
+} from "lucide-react";
 import { apiPath } from "sanapp-common-ui";
 
 const CELL_MIN = 15;
@@ -505,6 +520,19 @@ export function TimeGrid({
     scrollerRef.current.scrollTo({ top: Math.max(0, targetY), behavior: "smooth" });
   }
 
+  function scrollVertical(dir: "top" | "bottom" | "up" | "down") {
+    if (!scrollerRef.current) return;
+    if (dir === "top") {
+      scrollerRef.current.scrollTo({ top: 0, behavior: "smooth" });
+    } else if (dir === "bottom") {
+      scrollerRef.current.scrollTo({ top: scrollerRef.current.scrollHeight, behavior: "smooth" });
+    } else if (dir === "up") {
+      scrollerRef.current.scrollBy({ top: -200, behavior: "smooth" });
+    } else if (dir === "down") {
+      scrollerRef.current.scrollBy({ top: 200, behavior: "smooth" });
+    }
+  }
+
   function scrollHorizontal(dir: "left" | "right") {
     if (!scrollerRef.current) return;
     const delta = dir === "left" ? -colW * 2 : colW * 2;
@@ -513,18 +541,30 @@ export function TimeGrid({
 
   return (
     <div>
-      {/* Mobile & Desktop Time Jumpers / Scroll Navigation Bar */}
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-1.5 text-xs bg-muted/30 p-1.5 rounded-lg border">
+      {/* Quick Jump & Multi-Direction Scroll Navigation Bar */}
+      <div className="mb-2 flex flex-col gap-2 bg-muted/30 p-2 rounded-lg border">
+        {/* Row 1: Quick Time Jumper Buttons */}
         <div className="flex items-center gap-1 overflow-x-auto scrollbar-none py-0.5 max-w-full">
-          <span className="text-[11px] text-muted-foreground font-medium mr-0.5 shrink-0 flex items-center gap-1">
-            <Clock className="h-3 w-3" /> Jump:
+          <span className="text-[11px] text-muted-foreground font-semibold mr-0.5 shrink-0 flex items-center gap-1">
+            <Clock className="h-3.5 w-3.5 text-primary" /> Jump:
           </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2.5 text-[11px] font-semibold shrink-0 border bg-background hover:bg-muted"
+            onClick={() => scrollToMinute(0)}
+            title="Jump to 00:00 (12:00 AM midnight)"
+          >
+            00:00 AM
+          </Button>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="h-7 px-2 text-[11px] font-semibold shrink-0 bg-primary/10 hover:bg-primary/20 border-primary/30 text-primary"
+            className="h-7 px-2.5 text-[11px] font-bold shrink-0 bg-primary/10 hover:bg-primary/20 border-primary/40 text-primary"
             onClick={() => scrollToMinute(nowMin)}
+            title="Jump to current IST time"
           >
             Now ({fmtMin(nowMin)})
           </Button>
@@ -532,8 +572,9 @@ export function TimeGrid({
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 px-2 text-[11px] shrink-0 border"
+            className="h-7 px-2 text-[11px] shrink-0 border bg-background hover:bg-muted"
             onClick={() => scrollToMinute(8 * 60)}
+            title="Jump to Morning (8:00 AM)"
           >
             Morning (8 AM)
           </Button>
@@ -541,8 +582,9 @@ export function TimeGrid({
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 px-2 text-[11px] shrink-0 border"
+            className="h-7 px-2 text-[11px] shrink-0 border bg-background hover:bg-muted"
             onClick={() => scrollToMinute(13 * 60)}
+            title="Jump to Afternoon (1:00 PM)"
           >
             Afternoon (1 PM)
           </Button>
@@ -550,39 +592,103 @@ export function TimeGrid({
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 px-2 text-[11px] shrink-0 border"
+            className="h-7 px-2 text-[11px] shrink-0 border bg-background hover:bg-muted"
             onClick={() => scrollToMinute(18 * 60)}
+            title="Jump to Evening (6:00 PM)"
           >
             Evening (6 PM)
           </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-[11px] shrink-0 border bg-background hover:bg-muted"
+            onClick={() => scrollToMinute(22 * 60)}
+            title="Jump to Night (10:00 PM)"
+          >
+            Night (10 PM)
+          </Button>
         </div>
 
-        {days.length > 1 && (
-          <div className="flex items-center gap-1 ml-auto shrink-0">
+        {/* Row 2: Scroll Direction Helpers (Top, Bottom, Up, Down, Left, Right) */}
+        <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-border/50">
+          <div className="flex items-center gap-1 overflow-x-auto scrollbar-none py-0.5">
+            <span className="text-[11px] text-muted-foreground font-medium mr-1 shrink-0">
+              Scroll:
+            </span>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="h-7 px-2 text-[11px] shrink-0 flex items-center gap-0.5"
-              onClick={() => scrollHorizontal("left")}
-              title="Scroll left"
+              className="h-7 px-2 text-[11px] shrink-0 flex items-center gap-1 font-semibold bg-background"
+              onClick={() => scrollVertical("top")}
+              title="Scroll to very Top (12:00 AM)"
             >
-              <ChevronLeft className="h-3 w-3" />
-              <span>Left</span>
+              <ChevronsUp className="h-3.5 w-3.5 text-primary" />
+              <span>Top</span>
             </Button>
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="h-7 px-2 text-[11px] shrink-0 flex items-center gap-0.5"
-              onClick={() => scrollHorizontal("right")}
-              title="Scroll right"
+              className="h-7 px-2 text-[11px] shrink-0 flex items-center gap-1 font-medium bg-background"
+              onClick={() => scrollVertical("up")}
+              title="Scroll Up (earlier hours)"
             >
-              <span>Right</span>
-              <ChevronRight className="h-3 w-3" />
+              <ChevronUp className="h-3.5 w-3.5" />
+              <span>Up</span>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-[11px] shrink-0 flex items-center gap-1 font-medium bg-background"
+              onClick={() => scrollVertical("down")}
+              title="Scroll Down (later hours)"
+            >
+              <ChevronDown className="h-3.5 w-3.5" />
+              <span>Down</span>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-[11px] shrink-0 flex items-center gap-1 font-semibold bg-background"
+              onClick={() => scrollVertical("bottom")}
+              title="Scroll to very Bottom (11:59 PM)"
+            >
+              <ChevronsDown className="h-3.5 w-3.5 text-primary" />
+              <span>Bottom</span>
             </Button>
           </div>
-        )}
+
+          {days.length > 1 && (
+            <div className="flex items-center gap-1 shrink-0">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-[11px] shrink-0 flex items-center gap-1 font-medium bg-background"
+                onClick={() => scrollHorizontal("left")}
+                title="Scroll Left (earlier days)"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+                <span>Left</span>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-[11px] shrink-0 flex items-center gap-1 font-medium bg-background"
+                onClick={() => scrollHorizontal("right")}
+                title="Scroll Right (next days)"
+              >
+                <span>Right</span>
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
