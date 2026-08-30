@@ -456,7 +456,7 @@ export function TimeGrid({
 
   return (
     <div>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary/25" /> Tap or drag to select
@@ -468,7 +468,7 @@ export function TimeGrid({
             <span className="inline-block h-3 w-3 rounded-sm bg-red-500/20 border border-red-400" /> Already booked
           </span>
         </p>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none pb-0.5">
           <span className="text-[11px] text-muted-foreground mr-1 hidden sm:inline">Zoom:</span>
           {ZOOMS.map((z) => (
             <Button
@@ -476,7 +476,7 @@ export function TimeGrid({
               type="button"
               variant={zoom.key === z.key ? "secondary" : "outline"}
               size="sm"
-              className="h-7 px-2 text-[11px]"
+              className="h-7 px-2 text-[11px] shrink-0"
               onClick={() => setZoomKey(z.key)}
               title={`Zoom: ${z.label} marks`}
             >
@@ -490,7 +490,10 @@ export function TimeGrid({
       {drag && dragPos && (
         <div
           className="pointer-events-none fixed z-50 rounded-md border bg-card px-3 py-1.5 text-xs font-semibold text-foreground shadow-xl"
-          style={{ left: dragPos.x + 12, top: dragPos.y - 40 }}
+          style={{
+            left: Math.max(10, Math.min((typeof window !== "undefined" ? window.innerWidth : 400) - 180, dragPos.x - 60)),
+            top: Math.max(10, dragPos.y - 45),
+          }}
         >
           {fmtSlotRange(drag.startDate, drag.startMin, drag.endDate, drag.endMin)}
         </div>

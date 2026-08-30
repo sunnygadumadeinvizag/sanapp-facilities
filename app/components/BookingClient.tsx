@@ -648,44 +648,45 @@ export function BookingClient({
         <Card className="shadow-sm">
           <CardContent className="p-3 sm:p-4 space-y-3">
             {/* Calendar Controls Toolbar */}
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
-              {/* Previous / Next / Today */}
-              <div className="flex items-center gap-1">
-                <Button variant="outline" size="icon" className="h-8 w-8" onClick={handlePrev} title="Previous">
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button variant="outline" size="icon" className="h-8 w-8" onClick={handleNext} title="Next">
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={handleToday}>
-                  Today
-                </Button>
+            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between border-b pb-3">
+              {/* Row 1 on mobile: Navigation + Current Date Heading */}
+              <div className="flex flex-wrap items-center justify-between sm:justify-start gap-2">
+                <div className="flex items-center gap-1">
+                  <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={handlePrev} title="Previous">
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={handleNext} title="Next">
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" className="h-8 px-2 text-xs shrink-0" onClick={handleToday}>
+                    Today
+                  </Button>
+                </div>
+
+                <div className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-foreground">
+                  {viewMode === "day" && <span>{fmtDateHeading(activeDay)}</span>}
+                  {viewMode === "3day" && (
+                    <span>
+                      {fmtDateHeading(activeDay).split(",")[1]?.trim() ?? activeDay} —{" "}
+                      {fmtDateHeading(addDays(activeDay, 2)).split(",")[1]?.trim() ?? addDays(activeDay, 2)}
+                    </span>
+                  )}
+                  {viewMode === "week" && (
+                    <span>
+                      {weekDays[0]} — {weekDays[weekDays.length - 1]}
+                    </span>
+                  )}
+                  {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                </div>
               </div>
 
-              {/* Current Date / Range Display */}
-              <div className="flex items-center gap-2 text-sm font-semibold text-foreground text-center">
-                {viewMode === "day" && <span>{fmtDateHeading(activeDay)}</span>}
-                {viewMode === "3day" && (
-                  <span>
-                    {fmtDateHeading(activeDay).split(",")[1]?.trim() ?? activeDay} —{" "}
-                    {fmtDateHeading(addDays(activeDay, 2)).split(",")[1]?.trim() ?? addDays(activeDay, 2)}
-                  </span>
-                )}
-                {viewMode === "week" && (
-                  <span>
-                    {weekDays[0]} — {weekDays[weekDays.length - 1]}
-                  </span>
-                )}
-                {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-              </div>
-
-              {/* View Mode Switcher + Quick Add Button */}
-              <div className="flex items-center gap-2 ml-auto">
+              {/* Row 2 on mobile: Quick Add Button + View Mode Switcher */}
+              <div className="flex items-center justify-between sm:justify-end gap-2 sm:ml-auto">
                 <Button
                   type="button"
                   variant="default"
                   size="sm"
-                  className="h-8 gap-1.5 text-xs font-semibold px-3 shadow-xs"
+                  className="h-8 gap-1.5 text-xs font-semibold px-3 shadow-xs shrink-0"
                   onClick={() => setShowQuickAdd(true)}
                 >
                   <Plus className="h-3.5 w-3.5" />
@@ -697,7 +698,7 @@ export function BookingClient({
                     type="button"
                     variant={viewMode === "day" ? "secondary" : "ghost"}
                     size="sm"
-                    className="h-7 px-2 text-xs"
+                    className="h-7 px-2.5 text-xs"
                     onClick={() => setViewMode("day")}
                   >
                     1 Day
@@ -706,7 +707,7 @@ export function BookingClient({
                     type="button"
                     variant={viewMode === "3day" ? "secondary" : "ghost"}
                     size="sm"
-                    className="h-7 px-2 text-xs"
+                    className="h-7 px-2.5 text-xs"
                     onClick={() => setViewMode("3day")}
                   >
                     3 Days
@@ -715,7 +716,7 @@ export function BookingClient({
                     type="button"
                     variant={viewMode === "week" ? "secondary" : "ghost"}
                     size="sm"
-                    className="h-7 px-2 text-xs"
+                    className="h-7 px-2.5 text-xs"
                     onClick={() => setViewMode("week")}
                   >
                     Week
