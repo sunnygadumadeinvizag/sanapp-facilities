@@ -68,7 +68,7 @@ export async function listSsoUsers(): Promise<SsoUser[]> {
       username: u.username,
       name: u.name,
       email: u.email ?? null,
-      primaryRole: u.primaryRole ?? u.role ?? "",
+      primaryRole: u.primaryRole || "",
       isActive: u.isActive !== false,
     }));
     ssoUsersCache = { at: Date.now(), users };

@@ -34,13 +34,15 @@ export async function GET(request: NextRequest) {
 
     // 3. Local role — App4 owns its own roles, synchronized with central APP_ADMIN.
     const isAdmin = access.role === "APP_ADMIN" || user.role === "SUPER_ADMIN";
+    const effectivePrimaryRole = user.primaryRole || null;
+
     const localUser = await prisma.appUser.upsert({
       where: { username: user.username },
       update: {
         ssoUserId: user.sub,
         name: user.name,
         email: user.email,
-        primaryRole: user.primaryRole ?? user.role ?? undefined,
+        primaryRole: effectivePrimaryRole,
         ...(isAdmin ? { role: "ADMIN" } : {}),
       },
       create: {
@@ -48,7 +50,7 @@ export async function GET(request: NextRequest) {
         username: user.username,
         name: user.name,
         email: user.email,
-        primaryRole: user.primaryRole ?? user.role ?? null,
+        primaryRole: effectivePrimaryRole,
         role: isAdmin ? "ADMIN" : "USER",
       },
     });
@@ -59,7 +61,7 @@ export async function GET(request: NextRequest) {
       name: user.name,
       email: user.email,
       role: localUser.role,
-      primaryRole: user.role ?? localUser.primaryRole ?? "",
+      primaryRole: effectivePrimaryRole || localUser.primaryRole || "",
       ssoRole: user.role ?? "USER",
     });
 

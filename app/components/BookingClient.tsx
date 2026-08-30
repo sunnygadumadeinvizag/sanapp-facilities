@@ -42,6 +42,7 @@ import {
 import { TimeGrid, type BookingBlock, type FocusRequest, type RangeSelection } from "./TimeGrid";
 import { DatePicker } from "./DatePicker";
 import { effectiveMaxMinutes, capLabel } from "@/lib/limits";
+import { primaryRoleLabel } from "@/lib/labels";
 import {
   PDF_MAX_BYTES,
   SLOT_MAX_MINUTES,
@@ -686,7 +687,7 @@ export function BookingClient({
 
       {!eligible && (
         <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          This facility is restricted to specific primary roles. Your role ({me.primaryRole || "not set"}) is not
+          This facility is restricted to specific primary roles. Your role ({me.primaryRole ? primaryRoleLabel(me.primaryRole) : "not set"}) is not
           in the allowed list.
           {canPoc ? " As the POC of this facility you can still block a slot for an eligible user." : ""}
         </div>

@@ -131,10 +131,12 @@ export default async function BookPage({
   }));
 
   // ADMINs can book any facility (the server bypasses restrictions).
+  const effectivePrimaryRole = local?.primaryRole || me.primaryRole || "";
+  const isAdmin = me.role === "ADMIN" || local?.role === "ADMIN" || me.ssoRole === "SUPER_ADMIN";
   const eligible =
-    me.role === "ADMIN" ||
+    isAdmin ||
     facility.allowedRoles.length === 0 ||
-    (me.primaryRole ? facility.allowedRoles.includes(me.primaryRole) : false);
+    (effectivePrimaryRole ? facility.allowedRoles.includes(effectivePrimaryRole) : false);
 
   return (
     <AppShell me={me} active="home">
@@ -178,12 +180,12 @@ export default async function BookPage({
         todaySlots={slots}
         me={{
           name: me.name,
-          primaryRole: me.primaryRole ?? "",
+          primaryRole: effectivePrimaryRole,
           role: local?.role ?? "USER",
           // POC of THIS facility or its building (or an app ADMIN) — the
           // per-building / per-facility POC model.
           isPocHere:
-            (local?.role ?? "USER") === "ADMIN" ||
+            isAdmin ||
             (local ? await isPocOfFacility(local.id, facility.id) : false),
         }}
         eligible={eligible}
