@@ -1,7 +1,7 @@
 "use client";
 import { apiPath } from "sanapp-common-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, FileText, Loader2, Pencil, Search, Trash2 } from "lucide-react";
+import { CalendarClock, FileText, Headphones, Loader2, Pencil, Search, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -32,6 +32,7 @@ export type MyBooking = {
   isPublicPurpose?: boolean;
   pdf: boolean;
   isPublicAttachment?: boolean;
+  needAvSupport?: boolean;
   cancelledAt: string | null;
   cancelReason: string | null;
   cancelledBy: { id: string; username: string; name: string; primaryRole?: string | null } | null;
@@ -385,6 +386,11 @@ function BookingGroupCard({
                     </span>
                   </div>
                   <Badge variant="outline" className={badge.cls}>{badge.label}</Badge>
+                  {b.needAvSupport && (
+                    <Badge variant="outline" className="border-amber-400 bg-amber-100 text-amber-900 gap-1 text-[11px]">
+                      <Headphones className="h-3 w-3 text-amber-700" /> AV Support
+                    </Badge>
+                  )}
                   {b.status === "CANCELLED" && (
                     <Badge variant="secondary" className="gap-1">
                       Cancelled{b.cancelledBy ? ` by ${b.cancelledBy.name}` : ""}
@@ -487,6 +493,11 @@ function SlotCard({
             <span className="text-muted-foreground">/</span>
             <span className="font-medium">{b.facility.name}</span>
             <Badge variant="outline" className={badge.cls}>{badge.label}</Badge>
+            {b.needAvSupport && (
+              <Badge variant="outline" className="border-amber-400 bg-amber-100 text-amber-900 gap-1 text-[11px]">
+                <Headphones className="h-3 w-3 text-amber-700" /> AV Support
+              </Badge>
+            )}
             {b.status === "CANCELLED" && <Badge variant="secondary">Cancelled</Badge>}
           </div>
 

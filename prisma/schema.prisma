@@ -157,6 +157,7 @@ model Booking {
   pdf        Bytes?
   pdfName    String?
   isPublicAttachment Boolean @default(false)
+  needAvSupport      Boolean @default(false)
   createdAt  DateTime      @default(now())
   // Cancellation history — who cancelled, when, and why (set on cancel).
   cancelledAt   DateTime?

@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Clock, Globe, Lock, Paperclip, ShieldCheck, User, Users } from "lucide-react";
+import { Clock, Globe, Headphones, Lock, Paperclip, ShieldCheck, User, Users } from "lucide-react";
 import { apiPath } from "sanapp-common-ui";
 
 const CELL_MIN = 15;
@@ -37,6 +37,7 @@ export type BookingBlock = {
   pdf?: boolean;
   pdfName?: string | null;
   isPublicAttachment?: boolean;
+  needAvSupport?: boolean;
 };
 
 export type RangeSelection = {
@@ -628,6 +629,15 @@ export function TimeGrid({
                       <span className="truncate">
                         {b.forName ? `${b.forName} (@${b.forUsername})` : b.bookerName ? `${b.bookerName} (@${b.bookerUsername})` : b.label}
                       </span>
+                      {b.needAvSupport && (
+                        <span
+                          title="AV Technician Support Requested"
+                          className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-500 text-white font-bold text-[9px] shrink-0 leading-none shadow-xs animate-pulse"
+                        >
+                          <Headphones className="h-2.5 w-2.5" />
+                          <span>AV</span>
+                        </span>
+                      )}
                       {b.pdf && (
                         <span title="Has attachment" className="inline-flex shrink-0">
                           <Paperclip className="h-3 w-3 text-primary" />
@@ -685,7 +695,23 @@ export function TimeGrid({
           </DialogHeader>
 
           {selectedBooking && (
-            <div className="space-y-4 py-2 text-sm">
+            <div className="space-y-3 py-2 text-sm">
+              {/* AV Support Alert Badge */}
+              {selectedBooking.needAvSupport && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 flex items-start gap-2.5 text-amber-950 shadow-xs">
+                  <Headphones className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold text-xs text-amber-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>AV Technician Support Requested</span>
+                      <Badge className="bg-amber-600 text-white text-[10px] px-1.5 py-0 h-4">Required</Badge>
+                    </div>
+                    <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                      The booker has requested on-site AV technician assistance for this time slot. AV technicians should be prepared.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Booker Information */}
               <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
                 <div className="flex items-center gap-2">

@@ -1,7 +1,7 @@
 "use client";
 import { apiPath } from "sanapp-common-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, FileText, Loader2, Pencil, Search, Trash2, X } from "lucide-react";
+import { CalendarClock, FileText, Headphones, Loader2, Pencil, Search, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,6 +25,7 @@ type AdminBooking = {
   isPublicPurpose?: boolean;
   pdf: boolean;
   isPublicAttachment?: boolean;
+  needAvSupport?: boolean;
   facility: { id: string; name: string; building: { id: string; name: string } };
   user: { id: string; name: string; username: string; primaryRole?: string | null };
   forUser: { id: string; name: string; username: string; primaryRole?: string | null } | null;
@@ -349,6 +350,11 @@ export function AdminBookingsTab({
                         <Badge variant={b.type === "LONG" ? "destructive" : "secondary"}>
                           {b.type === "SELF" ? "Self" : b.type === "ON_BEHALF" ? "Blocked" : "Long"}
                         </Badge>
+                        {b.needAvSupport && (
+                          <Badge variant="outline" className="border-amber-400 bg-amber-100 text-amber-900 gap-1 text-[11px]">
+                            <Headphones className="h-3 w-3 text-amber-700" /> AV Support
+                          </Badge>
+                        )}
                         {b.status === "CANCELLED" && <Badge variant="outline">Cancelled</Badge>}
                       </div>
                       <div className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">

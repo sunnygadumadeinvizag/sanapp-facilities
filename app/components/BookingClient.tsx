@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Clock,
   Crosshair,
+  Headphones,
   Loader2,
   Paperclip,
   Pencil,
@@ -67,6 +68,7 @@ export type SlotItem = {
   forName: string | null;
   forUsername?: string | null;
   forPrimaryRole?: string | null;
+  needAvSupport?: boolean;
 };
 
 export type BookingMe = {
@@ -159,6 +161,7 @@ export type EditBookingInfo = {
   /** Name of the PDF currently attached to this booking (if any). */
   pdfName?: string | null;
   isPublicAttachment?: boolean;
+  needAvSupport?: boolean;
 };
 
 export function BookingClient({
@@ -258,6 +261,7 @@ export function BookingClient({
   const [forUserId, setForUserId] = useState(editBooking?.forUserId ?? "");
   const [purpose, setPurpose] = useState(editBooking?.purpose ?? "");
   const [isPublicPurpose, setIsPublicPurpose] = useState(editBooking?.isPublicPurpose ?? false);
+  const [needAvSupport, setNeedAvSupport] = useState(editBooking?.needAvSupport ?? false);
   const [pdfName, setPdfName] = useState("");
   const [pdf, setPdf] = useState<File | null>(null);
   const [pdfClear, setPdfClear] = useState(false);
@@ -319,6 +323,7 @@ export function BookingClient({
               pdf: Boolean(b.pdf),
               pdfName: b.pdfName ?? null,
               isPublicAttachment: Boolean(b.isPublicAttachment),
+              needAvSupport: Boolean(b.needAvSupport),
             }))
           );
         }
@@ -513,6 +518,7 @@ export function BookingClient({
           if (purpose.trim()) payload.set("purpose", purpose.trim());
           payload.set("isPublicPurpose", isPublicPurpose ? "1" : "0");
           payload.set("isPublicAttachment", isPublicAttachment ? "1" : "0");
+          payload.set("needAvSupport", needAvSupport ? "1" : "0");
           if (pdfClear && !pdf) payload.set("pdfClear", "1");
           if (pdf) payload.set("pdf", pdf, pdf.name);
         }
@@ -531,6 +537,7 @@ export function BookingClient({
                   purpose: purpose.trim() || null,
                   isPublicPurpose,
                   isPublicAttachment,
+                  needAvSupport,
                 }),
               }),
         });
@@ -581,6 +588,7 @@ export function BookingClient({
       if (purpose.trim()) form.set("purpose", purpose.trim());
       form.set("isPublicPurpose", isPublicPurpose ? "1" : "0");
       form.set("isPublicAttachment", isPublicAttachment ? "1" : "0");
+      form.set("needAvSupport", needAvSupport ? "1" : "0");
       if (isOnBehalf && forUserId) form.set("forUserId", forUserId);
       if (pdf) form.set("pdf", pdf, pdf.name);
       try {
@@ -629,6 +637,7 @@ export function BookingClient({
       setError(failed.join(" · "));
     }
     setPurpose("");
+    setNeedAvSupport(false);
     setPdf(null);
     setPdfName("");
     setPdfClear(false);
@@ -652,15 +661,22 @@ export function BookingClient({
             <Badge
               key={s.id}
               variant="outline"
-              className="gap-1 text-red-700 border-red-300 bg-red-50"
+              className="gap-1.5 text-red-700 border-red-300 bg-red-50"
               title={
                 s.forName
-                  ? `Blocked for ${s.forName} (@${s.forUsername || "—"} · ${s.forPrimaryRole || "User"}) by ${s.bookerName} (@${s.bookerUsername || "—"} · ${s.bookerPrimaryRole || "User"})`
-                  : `Booked by ${s.bookerName} (@${s.bookerUsername || "—"} · ${s.bookerPrimaryRole || "User"})`
+                  ? `Blocked for ${s.forName} (@${s.forUsername || "—"} · ${s.forPrimaryRole || "User"}) by ${s.bookerName} (@${s.bookerUsername || "—"} · ${s.bookerPrimaryRole || "User"})${s.needAvSupport ? " · AV Support Requested" : ""}`
+                  : `Booked by ${s.bookerName} (@${s.bookerUsername || "—"} · ${s.bookerPrimaryRole || "User"})${s.needAvSupport ? " · AV Support Requested" : ""}`
               }
             >
-              {fmtMin(s.startMin)}–{fmtMin(s.endMin)} IST ·{" "}
-              {s.forName ? `${s.forName} (@${s.forUsername || "—"})` : `${s.bookerName} (@${s.bookerUsername || "—"})`}
+              <span>
+                {fmtMin(s.startMin)}–{fmtMin(s.endMin)} IST ·{" "}
+                {s.forName ? `${s.forName} (@${s.forUsername || "—"})` : `${s.bookerName} (@${s.bookerUsername || "—"})`}
+              </span>
+              {s.needAvSupport && (
+                <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded bg-amber-200 text-amber-900 font-bold text-[10px]">
+                  <Headphones className="h-2.5 w-2.5" /> AV
+                </span>
+              )}
             </Badge>
           ))
         ) : (
@@ -980,6 +996,28 @@ export function BookingClient({
                     </p>
                   </div>
                 </div>
+              </div>
+            </div>
+
+            {/* AV Technician Support Checkbox */}
+            <div className="rounded-lg border-2 border-amber-300/80 bg-amber-50/70 p-3.5 flex items-start gap-3 shadow-xs">
+              <Checkbox
+                id={`av-support-${facility.id}`}
+                checked={needAvSupport}
+                onCheckedChange={(v) => setNeedAvSupport(v === true)}
+                className="mt-0.5 border-amber-400 data-[state=checked]:bg-amber-600 data-[state=checked]:border-amber-600"
+              />
+              <div className="grid gap-0.5 leading-none">
+                <Label htmlFor={`av-support-${facility.id}`} className="text-xs font-bold text-amber-950 cursor-pointer flex flex-wrap items-center gap-1.5">
+                  <Headphones className="h-3.5 w-3.5 text-amber-700 shrink-0" />
+                  <span>Need AV Technician Support during this slot</span>
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-amber-400 bg-amber-100 text-amber-900 font-medium">
+                    Public Notice
+                  </Badge>
+                </Label>
+                <p className="text-[11px] text-amber-800 leading-relaxed mt-0.5">
+                  Checking this adds an <strong>AV Support</strong> indicator visible to everyone on the calendar so AV technicians are notified and ready to assist during your session.
+                </p>
               </div>
             </div>
 

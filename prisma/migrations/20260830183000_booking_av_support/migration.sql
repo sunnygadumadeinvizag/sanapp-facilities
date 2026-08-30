@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Booking" ADD COLUMN IF NOT EXISTS "needAvSupport" BOOLEAN NOT NULL DEFAULT false;

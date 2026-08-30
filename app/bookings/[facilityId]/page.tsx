@@ -66,6 +66,7 @@ export default async function BookPage({
     forUserId: string | null;
     pdfName: string | null;
     isPublicAttachment: boolean;
+    needAvSupport: boolean;
   } | null = null;
   if (editId) {
     const b = await prisma.booking.findUnique({
@@ -85,6 +86,7 @@ export default async function BookPage({
         status: true,
         pdfName: true,
         isPublicAttachment: true,
+        needAvSupport: true,
       },
     });
     if (
@@ -105,6 +107,7 @@ export default async function BookPage({
         forUserId: b.forUserId,
         pdfName: b.pdfName,
         isPublicAttachment: b.isPublicAttachment,
+        needAvSupport: b.needAvSupport,
       };
     }
   }
@@ -124,6 +127,7 @@ export default async function BookPage({
     forName: b.forUser?.name ?? null,
     forUsername: b.forUser?.username ?? null,
     forPrimaryRole: b.forUser?.primaryRole ?? null,
+    needAvSupport: b.needAvSupport,
   }));
 
   // ADMINs can book any facility (the server bypasses restrictions).

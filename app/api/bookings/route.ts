@@ -40,6 +40,7 @@ const BOOKING_LIST_SELECT = {
   isPublicPurpose: true,
   pdfName: true,
   isPublicAttachment: true,
+  needAvSupport: true,
   userId: true,
   forUserId: true,
   facility: {
@@ -95,6 +96,7 @@ async function formatBookingForViewer(
     pdf: canSeeAttachment ? Boolean(b.pdfName) : false,
     pdfName: canSeeAttachment ? b.pdfName : null,
     isPublicAttachment: Boolean(b.isPublicAttachment),
+    needAvSupport: Boolean(b.needAvSupport),
     cancelledAt: b.cancelledAt,
     cancelReason: b.cancelReason,
     cancelledBy: b.cancelledBy,
@@ -305,6 +307,7 @@ export async function POST(request: NextRequest) {
       "purpose",
       "isPublicPurpose",
       "isPublicAttachment",
+      "needAvSupport",
       "forUserId",
       "batchId",
     ]) {
@@ -343,6 +346,10 @@ export async function POST(request: NextRequest) {
     body.isPublicAttachment === true ||
     body.isPublicAttachment === "true" ||
     body.isPublicAttachment === "1";
+  const needAvSupport =
+    body.needAvSupport === true ||
+    body.needAvSupport === "true" ||
+    body.needAvSupport === "1";
   const forUserId = String(body.forUserId ?? "").trim();
   const batchId = String(body.batchId ?? "").trim() || undefined;
 
@@ -506,6 +513,7 @@ export async function POST(request: NextRequest) {
           pdf: pdf ? (() => { const b = new Uint8Array(pdf.byteLength); b.set(pdf); return b; })() : undefined,
           pdfName: pdfName ?? undefined,
           isPublicAttachment,
+          needAvSupport,
         },
         include: {
           facility: { select: { id: true, name: true, building: { select: { id: true, name: true } } } },
@@ -556,6 +564,7 @@ export async function PATCH(request: NextRequest) {
       "purpose",
       "isPublicPurpose",
       "isPublicAttachment",
+      "needAvSupport",
     ]) {
       const v = form.get(key);
       if (v !== null && v !== undefined && typeof v === "string") body[key] = v;
@@ -678,6 +687,12 @@ export async function PATCH(request: NextRequest) {
           body.isPublicAttachment === true ||
           body.isPublicAttachment === "true" ||
           body.isPublicAttachment === "1";
+      }
+      if (body.needAvSupport !== undefined) {
+        data.needAvSupport =
+          body.needAvSupport === true ||
+          body.needAvSupport === "true" ||
+          body.needAvSupport === "1";
       }
       if (pdf && pdfName) {
         const b = new Uint8Array(pdf.byteLength);
