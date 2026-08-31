@@ -1109,40 +1109,54 @@ function SelectionOverlay({
   return (
     <>
       {frags.map((f) => {
-        const heightPx = Math.max(14, ((f.bottomMin - f.topMin) / (24 * 60)) * colHeight - 2);
-        const isShort = heightPx < 26;
+        const heightPx = Math.max(16, ((f.bottomMin - f.topMin) / (24 * 60)) * colHeight - 2);
+        const isShort = heightPx < 32;
+
+        let timeLabel = "";
+        if (!isMultiDay) {
+          timeLabel = `${fmtMin(range.startMin)} – ${fmtMin(range.endMin)}`;
+        } else if (f.date === range.startDate) {
+          timeLabel = `From ${fmtMin(range.startMin)}`;
+        } else if (f.date === range.endDate) {
+          timeLabel = `To ${fmtMin(range.endMin)}`;
+        } else {
+          timeLabel = "All day";
+        }
 
         return (
           <div
             key={f.date}
-            className="fb-selection flex flex-col justify-center overflow-hidden px-1 text-primary-foreground font-semibold"
-            title={`Selected Slot: ${fmtSlotRange(range.startDate, range.startMin, range.endDate, range.endMin)} (${durDisplay})`}
+            className="fb-selection flex flex-col justify-start overflow-hidden p-1 text-white font-semibold shadow-xs"
+            title={`Selected: ${fmtSlotRange(range.startDate, range.startMin, range.endDate, range.endMin)} (${durDisplay})`}
             style={{
               left: days.indexOf(f.date) * colW + 1,
               width: colW - 2,
               top: (f.topMin / (24 * 60)) * colHeight + 1,
               height: heightPx,
               ...(solid
-                ? { borderColor: "var(--iipe-primary)", background: "color-mix(in srgb, var(--iipe-primary) 45%, transparent)" }
+                ? { borderColor: "var(--iipe-primary)", background: "color-mix(in srgb, var(--iipe-primary) 65%, #051b14)" }
                 : {}),
               ...(conflict
-                ? { borderColor: "var(--iipe-danger)", background: "color-mix(in srgb, var(--iipe-danger) 22%, transparent)" }
+                ? { borderColor: "var(--iipe-danger)", background: "color-mix(in srgb, var(--iipe-danger) 60%, #1a0000)" }
                 : {}),
             }}
           >
-            <div className="flex items-center gap-1 truncate w-full pointer-events-none">
-              <span className="text-[10px] font-bold leading-none px-1 py-0.5 rounded bg-primary text-white truncate shadow-xs">
-                {isMultiDay
-                  ? `${fmtDay(range.startDate)} ${fmtMin(range.startMin)} → ${fmtDay(range.endDate)} ${fmtMin(range.endMin)}`
-                  : `${fmtMin(f.topMin)}–${fmtMin(f.bottomMin)}`}
+            {/* Primary line: Time range and Duration */}
+            <div className="flex items-center justify-between gap-1 w-full text-[10px] font-bold leading-tight pointer-events-none">
+              <span className="truncate bg-black/40 px-1 py-0.5 rounded text-white shadow-xs">
+                {timeLabel}
               </span>
-              <span className="text-[9px] font-bold leading-none px-1 py-0.5 rounded bg-black/40 text-white shrink-0">
+              <span className="shrink-0 text-[9px] font-extrabold px-1 py-0.5 rounded bg-white text-primary shadow-xs">
                 {durDisplay}
               </span>
             </div>
+
+            {/* Sub-label on multi-day or larger blocks */}
             {!isShort && isMultiDay && (
-              <div className="text-[9px] text-white/90 truncate mt-0.5 font-medium pointer-events-none">
-                {fmtDay(f.date)}: {fmtMin(f.topMin)}–{fmtMin(f.bottomMin)}
+              <div className="text-[9px] text-white/95 font-medium truncate mt-0.5 bg-black/30 px-1 py-0.5 rounded pointer-events-none">
+                {f.date === range.startDate
+                  ? `Ends ${fmtDay(range.endDate)} ${fmtMin(range.endMin)}`
+                  : `Starts ${fmtDay(range.startDate)} ${fmtMin(range.startMin)}`}
               </div>
             )}
           </div>

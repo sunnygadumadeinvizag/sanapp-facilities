@@ -276,6 +276,7 @@ export function BookingClient({
   // Set when the server rejects a slot because someone else booked it while
   // this user was completing the form (the classic two-user race).
   const [conflictModal, setConflictModal] = useState<ConflictInfo | null>(null);
+  const [isAddingSlot, setIsAddingSlot] = useState(false);
 
   // Week days for the current weekStart
   const weekDays = useMemo(
@@ -808,7 +809,7 @@ export function BookingClient({
         </Card>
 
         {/* Selected slots summary */}
-        {ranges.length > 0 && (
+        {ranges.length > 0 ? (
           <Card className="shadow-sm">
             <CardContent className="p-4">
               <div className="mb-2 flex items-center justify-between gap-2">
@@ -818,16 +819,47 @@ export function BookingClient({
                     <span className="text-xs text-red-600 font-medium">Some slots exceed the {effMaxLabel} limit</span>
                   )}
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-                  onClick={() => applyRanges([])}
-                >
-                  Clear all
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs flex items-center gap-1 border-primary/40 text-primary hover:bg-primary/10"
+                    onClick={() => setIsAddingSlot((prev) => !prev)}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>{isAddingSlot ? "Close slot form" : "Add new slot"}</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                    onClick={() => applyRanges([])}
+                  >
+                    Clear all
+                  </Button>
+                </div>
               </div>
+
+              {/* Inline Add New Slot form with the same selected slot interface */}
+              {isAddingSlot && (
+                <div className="mb-3">
+                  <AddNewSlotInlineRow
+                    initialDate={activeDay}
+                    todayKey={clock.today}
+                    nowMin={clock.nowMin}
+                    bookings={bookings}
+                    pendingRanges={ranges.map((p) => p.range)}
+                    onAdd={(newRange) => {
+                      commitRange(newRange);
+                      setIsAddingSlot(false);
+                    }}
+                    onCancel={() => setIsAddingSlot(false)}
+                  />
+                </div>
+              )}
+
               <div className="flex flex-col gap-2">
                 {ranges.map(({ id, range }) => {
                   const dur = slotDurationMin(range.startDate, range.startMin, range.endDate, range.endMin);
@@ -853,11 +885,44 @@ export function BookingClient({
                   );
                 })}
               </div>
+
+              {!isAddingSlot && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full mt-2 border-dashed border-primary/40 text-primary hover:bg-primary/5 text-xs flex items-center justify-center gap-1 h-8"
+                  onClick={() => setIsAddingSlot(true)}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Add another slot</span>
+                </Button>
+              )}
+
               <p className="mt-3 text-xs text-muted-foreground">
                 Click the pencil icon on any slot to fine-tune From / To times, or the crosshair to scroll to it on the calendar.
               </p>
             </CardContent>
           </Card>
+        ) : (
+          isAddingSlot && (
+            <Card className="shadow-sm border-primary/30">
+              <CardContent className="p-4">
+                <AddNewSlotInlineRow
+                  initialDate={activeDay}
+                  todayKey={clock.today}
+                  nowMin={clock.nowMin}
+                  bookings={bookings}
+                  pendingRanges={[]}
+                  onAdd={(newRange) => {
+                    commitRange(newRange);
+                    setIsAddingSlot(false);
+                  }}
+                  onCancel={() => setIsAddingSlot(false)}
+                />
+              </CardContent>
+            </Card>
+          )
         )}
 
         {/* Booking details */}
@@ -1123,6 +1188,202 @@ export function BookingClient({
   );
 }
 
+/** Inline form to add a new slot directly from the selected slots section. */
+function AddNewSlotInlineRow({
+  initialDate,
+  todayKey,
+  nowMin,
+  bookings,
+  pendingRanges,
+  onAdd,
+  onCancel,
+}: {
+  initialDate?: string;
+  todayKey: string;
+  nowMin: number;
+  bookings: BookingBlock[];
+  pendingRanges: RangeSelection[];
+  onAdd: (range: RangeSelection) => void;
+  onCancel: () => void;
+}) {
+  const defaultDate = initialDate || todayKey;
+  const [startDate, setStartDate] = useState(defaultDate);
+  const [endDate, setEndDate] = useState(defaultDate);
+
+  // Suggested next nearest hour in the future
+  const nextHour = Math.min(23, Math.max(8, Math.ceil((nowMin + 15) / 60)));
+  const [startTime, setStartTime] = useState(`${String(nextHour).padStart(2, "0")}:00`);
+  const [endTime, setEndTime] = useState(`${String(Math.min(24, nextHour + 1)).padStart(2, "0")}:00`);
+  const [err, setErr] = useState<string | null>(null);
+
+  const calcDur = useMemo(() => {
+    const sT = parseTime(startTime);
+    const eT = parseTime(endTime);
+    if (sT === null || eT === null) return 0;
+    const sAbs = slotIndex(startDate, sT);
+    let eAbs = slotIndex(endDate, eT);
+    if (eT === 0 && endDate === addDays(startDate, 1)) {
+      eAbs = slotIndex(startDate, 1440);
+    }
+    return Math.max(0, eAbs - sAbs);
+  }, [startDate, startTime, endDate, endTime]);
+
+  function applyPreset(minutes: number) {
+    const sT = parseTime(startTime);
+    if (sT === null) return;
+    const endAbs = slotIndex(startDate, sT) + minutes;
+    const newEndDt = new Date(endAbs * 60000).toISOString().slice(0, 10);
+    const newEMin = endAbs % 1440;
+    setEndDate(newEndDt);
+    setEndTime(fmtMin(newEMin));
+    setErr(null);
+  }
+
+  function handleAdd() {
+    const sT = parseTime(startTime);
+    const eT = parseTime(endTime);
+    if (sT == null || eT == null) {
+      setErr("Enter valid times in HH:MM format.");
+      return;
+    }
+    if (endDate < startDate) {
+      setErr("End date cannot be before start date.");
+      return;
+    }
+    const sAbs = slotIndex(startDate, sT);
+    let eAbs = slotIndex(endDate, eT);
+    if (eT === 0 && endDate === addDays(startDate, 1)) {
+      eAbs = slotIndex(startDate, 1440);
+    }
+    if (eAbs <= sAbs) {
+      setErr("End time must be after start time.");
+      return;
+    }
+    if (sAbs <= slotIndex(todayKey, nowMin)) {
+      setErr("Selected start time must be in the future.");
+      return;
+    }
+    const range: RangeSelection = {
+      startDate,
+      startMin: sT,
+      endDate,
+      endMin: eT === 0 && endDate === addDays(startDate, 1) ? 1440 : eT,
+    };
+    const [s, e] = absMin(range);
+    const overlapsBooked = bookings.some((b) => s < slotIndex(b.endDate, b.endMin) && e > slotIndex(b.startDate, b.startMin));
+    if (overlapsBooked) {
+      setErr("That time slot overlaps an already-booked slot.");
+      return;
+    }
+    if (pendingRanges.some((p) => rangesOverlapStrict(p, range))) {
+      setErr("That time slot overlaps one you already selected for this booking.");
+      return;
+    }
+    setErr(null);
+    onAdd(range);
+  }
+
+  return (
+    <div className="rounded-md border-2 border-primary/40 bg-primary/5 p-3 space-y-2.5 shadow-xs animate-in fade-in duration-150">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold text-primary flex items-center gap-1">
+          <Plus className="h-3.5 w-3.5" />
+          <span>Add New Slot</span>
+        </span>
+        <span className="text-xs font-semibold px-2 py-0.5 rounded bg-primary text-white">
+          Duration: {calcDur > 0 ? fmtDuration(calcDur) : "—"}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div>
+          <Label className="text-[10px] uppercase font-semibold text-muted-foreground">From date</Label>
+          <DatePicker
+            value={startDate}
+            onChange={(d) => {
+              setStartDate(d);
+              if (endDate < d) setEndDate(d);
+              setErr(null);
+            }}
+            className="w-full mt-1"
+          />
+        </div>
+        <div>
+          <Label className="text-[10px] uppercase font-semibold text-muted-foreground">From time (IST)</Label>
+          <Input
+            type="time"
+            value={startTime}
+            onChange={(e) => {
+              setStartTime(e.target.value);
+              setErr(null);
+            }}
+            className="h-8 text-xs mt-1"
+          />
+        </div>
+        <div>
+          <Label className="text-[10px] uppercase font-semibold text-muted-foreground">To date</Label>
+          <DatePicker
+            value={endDate}
+            onChange={(d) => {
+              setEndDate(d);
+              setErr(null);
+            }}
+            className="w-full mt-1"
+          />
+        </div>
+        <div>
+          <Label className="text-[10px] uppercase font-semibold text-muted-foreground">To time (IST)</Label>
+          <Input
+            type="time"
+            value={endTime}
+            onChange={(e) => {
+              setEndTime(e.target.value);
+              setErr(null);
+            }}
+            className="h-8 text-xs mt-1"
+          />
+        </div>
+      </div>
+
+      {/* Quick duration presets */}
+      <div className="flex flex-wrap items-center gap-1 pt-0.5">
+        <span className="text-[10px] text-muted-foreground font-medium mr-1">Presets:</span>
+        {[
+          { label: "15m", min: 15 },
+          { label: "30m", min: 30 },
+          { label: "45m", min: 45 },
+          { label: "1h", min: 60 },
+          { label: "2h", min: 120 },
+          { label: "3h", min: 180 },
+        ].map((p) => (
+          <Button
+            key={p.min}
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-6 px-1.5 text-[10px] bg-background"
+            onClick={() => applyPreset(p.min)}
+          >
+            {p.label}
+          </Button>
+        ))}
+      </div>
+
+      {err && <p className="text-xs text-red-600 font-medium">{err}</p>}
+
+      <div className="flex items-center gap-2 pt-1">
+        <Button type="button" size="sm" className="h-8 text-xs gap-1" onClick={handleAdd}>
+          <Plus className="h-3.5 w-3.5" />
+          <span>Add Slot</span>
+        </Button>
+        <Button type="button" size="sm" variant="ghost" className="h-8 text-xs" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** One row of the "Selected ranges" list — shows the range, and an inline From/To editor. */
 function RangeRow({
   range,
@@ -1160,6 +1421,29 @@ function RangeRow({
     setEndTime(fmtMin(range.endMin));
   }, [range]);
 
+  const calcEditDur = useMemo(() => {
+    const sT = parseTime(startTime);
+    const eT = parseTime(endTime);
+    if (sT === null || eT === null) return 0;
+    const sAbs = slotIndex(startDate, sT);
+    let eAbs = slotIndex(endDate, eT);
+    if (eT === 0 && endDate === addDays(startDate, 1)) {
+      eAbs = slotIndex(startDate, 1440);
+    }
+    return Math.max(0, eAbs - sAbs);
+  }, [startDate, startTime, endDate, endTime]);
+
+  function applyPreset(minutes: number) {
+    const sT = parseTime(startTime);
+    if (sT === null) return;
+    const endAbs = slotIndex(startDate, sT) + minutes;
+    const newEndDt = new Date(endAbs * 60000).toISOString().slice(0, 10);
+    const newEMin = endAbs % 1440;
+    setEndDate(newEndDt);
+    setEndTime(fmtMin(newEMin));
+    setErr(null);
+  }
+
   function save() {
     const sT = parseTime(startTime);
     const eT = parseTime(endTime);
@@ -1183,27 +1467,89 @@ function RangeRow({
       }`}
     >
       {editing ? (
-        <div className="space-y-2">
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-foreground">Edit Slot</span>
+            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-primary text-white">
+              Duration: {calcEditDur > 0 ? fmtDuration(calcEditDur) : "—"}
+            </span>
+          </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <div>
-              <Label className="text-[10px] uppercase text-muted-foreground">From date</Label>
-              <DatePicker value={startDate} onChange={setStartDate} className="w-full mt-1" />
+              <Label className="text-[10px] uppercase font-semibold text-muted-foreground">From date</Label>
+              <DatePicker
+                value={startDate}
+                onChange={(d) => {
+                  setStartDate(d);
+                  if (endDate < d) setEndDate(d);
+                  setErr(null);
+                }}
+                className="w-full mt-1"
+              />
             </div>
             <div>
-              <Label className="text-[10px] uppercase text-muted-foreground">From time (IST)</Label>
-              <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} className="h-8 text-xs mt-1" />
+              <Label className="text-[10px] uppercase font-semibold text-muted-foreground">From time (IST)</Label>
+              <Input
+                type="time"
+                value={startTime}
+                onChange={(e) => {
+                  setStartTime(e.target.value);
+                  setErr(null);
+                }}
+                className="h-8 text-xs mt-1"
+              />
             </div>
             <div>
-              <Label className="text-[10px] uppercase text-muted-foreground">To date</Label>
-              <DatePicker value={endDate} onChange={setEndDate} className="w-full mt-1" />
+              <Label className="text-[10px] uppercase font-semibold text-muted-foreground">To date</Label>
+              <DatePicker
+                value={endDate}
+                onChange={(d) => {
+                  setEndDate(d);
+                  setErr(null);
+                }}
+                className="w-full mt-1"
+              />
             </div>
             <div>
-              <Label className="text-[10px] uppercase text-muted-foreground">To time (IST)</Label>
-              <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} className="h-8 text-xs mt-1" />
+              <Label className="text-[10px] uppercase font-semibold text-muted-foreground">To time (IST)</Label>
+              <Input
+                type="time"
+                value={endTime}
+                onChange={(e) => {
+                  setEndTime(e.target.value);
+                  setErr(null);
+                }}
+                className="h-8 text-xs mt-1"
+              />
             </div>
           </div>
-          {err && <p className="text-xs text-red-600">{err}</p>}
-          <div className="flex items-center gap-2">
+
+          {/* Quick presets */}
+          <div className="flex flex-wrap items-center gap-1 pt-0.5">
+            <span className="text-[10px] text-muted-foreground font-medium mr-1">Presets:</span>
+            {[
+              { label: "15m", min: 15 },
+              { label: "30m", min: 30 },
+              { label: "45m", min: 45 },
+              { label: "1h", min: 60 },
+              { label: "2h", min: 120 },
+              { label: "3h", min: 180 },
+            ].map((p) => (
+              <Button
+                key={p.min}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-6 px-1.5 text-[10px] bg-background"
+                onClick={() => applyPreset(p.min)}
+              >
+                {p.label}
+              </Button>
+            ))}
+          </div>
+
+          {err && <p className="text-xs text-red-600 font-medium">{err}</p>}
+          <div className="flex items-center gap-2 pt-1">
             <Button type="button" size="sm" onClick={save}>
               Save
             </Button>
