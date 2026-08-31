@@ -47,6 +47,7 @@ import {
   PDF_MAX_BYTES,
   SLOT_MAX_MINUTES,
   addDays,
+  fmtDuration,
   fmtMin,
   fmtSlotRange,
   istDateKey,
@@ -1216,8 +1217,8 @@ function RangeRow({
           <Badge variant={long ? "destructive" : cap ? "outline" : "default"}>
             {fmtSlotRange(range.startDate, range.startMin, range.endDate, range.endMin)}
           </Badge>
-          <span className="text-xs text-muted-foreground font-medium">
-            {dur < 60 ? `${dur} min` : `${(dur / 60).toFixed(dur % 60 ? 1 : 0)} h`}
+          <span className="text-xs text-muted-foreground font-semibold bg-muted px-2 py-0.5 rounded border">
+            {fmtDuration(dur)}
           </span>
           <Badge variant="secondary">
             {long ? "Long (POC)" : forOther ? "On-behalf block" : "Self"}
@@ -1511,11 +1512,7 @@ function QuickAddSlotDialog({
           <div className="rounded-lg bg-muted/50 border p-2.5 text-xs flex items-center justify-between">
             <span className="text-muted-foreground">Calculated Duration:</span>
             <span className="font-semibold text-foreground">
-              {currentDurationMin > 0
-                ? currentDurationMin < 60
-                  ? `${currentDurationMin} min`
-                  : `${Math.floor(currentDurationMin / 60)}h ${currentDurationMin % 60 ? `${currentDurationMin % 60}m` : ""}`.trim()
-                : "—"}
+              {currentDurationMin > 0 ? fmtDuration(currentDurationMin) : "—"}
             </span>
           </div>
 

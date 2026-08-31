@@ -113,6 +113,28 @@ export function fmtSlotRange(
   return `${s} → ${fmtMin(endMin)} ${endDate} IST`;
 }
 
+/**
+ * Format a duration in minutes into clean, human-readable format:
+ * - Under an hour: "45m", "15m"
+ * - Exact hours: "1h", "2h", "3h"
+ * - Hours and minutes: "1h 30m", "2h 15m"
+ * - Multi-day spans: "1d", "1d 12h 13m", "2d 4h"
+ */
+export function fmtDuration(totalMin: number): string {
+  if (totalMin <= 0) return "0m";
+  const days = Math.floor(totalMin / 1440);
+  const remMin = totalMin % 1440;
+  const hours = Math.floor(remMin / 60);
+  const minutes = remMin % 60;
+
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+
+  return parts.join(" ") || "0m";
+}
+
 // Slot policy (minutes).
 export const SLOT_MIN_MINUTES = 15;
 export const SLOT_MAX_MINUTES = 180; // 3 hours — self-service / on-behalf ceiling

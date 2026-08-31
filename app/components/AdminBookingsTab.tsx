@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DatePicker } from "./DatePicker";
 import { CancelBookingModal } from "./CancelBookingModal";
-import { fmtIstDateTime, fmtMin, fmtSlotRange, slotDurationMin } from "@/lib/ist";
+import { fmtDuration, fmtIstDateTime, fmtMin, fmtSlotRange, slotDurationMin } from "@/lib/ist";
 
 type AdminBooking = {
   id: string;
@@ -374,8 +374,8 @@ export function AdminBookingsTab({
                       <div className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground">
                         <CalendarClock className="h-3.5 w-3.5" />
                         {fmtSlotRange(b.date, b.startMin, b.endDate, b.endMin)}
-                        <span className="text-xs">
-                          · {dur < 60 ? `${dur} min` : `${(dur / 60).toFixed(dur % 60 ? 1 : 0)} h`}
+                        <span className="text-xs font-semibold text-foreground/80">
+                          · {fmtDuration(dur)}
                         </span>
                       </div>
                       <div className="mt-0.5 text-xs text-muted-foreground flex flex-wrap items-center gap-1">

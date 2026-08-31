@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { fmtIstDateTime, fmtMin, fmtSlotRange, slotDurationMin } from "@/lib/ist";
+import { fmtDuration, fmtIstDateTime, fmtMin, fmtSlotRange, slotDurationMin } from "@/lib/ist";
 
 export type MyBooking = {
   id: string;
@@ -391,8 +391,8 @@ function BookingGroupCard({
                   <div className="flex items-center gap-1.5 text-sm font-medium">
                     <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
                     {fmtSlotRange(b.date, b.startMin, b.endDate, b.endMin)}
-                    <span className="text-xs text-muted-foreground">
-                      · {dur < 60 ? `${dur} min` : `${(dur / 60).toFixed(dur % 60 ? 1 : 0)} h`}
+                    <span className="text-xs text-muted-foreground font-semibold">
+                      · {fmtDuration(dur)}
                     </span>
                   </div>
                   <Badge variant="outline" className={badge.cls}>{badge.label}</Badge>

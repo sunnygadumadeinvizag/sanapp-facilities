@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fmtMin, fmtSlotRange } from "@/lib/ist";
+import { fmtDuration, fmtMin, fmtSlotRange, slotDurationMin } from "@/lib/ist";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -722,17 +722,28 @@ export function TimeGrid({
       </div>
 
       {/* Live from–to tooltip while dragging */}
-      {drag && dragPos && (
-        <div
-          className="pointer-events-none fixed z-50 rounded-md border bg-card px-3 py-1.5 text-xs font-semibold text-foreground shadow-xl"
-          style={{
-            left: Math.max(10, Math.min((typeof window !== "undefined" ? window.innerWidth : 400) - 180, dragPos.x - 60)),
-            top: Math.max(10, dragPos.y - 45),
-          }}
-        >
-          {fmtSlotRange(drag.startDate, drag.startMin, drag.endDate, drag.endMin)}
-        </div>
-      )}
+      {drag && dragPos && (() => {
+        const dur = slotDurationMin(drag.startDate, drag.startMin, drag.endDate, drag.endMin);
+        const isMulti = drag.startDate !== drag.endDate;
+        return (
+          <div
+            className="pointer-events-none fixed z-50 rounded-md border bg-card px-3 py-1.5 text-xs font-semibold text-foreground shadow-xl flex items-center gap-2"
+            style={{
+              left: Math.max(10, Math.min((typeof window !== "undefined" ? window.innerWidth : 400) - 240, dragPos.x - 60)),
+              top: Math.max(10, dragPos.y - 45),
+            }}
+          >
+            <span>
+              {isMulti
+                ? `${fmtDay(drag.startDate)} ${fmtMin(drag.startMin)} → ${fmtDay(drag.endDate)} ${fmtMin(drag.endMin)}`
+                : `${fmtDay(drag.startDate)} (${fmtMin(drag.startMin)} – ${fmtMin(drag.endMin)})`}
+            </span>
+            <span className="px-1.5 py-0.5 rounded bg-primary text-primary-foreground text-[10px] font-bold shrink-0">
+              {fmtDuration(dur)}
+            </span>
+          </div>
+        );
+      })()}
 
       <div ref={scrollerRef} className="overflow-auto rounded-lg border bg-card fb-scroller" style={{ maxHeight: maxHeight ?? "52vh" }}>
         {/* Day header (sticky) — today is bold */}
@@ -806,8 +817,14 @@ export function TimeGrid({
             {/* Booked overlays */}
             {bookedFragments.map((f) => {
               const b = f.booking;
+              const totalDur = slotDurationMin(b.startDate, b.startMin, b.endDate, b.endMin);
+              const isMultiDay = b.startDate !== b.endDate;
               const heightPx = Math.max(16, ((f.bottomMin - f.topMin) / (24 * 60)) * colHeight - 2);
-              const isShort = heightPx < 28;
+              const isShort = heightPx < 32;
+              const durDisplay = fmtDuration(totalDur);
+              const timeDisplay = isMultiDay
+                ? `${fmtDay(b.startDate)} ${fmtMin(b.startMin)} → ${fmtDay(b.endDate)} ${fmtMin(b.endMin)}`
+                : `${fmtMin(b.startMin)}–${fmtMin(b.endMin)}`;
 
               return (
                 <div
@@ -817,7 +834,7 @@ export function TimeGrid({
                     e.stopPropagation();
                     setSelectedBooking(b);
                   }}
-                  title="Click to view booking details"
+                  title={`Booked: ${fmtSlotRange(b.startDate, b.startMin, b.endDate, b.endMin)} (${durDisplay})\nBooked by: ${b.bookerName || "User"}${b.forName ? ` on behalf of ${b.forName}` : ""}\nClick to view booking details`}
                   style={{
                     left: days.indexOf(f.date) * colW + 2,
                     width: colW - 4,
@@ -826,6 +843,17 @@ export function TimeGrid({
                   }}
                 >
                   <div className="flex flex-col justify-start w-full overflow-hidden leading-tight">
+                    {/* Time and duration header */}
+                    <div className="flex items-center justify-between gap-1 text-[10px] font-bold text-foreground truncate mb-0.5">
+                      <span className="truncate flex items-center gap-0.5">
+                        <Clock className="h-2.5 w-2.5 shrink-0 text-red-600 dark:text-red-400 inline" />
+                        <span>{timeDisplay}</span>
+                      </span>
+                      <span className="shrink-0 px-1 py-0.2 rounded text-[9px] font-bold bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500/30">
+                        {durDisplay}
+                      </span>
+                    </div>
+
                     {/* Primary line: Name & Username */}
                     <div className="flex items-center gap-1 font-semibold text-[11px] truncate text-foreground">
                       <span className="truncate">
@@ -862,9 +890,9 @@ export function TimeGrid({
                     )}
 
                     {/* Purpose preview if space permits */}
-                    {heightPx > 48 && b.purpose && (
+                    {heightPx > 54 && b.purpose && (
                       <div className="text-[9px] text-muted-foreground italic truncate mt-0.5 opacity-90">
-                        "{b.purpose}"
+                        &quot;{b.purpose}&quot;
                       </div>
                     )}
                   </div>
@@ -891,8 +919,26 @@ export function TimeGrid({
               <Clock className="h-5 w-5 text-primary" />
               Booking Details
             </DialogTitle>
-            <DialogDescription>
-              {selectedBooking && fmtSlotRange(selectedBooking.startDate, selectedBooking.startMin, selectedBooking.endDate, selectedBooking.endMin)} IST
+            <DialogDescription asChild>
+              <div className="flex flex-col gap-1.5 mt-1 text-xs text-muted-foreground">
+                <div className="font-semibold text-foreground text-sm">
+                  {selectedBooking && fmtSlotRange(selectedBooking.startDate, selectedBooking.startMin, selectedBooking.endDate, selectedBooking.endMin)}
+                </div>
+                {selectedBooking && (() => {
+                  const totalDur = slotDurationMin(selectedBooking.startDate, selectedBooking.startMin, selectedBooking.endDate, selectedBooking.endMin);
+                  return (
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20">
+                        Duration: {fmtDuration(totalDur)}
+                      </span>
+                      <span>•</span>
+                      <span>From: <strong>{selectedBooking.startDate}</strong> {fmtMin(selectedBooking.startMin)} IST</span>
+                      <span>→</span>
+                      <span>To: <strong>{selectedBooking.endDate}</strong> {fmtMin(selectedBooking.endMin)} IST</span>
+                    </div>
+                  );
+                })()}
+              </div>
             </DialogDescription>
           </DialogHeader>
 
@@ -1056,30 +1102,52 @@ function SelectionOverlay({
   solid?: boolean;
 }) {
   const frags = fragments(range, days);
+  const totalDur = slotDurationMin(range.startDate, range.startMin, range.endDate, range.endMin);
+  const isMultiDay = range.startDate !== range.endDate;
+  const durDisplay = fmtDuration(totalDur);
+
   return (
     <>
-      {frags.map((f) => (
-        <div
-          key={f.date}
-          className="fb-selection flex items-center justify-start overflow-hidden px-1 text-primary-foreground font-semibold"
-          style={{
-            left: days.indexOf(f.date) * colW + 1,
-            width: colW - 2,
-            top: (f.topMin / (24 * 60)) * colHeight + 1,
-            height: Math.max(14, ((f.bottomMin - f.topMin) / (24 * 60)) * colHeight - 2),
-            ...(solid
-              ? { borderColor: "var(--iipe-primary)", background: "color-mix(in srgb, var(--iipe-primary) 45%, transparent)" }
-              : {}),
-            ...(conflict
-              ? { borderColor: "var(--iipe-danger)", background: "color-mix(in srgb, var(--iipe-danger) 22%, transparent)" }
-              : {}),
-          }}
-        >
-          <span className="text-[10px] leading-none px-1 py-0.5 rounded bg-primary text-white truncate max-w-full pointer-events-none">
-            {fmtMin(f.topMin)}–{fmtMin(f.bottomMin)}
-          </span>
-        </div>
-      ))}
+      {frags.map((f) => {
+        const heightPx = Math.max(14, ((f.bottomMin - f.topMin) / (24 * 60)) * colHeight - 2);
+        const isShort = heightPx < 26;
+
+        return (
+          <div
+            key={f.date}
+            className="fb-selection flex flex-col justify-center overflow-hidden px-1 text-primary-foreground font-semibold"
+            title={`Selected Slot: ${fmtSlotRange(range.startDate, range.startMin, range.endDate, range.endMin)} (${durDisplay})`}
+            style={{
+              left: days.indexOf(f.date) * colW + 1,
+              width: colW - 2,
+              top: (f.topMin / (24 * 60)) * colHeight + 1,
+              height: heightPx,
+              ...(solid
+                ? { borderColor: "var(--iipe-primary)", background: "color-mix(in srgb, var(--iipe-primary) 45%, transparent)" }
+                : {}),
+              ...(conflict
+                ? { borderColor: "var(--iipe-danger)", background: "color-mix(in srgb, var(--iipe-danger) 22%, transparent)" }
+                : {}),
+            }}
+          >
+            <div className="flex items-center gap-1 truncate w-full pointer-events-none">
+              <span className="text-[10px] font-bold leading-none px-1 py-0.5 rounded bg-primary text-white truncate shadow-xs">
+                {isMultiDay
+                  ? `${fmtDay(range.startDate)} ${fmtMin(range.startMin)} → ${fmtDay(range.endDate)} ${fmtMin(range.endMin)}`
+                  : `${fmtMin(f.topMin)}–${fmtMin(f.bottomMin)}`}
+              </span>
+              <span className="text-[9px] font-bold leading-none px-1 py-0.5 rounded bg-black/40 text-white shrink-0">
+                {durDisplay}
+              </span>
+            </div>
+            {!isShort && isMultiDay && (
+              <div className="text-[9px] text-white/90 truncate mt-0.5 font-medium pointer-events-none">
+                {fmtDay(f.date)}: {fmtMin(f.topMin)}–{fmtMin(f.bottomMin)}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </>
   );
 }
