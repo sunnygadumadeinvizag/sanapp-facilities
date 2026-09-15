@@ -94,13 +94,72 @@ h6 {
   z-index: 5;
   pointer-events: none;
 }
+
+/* A committed (locked-in) selection is interactive: drag the body to move it,
+   drag the top/bottom handles to shorten or extend it. Pointer events +
+   touch-action make the same gesture work with a mouse and with a finger. */
+.fb-selection-solid {
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  /* iOS: no long-press callout while dragging a slot. */
+  -webkit-touch-callout: none;
+}
+.fb-selection-solid:active {
+  cursor: grabbing;
+}
+.fb-selection-dragging {
+  opacity: 0.35;
+}
+.fb-resize-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* Visual grip only: the whole top/bottom edge of the block starts the
+     resize (see SelectionOverlay), so a finger never has to hit this bar. */
+  height: 14px;
+  z-index: 7;
+  cursor: ns-resize;
+  touch-action: none;
+  pointer-events: none;
+}
+.fb-resize-handle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 5px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.fb-resize-top {
+  top: 0;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+}
+.fb-resize-top::after {
+  top: 5px;
+}
+.fb-resize-bottom {
+  bottom: 0;
+  border-bottom-left-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+.fb-resize-bottom::after {
+  bottom: 5px;
+}
 .fb-booked {
   position: absolute;
   background: color-mix(in srgb, var(--iipe-danger) 16%, var(--iipe-surface));
   border: 1px solid color-mix(in srgb, var(--iipe-danger) 35%, transparent);
   border-radius: 6px;
   z-index: 4;
-  pointer-events: none;
+  /* Clickable so the booking-details modal (description + attachment, subject
+     to the booker's public/private setting) opens straight from the calendar. */
+  cursor: pointer;
+  touch-action: manipulation;
   overflow: hidden;
   display: flex;
   align-items: flex-start;

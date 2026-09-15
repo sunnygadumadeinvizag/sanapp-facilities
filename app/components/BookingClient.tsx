@@ -380,29 +380,42 @@ export function BookingClient({
     setPdfClear(false);
   }
 
+  // The booking being edited must never conflict with itself, otherwise the
+  // same slot shows up as "already booked" and blocks moving/resizing it — and
+  // the "add slot" widgets below would refuse to replace its own range.
+  const otherBookings = useMemo(
+    () => (editBooking ? bookings.filter((b) => b.id !== editBooking.id) : bookings),
+    [bookings, editBooking]
+  );
+
   /**
-   * Auto-commit a selected/dragged range (called by TimeGrid on pointer release or tap).
+   * Auto-commit a selected/dragged range (called by TimeGrid on pointer release
+   * or tap, and by the "Add New Slot" widgets).
+   *
+   * Returns false when the range was rejected, so the caller can keep the times
+   * the user typed on screen instead of quietly dropping them.
    */
-  function commitRange(range: RangeSelection, mergeIndices?: number[]) {
+  function commitRange(range: RangeSelection, mergeIndices?: number[]): boolean {
     const prev = rangesRef.current;
     // In edit mode there is exactly one range — a new selection replaces it.
     if (editBooking) {
       applyRanges([{ id: prev[0]?.id ?? ++idRef.current, range }]);
-      return;
+      return true;
     }
     if (mergeIndices && mergeIndices.length > 0) {
       const keep = prev.filter((_, i) => !mergeIndices.includes(i));
       const id = prev[mergeIndices[0]]?.id ?? ++idRef.current;
       applyRanges([{ id, range }, ...keep]);
-      return;
+      return true;
     }
     // A new slot may not overlap a slot already picked for this booking —
     // otherwise one booking would claim the same time twice.
     if (prev.some((p) => rangesOverlapStrict(p.range, range))) {
       rejectRange("That time is already part of this booking — remove or edit the selected slot first.");
-      return;
+      return false;
     }
     applyRanges([...prev, { id: ++idRef.current, range }]);
+    return true;
   }
 
   function rejectRange(msg?: string) {
@@ -425,7 +438,7 @@ export function BookingClient({
     if (slotIndex(next.startDate, next.startMin) <= slotIndex(clock.today, clock.nowMin)) {
       return "Start must be in the future.";
     }
-    const overlapsBooking = bookings.some((b) => {
+    const overlapsBooking = otherBookings.some((b) => {
       const [s, e] = absMin(next);
       return s < slotIndex(b.endDate, b.endMin) && e > slotIndex(b.startDate, b.startMin);
     });
@@ -453,6 +466,13 @@ export function BookingClient({
   });
   const isOnBehalf = forOther;
   const needPurpose = anyLong || isOnBehalf;
+
+  // The one-slot form adds a slot when creating a booking and replaces the slot
+  // when editing one ("Use these times" instead of "Add Slot"). Naming it once
+  // keeps the button, the form and the validation messages in agreement.
+  const slotToggleLabel = editBooking ? "Change slot times" : "Add new slot";
+  const slotFormName = editBooking ? "Change slot times" : "Add New Slot";
+  const slotFormAction = editBooking ? "Use these times" : "Add Slot";
 
   function overCap(r: RangeSelection): boolean {
     if (isAdmin || effMax === null) return false;
@@ -499,9 +519,56 @@ export function BookingClient({
   }
 
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (ranges.length === 0) return;
+  /** Live (ref-based) versions of the cap checks — state updates are async. */
+  function liveOverCap(): boolean {
+    return rangesRef.current.some((p) => overCap(p.range));
+  }
+  function liveAnyLong(): boolean {
+    if (effMax === null) return false;
+    return rangesRef.current.some(
+      (p) => slotDurationMin(p.range.startDate, p.range.startMin, p.range.endDate, p.range.endMin) > effMax
+    );
+  }
+
+  /**
+   * Everything that must be true before a booking may be sent, as a
+   * human-readable reason (or null when the form is complete).
+   *
+   * These checks used to live in the confirm button's `disabled` prop, which
+   * silently swallowed the click — a slot typed into "Add New Slot" but never
+   * added, for example, was left out of the booking without a word.
+   */
+  function resolveBlocker(): string | null {
+    if (isAddingSlot) {
+      return `The "${slotFormName}" form is still open — press "${slotFormAction}" in that form to include those times (or Cancel it) before ${editBooking ? "saving" : "confirming"}.`;
+    }
+    if (rangesRef.current.length === 0) {
+      return `No slot selected yet — tap or drag on the calendar, or open "${slotToggleLabel}" and press "${slotFormAction}".`;
+    }
+    if (liveOverCap()) {
+      return `Some selected slots are longer than the ${effMaxLabel} limit — shorten them or split them into shorter slots.`;
+    }
+    if (liveAnyLong() && !canPoc) {
+      return `Bookings longer than ${effMaxLabel} can only be made by the facility POC or an app administrator.`;
+    }
+    if (isOnBehalf && !forUserId) {
+      return "Choose the user you are blocking these slots for before confirming.";
+    }
+    if ((liveAnyLong() || isOnBehalf) && !purpose.trim()) {
+      return "A description is required for this booking.";
+    }
+    return null;
+  }
+
+  async function submit(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (busy) return;
+    const blocker = resolveBlocker();
+    if (blocker) {
+      setSuccess(null);
+      setError(blocker);
+      return;
+    }
     setBusy(true);
     setError(null);
     setSuccess(null);
@@ -518,7 +585,8 @@ export function BookingClient({
           payload.set("endDate", range.endDate);
           payload.set("startMin", String(range.startMin));
           payload.set("endMin", String(range.endMin));
-          if (purpose.trim()) payload.set("purpose", purpose.trim());
+          // Always send it: an emptied description must clear the old one.
+          payload.set("purpose", purpose.trim());
           payload.set("isPublicPurpose", isPublicPurpose ? "1" : "0");
           payload.set("isPublicAttachment", isPublicAttachment ? "1" : "0");
           payload.set("needAvSupport", needAvSupport ? "1" : "0");
@@ -566,6 +634,7 @@ export function BookingClient({
         setSuccess("Booking updated.");
         setBusy(false);
         onEdited?.();
+        router.refresh();
         window.setTimeout(() => router.push("/my-bookings"), 800);
         return;
       } catch (err) {
@@ -789,6 +858,12 @@ export function BookingClient({
               bookings={bookings}
               committed={ranges.map((p) => p.range)}
               onCommit={commitRange}
+              ignoreBookingId={editBooking?.id ?? null}
+              onUpdateRange={(index, range) => {
+                const target = rangesRef.current[index];
+                if (!target) return null;
+                return updateRange(target.id, range);
+              }}
               onReject={rejectRange}
               nowMin={clock.nowMin}
               todayKey={clock.today}
@@ -803,15 +878,18 @@ export function BookingClient({
 
             <p className="text-[11px] text-muted-foreground">
               Tip: Tap any slot cell to select it. Tap adjacent slots to extend, or drag across hours.
-              On mobile phones, switch to <strong>1 Day</strong> view for full-width time slots.
+              On a selected (blue) slot, drag its middle to move it, or its top / bottom edge to shorten
+              or extend it — a live tooltip follows your finger, so the same gesture works with a mouse
+              and on a phone. On mobile phones, switch to <strong>1 Day</strong> view for full-width time
+              slots.
             </p>
           </CardContent>
         </Card>
 
-        {/* Selected slots summary */}
-        {ranges.length > 0 ? (
-          <Card className="shadow-sm">
-            <CardContent className="p-4">
+        {/* Selected slots summary — always on screen so the slot list and the
+            "Add new slot" button are reachable without using the calendar. */}
+        <Card className="shadow-sm">
+          <CardContent className="p-4">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <h4 className="text-sm font-semibold">Selected slots ({ranges.length})</h4>
@@ -828,17 +906,19 @@ export function BookingClient({
                     onClick={() => setIsAddingSlot((prev) => !prev)}
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    <span>{isAddingSlot ? "Close slot form" : "Add new slot"}</span>
+                    <span>{isAddingSlot ? "Close slot form" : slotToggleLabel}</span>
                   </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-                    onClick={() => applyRanges([])}
-                  >
-                    Clear all
-                  </Button>
+                  {ranges.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                      onClick={() => applyRanges([])}
+                    >
+                      Clear all
+                    </Button>
+                  )}
                 </div>
               </div>
 
@@ -849,15 +929,35 @@ export function BookingClient({
                     initialDate={activeDay}
                     todayKey={clock.today}
                     nowMin={clock.nowMin}
-                    bookings={bookings}
-                    pendingRanges={ranges.map((p) => p.range)}
+                    bookings={otherBookings}
+                    pendingRanges={editBooking ? [] : ranges.map((p) => p.range)}
+                    heading={slotFormName}
+                    submitLabel={slotFormAction}
                     onAdd={(newRange) => {
-                      commitRange(newRange);
+                      // Leave the form open (with the typed times) if the slot is
+                      // rejected, so nothing the user entered is lost.
+                      if (!commitRange(newRange)) return false;
+                      setError(null);
                       setIsAddingSlot(false);
+                      return true;
                     }}
                     onCancel={() => setIsAddingSlot(false)}
                   />
                 </div>
+              )}
+
+              {isAddingSlot && (
+                <p className="mb-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] font-medium text-amber-900">
+                  Those times are not part of the booking until you press <strong>{slotFormAction}</strong>. If you
+                  confirm while this form is open, you will be asked to add or cancel it first.
+                </p>
+              )}
+
+              {ranges.length === 0 && (
+                <p className="rounded-md border border-dashed px-3 py-3 text-xs text-muted-foreground">
+                  No slots selected yet. Tap or drag on the calendar above, or use{" "}
+                  <strong>Add new slot</strong> to type the times directly.
+                </p>
               )}
 
               <div className="flex flex-col gap-2">
@@ -886,7 +986,7 @@ export function BookingClient({
                 })}
               </div>
 
-              {!isAddingSlot && (
+              {!isAddingSlot && !editBooking && ranges.length > 0 && (
                 <Button
                   type="button"
                   variant="outline"
@@ -900,30 +1000,12 @@ export function BookingClient({
               )}
 
               <p className="mt-3 text-xs text-muted-foreground">
-                Click the pencil icon on any slot to fine-tune From / To times, or the crosshair to scroll to it on the calendar.
+                Drag the middle of a selected slot on the calendar to move it, or its top / bottom edge to shorten
+                or extend it — the live tooltip shows the new time and duration. The pencil icon fine-tunes
+                From / To times and the crosshair scrolls the calendar to it.
               </p>
             </CardContent>
           </Card>
-        ) : (
-          isAddingSlot && (
-            <Card className="shadow-sm border-primary/30">
-              <CardContent className="p-4">
-                <AddNewSlotInlineRow
-                  initialDate={activeDay}
-                  todayKey={clock.today}
-                  nowMin={clock.nowMin}
-                  bookings={bookings}
-                  pendingRanges={[]}
-                  onAdd={(newRange) => {
-                    commitRange(newRange);
-                    setIsAddingSlot(false);
-                  }}
-                  onCancel={() => setIsAddingSlot(false)}
-                />
-              </CardContent>
-            </Card>
-          )
-        )}
 
         {/* Booking details */}
         <Card className="shadow-sm">
@@ -1100,18 +1182,13 @@ export function BookingClient({
               </div>
             )}
 
+            {/* Not `disabled` for missing fields: the click must explain what is
+                missing (see resolveBlocker) rather than do nothing. */}
             <Button
-              type="submit"
+              type="button"
               className="w-full sm:w-auto sm:min-w-[240px]"
               onClick={submit}
-              disabled={
-                busy ||
-                ranges.length === 0 ||
-                hasOverCap ||
-                (forOther && !forUserId) ||
-                (needPurpose && !purpose.trim()) ||
-                (anyLong && !canPoc)
-              }
+              disabled={busy}
             >
               {busy ? "Saving…" : editBooking ? "Save changes" : `Confirm ${ranges.length > 1 ? `${ranges.length} slots` : "booking"}`}
             </Button>
@@ -1126,12 +1203,13 @@ export function BookingClient({
         initialDate={activeDay}
         todayKey={clock.today}
         nowMin={clock.nowMin}
-        bookings={bookings}
-        pendingRanges={rangesRef.current.map((p) => p.range)}
+        bookings={otherBookings}
+        pendingRanges={editBooking ? [] : rangesRef.current.map((p) => p.range)}
         onAddSlot={(range) => {
-          commitRange(range);
+          if (!commitRange(range)) return false;
           setActiveDay(range.startDate);
           setWeekStart(mondayOf(range.startDate));
+          return true;
         }}
       />
 
@@ -1197,14 +1275,19 @@ function AddNewSlotInlineRow({
   pendingRanges,
   onAdd,
   onCancel,
+  heading = "Add New Slot",
+  submitLabel = "Add Slot",
 }: {
   initialDate?: string;
   todayKey: string;
   nowMin: number;
   bookings: BookingBlock[];
   pendingRanges: RangeSelection[];
-  onAdd: (range: RangeSelection) => void;
+  /** false = the slot was rejected upstream; keep the form (and its values) open. */
+  onAdd: (range: RangeSelection) => boolean;
   onCancel: () => void;
+  heading?: string;
+  submitLabel?: string;
 }) {
   const defaultDate = initialDate || todayKey;
   const [startDate, setStartDate] = useState(defaultDate);
@@ -1280,7 +1363,9 @@ function AddNewSlotInlineRow({
       return;
     }
     setErr(null);
-    onAdd(range);
+    // A rejected slot (e.g. it overlaps one already added) must not close the
+    // form — the typed times stay on screen so they can be corrected.
+    if (!onAdd(range)) return;
   }
 
   return (
@@ -1288,7 +1373,7 @@ function AddNewSlotInlineRow({
       <div className="flex items-center justify-between">
         <span className="text-xs font-bold text-primary flex items-center gap-1">
           <Plus className="h-3.5 w-3.5" />
-          <span>Add New Slot</span>
+          <span>{heading}</span>
         </span>
         <span className="text-xs font-semibold px-2 py-0.5 rounded bg-primary text-white">
           Duration: {calcDur > 0 ? fmtDuration(calcDur) : "—"}
@@ -1374,7 +1459,7 @@ function AddNewSlotInlineRow({
       <div className="flex items-center gap-2 pt-1">
         <Button type="button" size="sm" className="h-8 text-xs gap-1" onClick={handleAdd}>
           <Plus className="h-3.5 w-3.5" />
-          <span>Add Slot</span>
+          <span>{submitLabel}</span>
         </Button>
         <Button type="button" size="sm" variant="ghost" className="h-8 text-xs" onClick={onCancel}>
           Cancel
@@ -1627,7 +1712,8 @@ function QuickAddSlotDialog({
   bookings: BookingBlock[];
   /** Slots already picked for this booking — a new slot may not overlap them. */
   pendingRanges: RangeSelection[];
-  onAddSlot: (range: RangeSelection) => void;
+  /** false = the slot was rejected upstream; the dialog stays open with its values. */
+  onAddSlot: (range: RangeSelection) => boolean;
 }) {
   const [date, setDate] = useState(initialDate);
   const [endDate, setEndDate] = useState(initialDate);
@@ -1758,7 +1844,7 @@ function QuickAddSlotDialog({
       return;
     }
     setErr(null);
-    onAddSlot(range);
+    if (!onAddSlot(range)) return;
     onOpenChange(false);
   }
 

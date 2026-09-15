@@ -136,6 +136,8 @@ export function TimeGrid({
   maxHeight,
   focus,
   onAutoAdvance,
+  ignoreBookingId = null,
+  onUpdateRange,
 }: {
   days: string[];
   bookings: BookingBlock[];
@@ -162,6 +164,17 @@ export function TimeGrid({
    * into the next/previous week even when all days fit in the viewport.
    */
   onAutoAdvance?: (deltaDays: number) => void;
+  /**
+   * The booking currently being edited. It is left out of the conflict checks
+   * and out of the booked overlays, so its own slot can be moved or resized
+   * instead of every attempt failing with "already booked".
+   */
+  ignoreBookingId?: string | null;
+  /**
+   * Commit an in-place change to a committed selection (drag its middle to move
+   * it, its top/bottom edge to resize). Return a message to reject the change.
+   */
+  onUpdateRange?: (index: number, range: RangeSelection) => string | null;
 }) {
   const [zoomKey, setZoomKey] = useState("1h");
   const zoom = ZOOMS.find((z) => z.key === zoomKey) ?? ZOOMS[1];
@@ -184,9 +197,16 @@ export function TimeGrid({
 
   const [selectedBooking, setSelectedBooking] = useState<BookingBlock | null>(null);
 
+  // While a booking is being edited its own slot must not count as a conflict
+  // (nor be drawn as a second, unrelated "booked" block behind the selection).
+  const effectiveBookings = useMemo(
+    () => (ignoreBookingId ? bookings.filter((b) => b.id !== ignoreBookingId) : bookings),
+    [bookings, ignoreBookingId]
+  );
+
   const bookedFragments = useMemo(
     () =>
-      bookings.flatMap((b) =>
+      effectiveBookings.flatMap((b) =>
         fragments(b, days).map((f) => ({
           ...f,
           label: b.label,
@@ -194,14 +214,14 @@ export function TimeGrid({
           booking: b,
         }))
       ),
-    [bookings, days]
+    [effectiveBookings, days]
   );
 
   /** True when a range conflicts with a booking or the past (NOT committed — those merge). */
   function conflict(range: RangeSelection): boolean {
     const inPast = idx(range.startDate, range.startMin) <= idx(todayKey, nowMin);
     if (inPast) return true;
-    return bookings.some((b) => rangesOverlap(range, b));
+    return effectiveBookings.some((b) => rangesOverlap(range, b));
   }
 
   // Scroll the calendar so a requested range is visible.
@@ -343,7 +363,7 @@ export function TimeGrid({
   function isDisabled(date: string, min: number): boolean {
     if (date === todayKey && min < nowMin) return true;
     const t = idx(date, min);
-    return bookings.some((b) => t >= idx(b.startDate, b.startMin) && t < idx(b.endDate, b.endMin));
+    return effectiveBookings.some((b) => t >= idx(b.startDate, b.startMin) && t < idx(b.endDate, b.endMin));
   }
 
   /** Build the normalized range for a completed selection/drag. Supports single-tap (a == b). */
@@ -364,6 +384,141 @@ export function TimeGrid({
     if (idx(range.endDate, range.endMin) <= idx(range.startDate, range.startMin)) return null;
     return range;
   }
+
+  /* ------------------------------------------------------------------
+     In-place editing of a committed (locked-in) selection.
+     Drag the middle of the block to move the slot (time and/or day); drag its
+     top or bottom edge to shorten or extend it. The gesture is driven by
+     pointer events, so mouse, trackpad and touch all behave the same.
+     ------------------------------------------------------------------ */
+  const [grab, setGrab] = useState<{
+    index: number;
+    mode: "move" | "start" | "end";
+    originX: number;
+    originY: number;
+    base: RangeSelection;
+  } | null>(null);
+  const [grabPreview, setGrabPreview] = useState<RangeSelection | null>(null);
+  // Pointer position while a slot is moved/resized — drives the live tooltip so
+  // the new time and duration are visible during the gesture.
+  const [grabPos, setGrabPos] = useState<{ x: number; y: number } | null>(null);
+  // Mirror of the live preview so the pointerup handler commits what the user
+  // is actually looking at (state updates are async).
+  const grabPreviewRef = useRef<RangeSelection | null>(null);
+  // Element that holds the pointer capture for the running grab (released on up).
+  const grabTargetRef = useRef<Element | null>(null);
+  function setPreview(next: RangeSelection | null) {
+    grabPreviewRef.current = next;
+    setGrabPreview(next);
+  }
+
+  /** Start moving/resizing committed range `index`. */
+  function startGrab(index: number, mode: "move" | "start" | "end", e: React.PointerEvent) {
+    if (!onUpdateRange) return;
+    const base = committed[index];
+    if (!base) return;
+    e.stopPropagation();
+    e.preventDefault();
+    dragFrom.current = null;
+    isPointerDownRef.current = false;
+    setGrab({ index, mode, originX: e.clientX, originY: e.clientY, base });
+    setGrabPos({ x: e.clientX, y: e.clientY });
+    setPreview(base);
+    // Explicit capture (not just the implicit one a touch pointer may or may not
+    // get): the gesture then keeps receiving move/up even when the pointer
+    // leaves the block, so a resize can never get stuck half-way.
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+      grabTargetRef.current = e.currentTarget;
+    } catch {
+      /* pointer capture is optional */
+    }
+  }
+
+  // Absolute-minute helpers: a range is `[startMinute, endMinute)` counted from
+  // an epoch day, so day changes are just multiples of 1440.
+  function toAbs(date: string, min: number): number {
+    return idx(date, min);
+  }
+  function fromAbs(abs: number): { date: string; min: number } {
+    const dayStart = Math.floor(abs / 1440) * 1440;
+    return { date: new Date(dayStart * 60000).toISOString().slice(0, 10), min: abs - dayStart };
+  }
+
+  useEffect(() => {
+    if (!grab) return;
+    // One 15-minute cell is zoom.cellH pixels tall, so `round(dy / cellH)`
+    // is the number of cells moved; a whole day column is colW pixels wide.
+    const cellsMoved = (px: number) => Math.round(px / zoom.cellH);
+    const daysMoved = (px: number) => Math.round(px / colW);
+    const build = (clientX: number, clientY: number): RangeSelection => {
+      const delta = cellsMoved(clientY - grab.originY) * CELL_MIN + daysMoved(clientX - grab.originX) * 1440;
+      const s = toAbs(grab.base.startDate, grab.base.startMin);
+      const e = toAbs(grab.base.endDate, grab.base.endMin);
+      const lo = toAbs(days[0] ?? grab.base.startDate, 0);
+      const hi = toAbs(days[days.length - 1] ?? grab.base.endDate, 1440);
+      if (grab.mode === "move") {
+        const dur = e - s;
+        const ns = Math.max(lo, Math.min(hi - dur, s + delta));
+        const start = fromAbs(ns);
+        const end = fromAbs(ns + dur);
+        return { startDate: start.date, startMin: start.min, endDate: end.date, endMin: end.min };
+      }
+      if (grab.mode === "start") {
+        const ns = Math.max(lo, Math.min(e - CELL_MIN, s + delta));
+        const start = fromAbs(ns);
+        return {
+          startDate: start.date,
+          startMin: start.min,
+          endDate: grab.base.endDate,
+          endMin: grab.base.endMin,
+        };
+      }
+      const ne = Math.max(s + CELL_MIN, Math.min(hi, e + delta));
+      const end = fromAbs(ne);
+      return {
+        startDate: grab.base.startDate,
+        startMin: grab.base.startMin,
+        endDate: end.date,
+        endMin: end.min,
+      };
+    };
+    const onMove = (ev: PointerEvent) => {
+      setGrabPos({ x: ev.clientX, y: ev.clientY });
+      setPreview(build(ev.clientX, ev.clientY));
+      if (typeof window !== "undefined") window.getSelection?.()?.removeAllRanges();
+    };
+    const onUp = (ev: PointerEvent) => {
+      try {
+        const el = grabTargetRef.current;
+        if (el?.hasPointerCapture(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
+      } catch {
+        /* ignore */
+      }
+      grabTargetRef.current = null;
+      const next = grabPreviewRef.current;
+      const current = grab;
+      setGrab(null);
+      setGrabPos(null);
+      setPreview(null);
+      if (!onUpdateRange || !next || !current) return;
+      const err = onUpdateRange(current.index, next);
+      if (err) onReject?.(err);
+    };
+    // Capture phase on purpose: the selection block stops propagation of its own
+    // pointermove/pointerup (React handlers), which would otherwise stop these
+    // listeners from ever firing and leave the gesture doing nothing at all.
+    const opts = { capture: true } as const;
+    window.addEventListener("pointermove", onMove, opts);
+    window.addEventListener("pointerup", onUp, opts);
+    window.addEventListener("pointercancel", onUp, opts);
+    return () => {
+      window.removeEventListener("pointermove", onMove, opts);
+      window.removeEventListener("pointerup", onUp, opts);
+      window.removeEventListener("pointercancel", onUp, opts);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grab, zoom.cellH, colW, days, onUpdateRange, onReject]);
 
   function handlePointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (e.button !== 0 && e.pointerType === "mouse") return;
@@ -697,7 +852,8 @@ export function TimeGrid({
             <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary/25" /> Tap or drag to select
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary" /> Selected
+            <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary" /> Selected —
+            drag the middle to move, the top/bottom edge to shorten or extend
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-3 w-3 rounded-sm bg-red-500/20 border border-red-400" /> Already booked
@@ -740,6 +896,33 @@ export function TimeGrid({
             </span>
             <span className="px-1.5 py-0.5 rounded bg-primary text-primary-foreground text-[10px] font-bold shrink-0">
               {fmtDuration(dur)}
+            </span>
+          </div>
+        );
+      })()}
+
+      {/* Live from–to tooltip while a selected slot is moved or resized, so the
+          new time and duration are visible mid-gesture (mouse and touch). */}
+      {grab && grabPreview && grabPos && (() => {
+        const dur = slotDurationMin(grabPreview.startDate, grabPreview.startMin, grabPreview.endDate, grabPreview.endMin);
+        const label =
+          grabPreview.startDate === grabPreview.endDate
+            ? `${fmtMin(grabPreview.startMin)} – ${fmtMin(grabPreview.endMin)}`
+            : `${fmtDay(grabPreview.startDate)} ${fmtMin(grabPreview.startMin)} → ${fmtDay(grabPreview.endDate)} ${fmtMin(grabPreview.endMin)}`;
+        return (
+          <div
+            className="pointer-events-none fixed z-50 rounded-md border bg-card px-3 py-1.5 text-xs font-semibold text-foreground shadow-xl flex items-center gap-2"
+            style={{
+              left: Math.max(10, Math.min((typeof window !== "undefined" ? window.innerWidth : 400) - 240, grabPos.x - 60)),
+              top: Math.max(10, grabPos.y - 45),
+            }}
+          >
+            <span>{label}</span>
+            <span className="px-1.5 py-0.5 rounded bg-primary text-primary-foreground text-[10px] font-bold shrink-0">
+              {fmtDuration(dur)}
+            </span>
+            <span className="text-[10px] font-medium text-muted-foreground shrink-0">
+              {grab.mode === "move" ? "Moving" : grab.mode === "start" ? "Start" : "End"}
             </span>
           </div>
         );
@@ -829,7 +1012,20 @@ export function TimeGrid({
               return (
                 <div
                   key={f.id + f.date}
-                  className="fb-booked cursor-pointer pointer-events-auto hover:brightness-90 transition-all shadow-xs"
+                  className="fb-booked pointer-events-auto hover:brightness-90 transition-all shadow-xs"
+                  role="button"
+                  tabIndex={0}
+                  onPointerDown={(e) => {
+                    // Keep the tap for the details modal instead of starting a
+                    // new selection underneath the booking.
+                    e.stopPropagation();
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelectedBooking(b);
+                    }
+                  }}
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedBooking(b);
@@ -900,10 +1096,34 @@ export function TimeGrid({
               );
             })}
 
-            {/* Committed selection overlays */}
+            {/* Committed selection overlays — draggable to move/resize */}
             {committed.map((r, i) => (
-              <SelectionOverlay key={i} range={r} days={days} colW={colW} colHeight={colHeight} conflict={conflict(r)} solid />
+              <SelectionOverlay
+                key={`c${i}`}
+                range={r}
+                days={days}
+                colW={colW}
+                colHeight={colHeight}
+                conflict={conflict(r)}
+                solid
+                index={i}
+                interactive={Boolean(onUpdateRange)}
+                dimmed={grab !== null && grab.index === i}
+                onGrab={startGrab}
+              />
             ))}
+
+            {/* Live preview of the slot being moved/resized */}
+            {grabPreview && grab && (
+              <SelectionOverlay
+                range={grabPreview}
+                days={days}
+                colW={colW}
+                colHeight={colHeight}
+                conflict={false}
+                solid
+              />
+            )}
 
             {/* Current drag overlay */}
             {drag && <SelectionOverlay range={drag} days={days} colW={colW} colHeight={colHeight} conflict={conflict(drag)} />}
@@ -1093,6 +1313,10 @@ function SelectionOverlay({
   colHeight,
   conflict,
   solid = false,
+  index,
+  interactive = false,
+  dimmed = false,
+  onGrab,
 }: {
   range: RangeSelection;
   days: string[];
@@ -1100,6 +1324,13 @@ function SelectionOverlay({
   colHeight: number;
   conflict: boolean;
   solid?: boolean;
+  /** Position of this range in the committed list (needed to drag-edit it). */
+  index?: number;
+  /** Render move + resize affordances (committed ranges only). */
+  interactive?: boolean;
+  /** True while this range is being dragged (the preview takes over). */
+  dimmed?: boolean;
+  onGrab?: (index: number, mode: "move" | "start" | "end", e: React.PointerEvent) => void;
 }) {
   const frags = fragments(range, days);
   const totalDur = slotDurationMin(range.startDate, range.startMin, range.endDate, range.endMin);
@@ -1123,11 +1354,51 @@ function SelectionOverlay({
           timeLabel = "All day";
         }
 
+        const draggable = solid && interactive && typeof index === "number" && Boolean(onGrab);
+        const firstFragment = f.date === frags[0]?.date;
+        const lastFragment = f.date === frags[frags.length - 1]?.date;
+        // Resizing is decided by *where* the pointer lands, not by hitting a thin
+        // bar: the top ~30% of the block (capped at 20px) shortens/extends the
+        // start, the bottom matches for the end, and the middle moves the slot.
+        // That makes the gesture work the same with a mouse and with a finger,
+        // where a 9-14px handle is nearly impossible to hit.
+        const edgeZone = Math.max(6, Math.min(20, Math.round(heightPx * 0.3)));
+        const handleH = Math.max(8, Math.min(18, Math.round(heightPx * 0.3)));
+        /** Which gesture a pointer at `clientY` inside this block should start. */
+        const modeAt = (el: HTMLElement, clientY: number): "move" | "start" | "end" => {
+          const rect = el.getBoundingClientRect();
+          const y = clientY - rect.top;
+          if (firstFragment && y <= edgeZone) return "start";
+          if (lastFragment && y >= rect.height - edgeZone) return "end";
+          return "move";
+        };
+        const handleBlockPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+          onGrab!(index!, modeAt(e.currentTarget, e.clientY), e);
+        };
+
         return (
           <div
             key={f.date}
-            className="fb-selection flex flex-col justify-start overflow-hidden p-1 text-white font-semibold shadow-xs"
-            title={`Selected: ${fmtSlotRange(range.startDate, range.startMin, range.endDate, range.endMin)} (${durDisplay})`}
+            className={`fb-selection flex flex-col justify-start overflow-hidden p-1 text-white font-semibold shadow-xs${
+              draggable ? " fb-selection-solid" : ""
+            }${draggable && dimmed ? " fb-selection-dragging" : ""}`}
+            title={`Selected: ${fmtSlotRange(range.startDate, range.startMin, range.endDate, range.endMin)} (${durDisplay})${
+              draggable ? "\nDrag the middle to move · drag the top/bottom edge to shorten or extend" : ""
+            }`}
+            onPointerDown={draggable ? handleBlockPointerDown : undefined}
+            onPointerMove={
+              draggable
+                ? (e) => {
+                    // Keep the grid from starting a fresh selection underneath,
+                    // then (mouse only) advertise the resize cursor at the edges.
+                    e.stopPropagation();
+                    if (e.pointerType !== "mouse") return;
+                    e.currentTarget.style.cursor =
+                      modeAt(e.currentTarget, e.clientY) === "move" ? "grab" : "ns-resize";
+                  }
+                : undefined
+            }
+            onPointerUp={draggable ? (e) => e.stopPropagation() : undefined}
             style={{
               left: days.indexOf(f.date) * colW + 1,
               width: colW - 2,
@@ -1158,6 +1429,15 @@ function SelectionOverlay({
                   ? `Ends ${fmtDay(range.endDate)} ${fmtMin(range.endMin)}`
                   : `Starts ${fmtDay(range.startDate)} ${fmtMin(range.startMin)}`}
               </div>
+            )}
+
+            {/* Resize bars: top on the first visible day, bottom on the last,
+                so a multi-day selection can be shortened from either end. */}
+            {draggable && firstFragment && (
+              <span className="fb-resize-handle fb-resize-top" aria-hidden="true" style={{ height: handleH }} />
+            )}
+            {draggable && lastFragment && (
+              <span className="fb-resize-handle fb-resize-bottom" aria-hidden="true" style={{ height: handleH }} />
             )}
           </div>
         );
