@@ -27,6 +27,8 @@ export async function GET(request: NextRequest) {
         select: {
           notifyOnSlotBooked: true,
           notifyOnAvChange: true,
+          notifyBookingUser: true,
+          notifyForUser: true,
           notifyEmails: true,
         },
       },
@@ -120,6 +122,8 @@ export async function POST(request: NextRequest) {
   const notifyEmails = normalizeNotifyEmails((body as { notifyEmails?: unknown }).notifyEmails);
   const notifyOnSlotBooked = Boolean((body as { notifyOnSlotBooked?: unknown }).notifyOnSlotBooked);
   const notifyOnAvChange = Boolean((body as { notifyOnAvChange?: unknown }).notifyOnAvChange);
+  const notifyBookingUser = Boolean((body as { notifyBookingUser?: unknown }).notifyBookingUser);
+  const notifyForUser = Boolean((body as { notifyForUser?: unknown }).notifyForUser);
 
   const facility = await prisma.facility.create({
     data: {
@@ -138,12 +142,24 @@ export async function POST(request: NextRequest) {
       hasAvSupport: Boolean((body as { hasAvSupport?: unknown }).hasAvSupport),
       roleLimits: { create: roleLimits },
       notifyConfig: {
-        create: { notifyOnSlotBooked, notifyOnAvChange, notifyEmails },
+        create: {
+          notifyOnSlotBooked,
+          notifyOnAvChange,
+          notifyBookingUser,
+          notifyForUser,
+          notifyEmails,
+        },
       },
     },
     include: {
       notifyConfig: {
-        select: { notifyOnSlotBooked: true, notifyOnAvChange: true, notifyEmails: true },
+        select: {
+          notifyOnSlotBooked: true,
+          notifyOnAvChange: true,
+          notifyBookingUser: true,
+          notifyForUser: true,
+          notifyEmails: true,
+        },
       },
     },
   });
@@ -177,16 +193,14 @@ export async function PATCH(request: NextRequest) {
   if (typeof b.hasAvSupport === "boolean") data.hasAvSupport = b.hasAvSupport;
 
   // Notify configuration — upserted so both create and edit forms manage it.
-  const notifyUpdate: Record<string, unknown> | null =
-    b.notifyOnSlotBooked !== undefined ||
-    b.notifyOnAvChange !== undefined ||
-    b.notifyEmails !== undefined
-      ? {
-          notifyOnSlotBooked: Boolean(b.notifyOnSlotBooked),
-          notifyOnAvChange: Boolean(b.notifyOnAvChange),
-          notifyEmails: normalizeNotifyEmails(b.notifyEmails),
-        }
-      : null;
+  // Only the fields actually supplied are written, so a partial PATCH can never
+  // reset the rest of a facility's notification settings.
+  const notifyUpdate: Record<string, unknown> = {};
+  if (b.notifyOnSlotBooked !== undefined) notifyUpdate.notifyOnSlotBooked = Boolean(b.notifyOnSlotBooked);
+  if (b.notifyOnAvChange !== undefined) notifyUpdate.notifyOnAvChange = Boolean(b.notifyOnAvChange);
+  if (b.notifyBookingUser !== undefined) notifyUpdate.notifyBookingUser = Boolean(b.notifyBookingUser);
+  if (b.notifyForUser !== undefined) notifyUpdate.notifyForUser = Boolean(b.notifyForUser);
+  if (b.notifyEmails !== undefined) notifyUpdate.notifyEmails = normalizeNotifyEmails(b.notifyEmails);
 
   let facility;
   try {
@@ -197,7 +211,7 @@ export async function PATCH(request: NextRequest) {
     throw e;
   }
 
-  if (notifyUpdate) {
+  if (Object.keys(notifyUpdate).length > 0) {
     await prisma.facilityNotifyConfig.upsert({
       where: { facilityId: id },
       update: notifyUpdate,
@@ -224,7 +238,13 @@ export async function PATCH(request: NextRequest) {
     where: { id },
     include: {
       notifyConfig: {
-        select: { notifyOnSlotBooked: true, notifyOnAvChange: true, notifyEmails: true },
+        select: {
+          notifyOnSlotBooked: true,
+          notifyOnAvChange: true,
+          notifyBookingUser: true,
+          notifyForUser: true,
+          notifyEmails: true,
+        },
       },
     },
   });

@@ -10,11 +10,16 @@ import type { Prisma } from "@/generated/prisma/client";
  *    Written on every life-cycle change; powers the admin booking-history view
  *    and the booker's own edit history in My Bookings.
  *
- * 2. Notifier email digest — per facility the app admin configures notifiers
- *    (FacilityNotifyConfig) and what to notify about (slot booked / AV change).
- *    Notifiers get ONE digest email per booking (keyed by booking code): when
- *    another slot joins the same booking, the same notification is UPDATED and
- *    re-sent with the full slot list — never one mail per slot.
+ * 2. Booking notification email — per facility the app admin configures who is
+ *    told about a booking (FacilityNotifyConfig): a list of notifier addresses,
+ *    plus optionally the person who MADE the booking and the person it was
+ *    blocked FOR. Recipients get ONE mail per booking STATE (keyed by booking
+ *    code): when another slot joins the same booking, the same notification is
+ *    UPDATED and re-sent with the full slot list — never one mail per slot.
+ *
+ *    The body is plain text only — no HTML, no colours and no space-padded
+ *    columns, because mail clients render text/plain with a proportional font
+ *    and padded "label : value" alignment comes out ragged.
  *
  * Email goes through the SSO's key-guarded internal relay
  * (/sso/api/admin/mail) because SMTP credentials live in sanapp_sso_db.
@@ -152,11 +157,12 @@ function fmtMin(m: number): string {
   return `${Math.floor(m / 60).toString().padStart(2, "0")}:${(m % 60).toString().padStart(2, "0")}`;
 }
 
+/** A slot's time range: always IST, always the 24-hour clock. */
 function fmtSlot(s: NotifySlot): string {
   if (s.endDate && s.endDate !== s.date) {
-    return `${s.date} ${fmtMin(s.startMin)} → ${s.endDate} ${fmtMin(s.endMin)}`;
+    return `${s.date} ${fmtMin(s.startMin)} → ${s.endDate} ${fmtMin(s.endMin)} IST`;
   }
-  return `${s.date} ${fmtMin(s.startMin)}–${fmtMin(s.endMin)}`;
+  return `${s.date} ${fmtMin(s.startMin)}–${fmtMin(s.endMin)} IST`;
 }
 
 function fmtDuration(date: string, endDate: string, startMin: number, endMin: number): string {
@@ -194,9 +200,143 @@ export function shouldNotify(
   return cfg.notifyOnSlotBooked;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Mail content                                                               */
+/* -------------------------------------------------------------------------- */
+
 /**
- * Send (or refresh) the per-booking digest mail to a facility's notifiers.
+ * Plain-text signature. Text only on purpose: the relay posts this as a
+ * text/plain body, so nothing here may rely on HTML, colour or alignment.
+ */
+const SIGNATURE = [
+  "--",
+  "IIPE Intranet | Facilities Booking",
+  "Indian Institute of Petroleum and Energy",
+  "Automated message — please do not reply.",
+].join("\n");
+
+/**
+ * The notification body, as plain text.
+ *
+ * Each label sits on its own line with its value and is NOT space-padded into
+ * aligned columns: a text/plain body is rendered with a proportional font, so
+ * padded labels line up differently in every mail client. Every line starts at
+ * the same left margin instead, which is the alignment that actually survives.
+ *
+ * The booking reference is repeated after the signature so it is still visible
+ * when a client hides the quoted/forwarded part of a thread.
+ */
+export function buildBookingBody(opts: {
+  code: string;
+  booking: NotifyBooking;
+  rows: NotifySlot[];
+}): string {
+  const { code, booking, rows } = opts;
+  const facility = booking.facility.building?.name
+    ? `${booking.facility.building.name} — ${booking.facility.name}`
+    : booking.facility.name;
+
+  const lines = [
+    `Booking ID: ${code}`,
+    `Facility: ${facility}`,
+    `Booked by: ${booking.user?.name ? `${booking.user.name} (@${booking.user.username})` : "—"}`,
+  ];
+  // Only meaningful for on-behalf bookings, so it is left out otherwise.
+  if (booking.forUser) {
+    lines.push(`Booked on behalf of: ${booking.forUser.name} (@${booking.forUser.username})`);
+  }
+  lines.push(
+    `Description: ${booking.purpose?.trim() || "—"}`,
+    `AV support: ${booking.needAvSupport ? "Yes — AV technician needed" : "No"}`,
+    `Status: ${booking.status}`,
+    "",
+    `Slots (${rows.length}):`,
+    ...rows.map(
+      (s, i) =>
+        `${i + 1}. ${fmtSlot(s)} (${fmtDuration(s.date, s.endDate, s.startMin, s.endMin)})${
+          s.status === "CANCELLED" ? "  [CANCELLED]" : ""
+        }`
+    ),
+    "",
+    "All times are Indian Standard Time (IST) and use the 24-hour clock.",
+    "",
+    SIGNATURE,
+    "",
+    `Booking ID: ${code}`,
+  );
+  return lines.join("\n");
+}
+
+/** A person's notification address, from the SSO-synced local user record. */
+async function emailOf(username: string | null | undefined): Promise<string | null> {
+  const value = username?.trim();
+  if (!value) return null;
+  const u = await prisma.appUser.findUnique({
+    where: { username: value },
+    select: { email: true },
+  });
+  return u?.email?.trim() || null;
+}
+
+/** Who receives this mail, and under which subject. */
+async function buildRecipients(opts: {
+  cfg: { notifyEmails: string[] };
+  booking: NotifyBooking;
+  wantsNotifiers: boolean;
+  wantsBooker: boolean;
+  wantsForUser: boolean;
+  code: string;
+  rows: NotifySlot[];
+}): Promise<{ to: string[]; subject: string }[]> {
+  const { cfg, booking, code, rows } = opts;
+  const facility = booking.facility.name;
+  const slotsWord = `${rows.length} slot${rows.length === 1 ? "" : "s"}`;
+  const stateWord = booking.status === "CANCELLED" ? "cancelled" : "confirmed";
+  const groups: { to: string[]; subject: string }[] = [];
+
+  if (opts.wantsNotifiers && cfg.notifyEmails.length > 0) {
+    groups.push({
+      to: cfg.notifyEmails,
+      subject: `Facilities booking ${code} — ${facility} (${slotsWord})`,
+    });
+  }
+
+  if (opts.wantsBooker) {
+    const to = await emailOf(booking.user?.username);
+    if (to) {
+      groups.push({
+        to: [to],
+        subject: `Your facilities booking ${code} — ${facility} — ${stateWord}`,
+      });
+    } else if (booking.user) {
+      console.warn(`booking notify: no email on record for @${booking.user.username}`);
+    }
+  }
+
+  if (opts.wantsForUser) {
+    const to = await emailOf(booking.forUser?.username);
+    if (to) {
+      groups.push({
+        to: [to],
+        subject: `Facilities booking ${code} made for you — ${facility} — ${stateWord}`,
+      });
+    } else if (booking.forUser) {
+      console.warn(`booking notify: no email on record for @${booking.forUser.username}`);
+    }
+  }
+
+  return groups;
+}
+
+/**
+ * Send (or refresh) a booking's notification mail to everyone this facility is
+ * configured to tell:
+ *   - the notifier address list        (notifyOnSlotBooked / notifyOnAvChange)
+ *   - the person who made the booking  (notifyBookingUser)
+ *   - the person it was blocked for    (notifyForUser, on-behalf bookings only)
+ *
  * Fire-and-forget from the caller's point of view: never throws, logs only.
+ * Returns true when the relay accepted at least one mail.
  */
 export async function sendBookingDigest(opts: {
   booking: NotifyBooking;
@@ -207,7 +347,12 @@ export async function sendBookingDigest(opts: {
     const cfg = await prisma.facilityNotifyConfig.findUnique({
       where: { facilityId: booking.facilityId },
     });
-    if (!cfg || !shouldNotify(cfg, opts.avChanged === true)) return false;
+    if (!cfg) return false;
+
+    const wantsNotifiers = shouldNotify(cfg, opts.avChanged === true);
+    const wantsBooker = cfg.notifyBookingUser;
+    const wantsForUser = cfg.notifyForUser && Boolean(booking.forUser);
+    if (!wantsNotifiers && !wantsBooker && !wantsForUser) return false;
 
     const code = await resolveBookingCode(booking);
 
@@ -223,73 +368,60 @@ export async function sendBookingDigest(opts: {
       ? slots.map((s) => ({ bookingId: s.id, date: s.date, endDate: s.endDate || s.date, startMin: s.startMin, endMin: s.endMin, status: s.status }))
       : [{ bookingId: booking.id, date: "", endDate: "", startMin: 0, endMin: 0, status: booking.status }];
 
-    const booker = booking.user?.name ? `${booking.user.name} (@${booking.user.username})` : "—";
-    const forLine = booking.forUser
-      ? `\nBlocked for : ${booking.forUser.name} (@${booking.forUser.username})`
-      : "";
-    const avLine = booking.needAvSupport ? "YES — AV technician needed" : "No";
+    const body = buildBookingBody({ code, booking, rows });
 
-    const slotLines = rows
-      .map(
-        (s) =>
-          `  • ${fmtSlot(s)} (${fmtDuration(s.date, s.endDate, s.startMin, s.endMin)})${
-            s.status === "CANCELLED" ? "  [CANCELLED]" : ""
-          }`
-      )
-      .join("\n");
-
-    const body = [
-      `Booking ID   : ${code}`,
-      `Facility     : ${booking.facility.building?.name ? booking.facility.building.name + " — " : ""}${booking.facility.name}`,
-      `Booked by    : ${booker}${forLine}`,
-      `Description  : ${booking.purpose?.trim() || "—"}`,
-      `AV support   : ${avLine}`,
-      `Status       : ${booking.status}`,
-      ``,
-      `Slots (${rows.length}):`,
-      slotLines,
-      ``,
-      `— IIPE Facilities Booking`,
-    ].join("\n");
-
-    // Digest: keyed by the BOOKING (code), not the slot — one mail per booking.
+    // One mail per booking STATE, keyed by the booking (code) rather than the
+    // slot: an unchanged booking is never mailed twice.
     const prev = await prisma.bookingNotifyState.findFirst({
       where: { code: code },
       orderBy: { createdAt: "asc" },
     });
     if (prev?.lastBody === body) return false;
 
-    const subject = `Facilities booking ${code} — ${booking.facility.name} (${rows.length} slot${rows.length === 1 ? "" : "s"})`;
+    const groups = await buildRecipients({
+      cfg,
+      booking,
+      wantsNotifiers,
+      wantsBooker,
+      wantsForUser,
+      code,
+      rows,
+    });
+    if (groups.length === 0) return false;
 
     let sent = false;
     if (SSO_BASE_URL && SSO_ADMIN_KEY) {
-      try {
-        const res = await fetch(`${SSO_BASE_URL}/api/admin/mail`, {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-admin-key": SSO_ADMIN_KEY },
-          body: JSON.stringify({ to: cfg.notifyEmails, subject, text: body }),
-          cache: "no-store",
-          signal: AbortSignal.timeout(15000),
-        });
-        sent = res.ok;
-        if (!res.ok) console.error("booking notify mail failed:", res.status, await res.text().catch(() => ""));
-      } catch (e) {
-        console.error("booking notify mail error:", e);
+      for (const group of groups) {
+        try {
+          const res = await fetch(`${SSO_BASE_URL}/api/admin/mail`, {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-admin-key": SSO_ADMIN_KEY },
+            body: JSON.stringify({ to: group.to, subject: group.subject, text: body }),
+            cache: "no-store",
+            signal: AbortSignal.timeout(15000),
+          });
+          if (res.ok) sent = true;
+          else console.error("booking notify mail failed:", res.status, await res.text().catch(() => ""));
+        } catch (e) {
+          console.error("booking notify mail error:", e);
+        }
       }
     } else {
-      console.warn(`booking notify: SSO mail relay not configured — digest for ${code} not sent`);
+      console.warn(`booking notify: SSO mail relay not configured — mail for ${code} not sent`);
     }
 
+    // Record the body only when something actually went out, so a relay outage
+    // is retried on the next change instead of silencing the booking forever.
     if (prev) {
       await prisma.bookingNotifyState.update({
         where: { id: prev.id },
-        data: { lastBody: sent ? body : prev.lastBody ?? body },
+        data: { lastBody: sent ? body : prev.lastBody ?? null },
       });
     } else {
       await prisma.bookingNotifyState.upsert({
         where: { bookingId: booking.id },
-        update: { code, lastBody: body },
-        create: { bookingId: booking.id, code, lastBody: body },
+        update: { code, lastBody: sent ? body : null },
+        create: { bookingId: booking.id, code, lastBody: sent ? body : null },
       });
     }
     return sent;

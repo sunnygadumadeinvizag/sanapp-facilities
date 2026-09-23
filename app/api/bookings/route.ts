@@ -14,7 +14,7 @@ import {
   slotIndex,
 } from "@/lib/ist";
 import { effectiveMaxMinutes } from "@/lib/limits";
-import { nextBookingCode, recordEvent, sendBookingDigest } from "@/lib/notify";
+import { nextBookingCode, recordEvent, sendBookingDigest, type NotifyBooking } from "@/lib/notify";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -867,6 +867,10 @@ export async function DELETE(request: NextRequest) {
   const nowIdx = slotIndex(istDateKey(), istMinute());
   const results = [];
   const skipped = [];
+  // The notification is sent ONCE after the loop: its body is rebuilt from the
+  // database and already lists every slot, so notifying inside the loop would
+  // send one near-identical mail per cancelled slot.
+  let lastCancelled: NotifyBooking | null = null;
 
   for (const booking of rows) {
     // Who may cancel: the booker, the user the slot is blocked FOR (their own
@@ -908,22 +912,22 @@ export async function DELETE(request: NextRequest) {
       }),
     ]);
     results.push(booking.id);
-    // Refresh the notifier digest so notifiers see the CANCELLED marker.
-    void sendBookingDigest({
-      booking: {
-        id: booking.id,
-        code: booking.code,
-        batchId: booking.batchId,
-        facilityId: booking.facilityId,
-        needAvSupport: booking.needAvSupport,
-        purpose: booking.purpose,
-        status: "CANCELLED",
-        facility: { name: booking.facility.name, building: { name: booking.facility.building.name } },
-        user: booking.user ? { name: booking.user.name, username: booking.user.username } : null,
-        forUser: booking.forUser ? { name: booking.forUser.name, username: booking.forUser.username } : null,
-      },
-    });
+    lastCancelled = {
+      id: booking.id,
+      code: booking.code,
+      batchId: booking.batchId,
+      facilityId: booking.facilityId,
+      needAvSupport: booking.needAvSupport,
+      purpose: booking.purpose,
+      status: "CANCELLED",
+      facility: { name: booking.facility.name, building: { name: booking.facility.building.name } },
+      user: booking.user ? { name: booking.user.name, username: booking.user.username } : null,
+      forUser: booking.forUser ? { name: booking.forUser.name, username: booking.forUser.username } : null,
+    };
   }
+
+  // Refresh the notification so every recipient sees the CANCELLED markers.
+  if (lastCancelled) void sendBookingDigest({ booking: lastCancelled });
 
   return NextResponse.json({
     cancelled: results,

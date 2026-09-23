@@ -44,6 +44,15 @@ export default async function AdminFacilitiesPage() {
               include: { user: { select: { id: true, name: true, username: true } } },
               orderBy: { createdAt: "asc" },
             },
+            notifyConfig: {
+              select: {
+                notifyOnSlotBooked: true,
+                notifyOnAvChange: true,
+                notifyBookingUser: true,
+                notifyForUser: true,
+                notifyEmails: true,
+              },
+            },
           },
         },
       },

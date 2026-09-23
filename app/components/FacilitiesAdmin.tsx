@@ -22,6 +22,8 @@ type Poc = { userId: string; fromBuilding?: boolean; user: { id: string; name: s
 type NotifyConfig = {
   notifyOnSlotBooked: boolean;
   notifyOnAvChange: boolean;
+  notifyBookingUser?: boolean;
+  notifyForUser?: boolean;
   notifyEmails: string[];
 };
 
@@ -93,6 +95,8 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
   const [hasAvSupport, setHasAvSupport] = useState(false);
   const [notifyOnSlotBooked, setNotifyOnSlotBooked] = useState(false);
   const [notifyOnAvChange, setNotifyOnAvChange] = useState(false);
+  const [notifyBookingUser, setNotifyBookingUser] = useState(false);
+  const [notifyForUser, setNotifyForUser] = useState(false);
   const [notifyEmails, setNotifyEmails] = useState("");
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -142,6 +146,8 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
         hasAvSupport,
         notifyOnSlotBooked,
         notifyOnAvChange,
+        notifyBookingUser,
+        notifyForUser,
         notifyEmails,
         roleLimits: Object.entries(roleLimits)
           .filter(([, v]) => v !== "" && Number(v) > 0)
@@ -152,7 +158,8 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
     if (!res.ok) return setError(data.error ?? "Could not create facility");
     setError(null);
     setName(""); setDescription(""); setCapacity(""); setAllowedRoles([]); setMaxMinutes(""); setRoleLimits({}); setHasAvSupport(false);
-    setNotifyOnSlotBooked(false); setNotifyOnAvChange(false); setNotifyEmails("");
+    setNotifyOnSlotBooked(false); setNotifyOnAvChange(false);
+    setNotifyBookingUser(false); setNotifyForUser(false); setNotifyEmails("");
     await reload();
   }
 
@@ -207,6 +214,8 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       roleLimits: Object.fromEntries(f.roleLimits.map((r) => [r.role, String(r.maxMinutes)])),
       notifyOnSlotBooked: f.notifyConfig?.notifyOnSlotBooked ?? false,
       notifyOnAvChange: f.notifyConfig?.notifyOnAvChange ?? false,
+      notifyBookingUser: f.notifyConfig?.notifyBookingUser ?? false,
+      notifyForUser: f.notifyConfig?.notifyForUser ?? false,
       notifyEmails: (f.notifyConfig?.notifyEmails ?? []).join(", "),
     });
   }
@@ -224,6 +233,8 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
         .map(([role, v]) => ({ role, maxMinutes: Number(v) })),
       notifyOnSlotBooked: Boolean(editForm.notifyOnSlotBooked),
       notifyOnAvChange: Boolean(editForm.notifyOnAvChange),
+      notifyBookingUser: Boolean(editForm.notifyBookingUser),
+      notifyForUser: Boolean(editForm.notifyForUser),
       notifyEmails: String(editForm.notifyEmails ?? ""),
     });
     setEditingId(null);
@@ -323,9 +334,10 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
             <div className="rounded-md border p-3 bg-muted/20 grid gap-3">
               <div className="text-sm font-semibold">Email notifications for this facility</div>
               <p className="text-xs text-muted-foreground -mt-2">
-                The app admin decides who gets notified. Notifiers receive one email per booking
-                (with the booking ID, slot times, description and AV status) — when another slot
-                joins the same booking, the same notification is updated with the full slot list.
+                The app admin decides who gets notified. Everyone receives one email per booking —
+                with the booking ID, facility, slot times in IST on the 24-hour clock, description
+                and AV status. When another slot joins the same booking, the same notification is
+                updated with the full slot list instead of sending a second mail.
               </p>
               <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
                 <Checkbox checked={notifyOnSlotBooked} onCheckedChange={(v) => setNotifyOnSlotBooked(v === true)} className="mt-0.5" />
@@ -342,6 +354,26 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                   <span>Notify when AV support is added, edited or removed on a booking</span>
                   <p className="text-xs text-muted-foreground font-normal mt-0.5">
                     AV-technician request changes on any booking of this facility.
+                  </p>
+                </div>
+              </label>
+              <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
+                <Checkbox checked={notifyBookingUser} onCheckedChange={(v) => setNotifyBookingUser(v === true)} className="mt-0.5" />
+                <div>
+                  <span>Email the person who made the booking</span>
+                  <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                    Whoever books this facility gets their own copy automatically whenever their
+                    booking is created, edited or cancelled.
+                  </p>
+                </div>
+              </label>
+              <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
+                <Checkbox checked={notifyForUser} onCheckedChange={(v) => setNotifyForUser(v === true)} className="mt-0.5" />
+                <div>
+                  <span>Email the person a booking is made on behalf of</span>
+                  <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                    When a POC or app admin blocks a slot for someone else, that person receives the
+                    notification as well.
                   </p>
                 </div>
               </label>
@@ -398,12 +430,17 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                         AV Support Allowed
                       </Badge>
                     )}
-                    {f.notifyConfig && f.notifyConfig.notifyEmails.length > 0 && (f.notifyConfig.notifyOnSlotBooked || f.notifyConfig.notifyOnAvChange) && (
+                    {f.notifyConfig && (f.notifyConfig.notifyOnSlotBooked || f.notifyConfig.notifyOnAvChange || f.notifyConfig.notifyBookingUser || f.notifyConfig.notifyForUser) && (
                       <Badge variant="outline" className="border-sky-400 bg-sky-50 text-sky-900 font-medium">
                         Notify: {[
                           f.notifyConfig.notifyOnSlotBooked ? "bookings" : null,
                           f.notifyConfig.notifyOnAvChange ? "AV changes" : null,
-                        ].filter(Boolean).join(" + ")} → {f.notifyConfig.notifyEmails.length} email{f.notifyConfig.notifyEmails.length === 1 ? "" : "s"}
+                          f.notifyConfig.notifyBookingUser ? "booking user" : null,
+                          f.notifyConfig.notifyForUser ? "on-behalf user" : null,
+                        ].filter(Boolean).join(" + ")}
+                        {f.notifyConfig.notifyEmails.length > 0
+                          ? ` → ${f.notifyConfig.notifyEmails.length} notifier email${f.notifyConfig.notifyEmails.length === 1 ? "" : "s"}`
+                          : ""}
                       </Badge>
                     )}
                     {f.allowedRoles.length === 0 ? (
@@ -496,9 +533,10 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                       <div className="rounded-md border p-3 bg-muted/20 grid gap-3">
                       <div className="text-sm font-semibold">Email notifications for this facility</div>
                       <p className="text-xs text-muted-foreground -mt-2">
-                        The app admin decides who gets notified. Notifiers receive one email per booking
-                        (with the booking ID, slot times, description and AV status) — when another slot
-                        joins the same booking, the same notification is updated with the full slot list.
+                        The app admin decides who gets notified. Everyone receives one email per booking
+                        — with the booking ID, facility, slot times in IST on the 24-hour clock,
+                        description and AV status. When another slot joins the same booking, the same
+                        notification is updated with the full slot list instead of sending a second mail.
                       </p>
                       <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
                         <Checkbox checked={Boolean(editForm.notifyOnSlotBooked)} onCheckedChange={(v) => setEditForm((p) => ({ ...p, notifyOnSlotBooked: v }))} className="mt-0.5" />
@@ -515,6 +553,26 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                           <span>Notify when AV support is added, edited or removed on a booking</span>
                           <p className="text-xs text-muted-foreground font-normal mt-0.5">
                             AV-technician request changes on any booking of this facility.
+                          </p>
+                        </div>
+                      </label>
+                      <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
+                        <Checkbox checked={Boolean(editForm.notifyBookingUser)} onCheckedChange={(v) => setEditForm((p) => ({ ...p, notifyBookingUser: v === true }))} className="mt-0.5" />
+                        <div>
+                          <span>Email the person who made the booking</span>
+                          <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                            Whoever books this facility gets their own copy automatically whenever
+                            their booking is created, edited or cancelled.
+                          </p>
+                        </div>
+                      </label>
+                      <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
+                        <Checkbox checked={Boolean(editForm.notifyForUser)} onCheckedChange={(v) => setEditForm((p) => ({ ...p, notifyForUser: v === true }))} className="mt-0.5" />
+                        <div>
+                          <span>Email the person a booking is made on behalf of</span>
+                          <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                            When a POC or app admin blocks a slot for someone else, that person
+                            receives the notification as well.
                           </p>
                         </div>
                       </label>

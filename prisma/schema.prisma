@@ -230,6 +230,12 @@ model FacilityNotifyConfig {
   facility           Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
   notifyOnSlotBooked Boolean  @default(false)
   notifyOnAvChange   Boolean  @default(false)
+  // Email the person who MADE a booking whenever one of their slots on this
+  // facility is created, edited or cancelled.
+  notifyBookingUser  Boolean  @default(false)
+  // Email the person a slot was blocked FOR whenever a POC / app admin books
+  // on their behalf.
+  notifyForUser      Boolean  @default(false)
   // Notifier email addresses (comma / newline separated in the admin UI).
   notifyEmails       String[] @default([])
   createdAt          DateTime @default(now())
