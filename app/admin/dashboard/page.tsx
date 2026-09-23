@@ -24,20 +24,6 @@ export default async function FacilitiesDashboardPage() {
   const from = today; // the next 7 days starting today
   const to = addDays(today, 6);
 
-  if (!admin) {
-    return (
-      <AppShell me={me} active="admin-dashboard">
-        <h1 className="text-xl font-semibold">Bookings Dashboard</h1>
-        <Card className="p-6">
-          <h2 className="text-lg font-semibold">Not available</h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            The bookings dashboard is restricted — the app administrator decides who can see it.
-          </p>
-        </Card>
-      </AppShell>
-    );
-  }
-
   if (!access.visible) {
     return (
       <AppShell me={me} active="admin-dashboard">
@@ -45,9 +31,9 @@ export default async function FacilitiesDashboardPage() {
         <Card className="p-6">
           <h2 className="text-lg font-semibold">You have not been added to this dashboard</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            The dashboard is limited to specific facilities and viewers chosen by the app
-            administrator. Ask the app administrator to add your username to the dashboard
-            viewers list.
+            The bookings dashboard is limited to the facilities and the people chosen by the app
+            administrator. Ask the app administrator to add your username to the dashboard viewers
+            list.
           </p>
         </Card>
       </AppShell>
@@ -123,7 +109,7 @@ export default async function FacilitiesDashboardPage() {
         facilities={facilities.map((f) => ({ id: f.id, name: f.name, buildingName: f.building.name }))}
         slots={slots}
         unconfigured={access.unconfigured}
-        canConfigure
+        canConfigure={admin}
       />
     </AppShell>
   );

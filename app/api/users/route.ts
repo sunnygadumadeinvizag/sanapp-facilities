@@ -29,6 +29,51 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ users: filtered.slice(0, 25) });
   }
 
+  // kind === "all" — every person the app administrator may add to the
+  // dashboard viewer list. The whole central SSO registry is offered, merged
+  // with any locally-known user, so somebody who has never signed into this app
+  // can still be added ahead of their first login (the viewer check matches on
+  // username). Admin gated: this is the entire institute directory.
+  if (kind === "all") {
+    if (!(await isAdmin())) {
+      return NextResponse.json({ error: "Only the app administrator can list all users" }, { status: 403 });
+    }
+    const [ssoUsers, localUsers] = await Promise.all([
+      listSsoUsers(),
+      prisma.appUser.findMany({
+        select: { username: true, name: true, role: true, primaryRole: true },
+      }),
+    ]);
+
+    type Person = { username: string; name: string; isAdmin: boolean; primaryRole: string };
+    const merged = new Map<string, Person>();
+
+    // Everyone from the SSO identity store (this is what makes it "any person").
+    for (const u of ssoUsers) {
+      merged.set(u.username.toLowerCase(), {
+        username: u.username,
+        name: u.name,
+        isAdmin: false,
+        primaryRole: u.primaryRole ?? "",
+      });
+    }
+    // Overlay the local records: those carry the app ADMIN flag, and they can
+    // include people the SSO list no longer returns.
+    for (const u of localUsers) {
+      const key = u.username.toLowerCase();
+      const prev = merged.get(key);
+      merged.set(key, {
+        username: prev?.username ?? u.username,
+        name: prev?.name || u.name,
+        isAdmin: u.role === "ADMIN",
+        primaryRole: prev?.primaryRole || (u.primaryRole ?? ""),
+      });
+    }
+
+    const users = [...merged.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return NextResponse.json({ users, total: users.length });
+  }
+
   // kind === "admins" — the app administrators (a small, bounded list).
   if (!(await isAdmin())) {
     return NextResponse.json({ error: "Only the app administrator can view admins" }, { status: 403 });

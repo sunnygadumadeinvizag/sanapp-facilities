@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { isAdminSession } from "@/lib/auth";
+import { isAdminSession, listSsoUsers } from "@/lib/auth";
 
 const CONFIG_ID = "default";
 
@@ -10,19 +10,23 @@ function facilityIdList(value: unknown): string[] {
   return [...new Set(arr.filter(Boolean))].slice(0, 200);
 }
 
-/** Usernames allowed to SEE the dashboard (empty = every app admin). */
+/**
+ * Viewer usernames. Stored lower-cased so the lookup in dashboardAccess() is
+ * case-insensitive. These are people — app admins always have access anyway,
+ * and this list grants access to anyone else.
+ */
 function usernameList(value: unknown): string[] {
   const arr = Array.isArray(value)
     ? value.map((v) => String(v ?? "").trim().toLowerCase())
     : typeof value === "string"
       ? value.split(/[\n,;]+/).map((v) => v.trim().toLowerCase())
       : [];
-  return [...new Set(arr.filter(Boolean))].slice(0, 100);
+  return [...new Set(arr.filter(Boolean))].slice(0, 500);
 }
 
 /**
  * GET /api/admin/dashboard-config — the current dashboard configuration
- * (which facilities are shown, which admins may view it). Super-admin gated.
+ * (which facilities are shown, which people may view it). Admin gated.
  */
 export async function GET() {
   if (!(await isAdminSession())) {
@@ -38,7 +42,16 @@ export async function GET() {
 /**
  * PUT /api/admin/dashboard-config — save the configuration.
  * Body: { facilityIds: string[], allowedUsernames: string[] | string }
- * (allowedUsernames empty = visible to every app admin).
+ *
+ * The viewer list may name ANY person, not only app admins: a username is
+ * accepted when it exists either in the central SSO registry or as a local user
+ * of this app. Someone who has never signed in here can still be added ahead of
+ * time — their first login creates the local record, and the viewer check
+ * matches on username.
+ *
+ * If the SSO registry cannot be reached the strict check is skipped rather than
+ * blocking the administrator: an unknown name simply grants nobody access, and
+ * the list can be corrected on the next save.
  */
 export async function PUT(request: NextRequest) {
   if (!(await isAdminSession())) {
@@ -61,17 +74,25 @@ export async function PUT(request: NextRequest) {
 
   const allowedUsernames = usernameList(body.allowedUsernames);
   if (allowedUsernames.length > 0) {
-    const known = await prisma.appUser.findMany({
-      where: { username: { in: allowedUsernames }, role: "ADMIN" },
-      select: { username: true },
-    });
-    const knownSet = new Set(known.map((u) => u.username));
-    const notAdmin = allowedUsernames.filter((u) => !knownSet.has(u));
-    if (notAdmin.length > 0) {
-      return NextResponse.json(
-        { error: `These usernames are not app admins: ${notAdmin.join(", ")}` },
-        { status: 400 }
-      );
+    const [ssoUsers, localUsers] = await Promise.all([
+      listSsoUsers(),
+      prisma.appUser.findMany({
+        where: { username: { in: allowedUsernames } },
+        select: { username: true },
+      }),
+    ]);
+    if (ssoUsers.length > 0) {
+      const knownSet = new Set<string>([
+        ...ssoUsers.map((u) => u.username.toLowerCase()),
+        ...localUsers.map((u) => u.username.toLowerCase()),
+      ]);
+      const unknown = allowedUsernames.filter((u) => !knownSet.has(u));
+      if (unknown.length > 0) {
+        return NextResponse.json(
+          { error: `Unknown username(s): ${unknown.join(", ")} — check the SSO registry` },
+          { status: 400 }
+        );
+      }
     }
   }
 

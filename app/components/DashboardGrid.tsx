@@ -180,26 +180,26 @@ export function DashboardGrid({
 /* ------------------------------ config editor ------------------------------ */
 
 type AllFacility = { id: string; name: string; buildingName: string; active: boolean };
-type UserOption = { username: string; name: string };
+type UserOption = { username: string; name: string; isAdmin?: boolean };
 
 function DashboardConfigEditor({ currentFacilityIds }: { currentFacilityIds: string[] }) {
   const [open, setOpen] = useState(false);
   const [all, setAll] = useState<AllFacility[] | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set(currentFacilityIds));
   const [allowed, setAllowed] = useState<string[]>([]);
-  const [admins, setAdmins] = useState<UserOption[] | null>(null);
+  const [people, setPeople] = useState<UserOption[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setAll(null);
-    setAdmins(null);
+    setPeople(null);
     try {
       const [fRes, cRes, aRes] = await Promise.all([
         fetch(apiPath("/api/facilities"), { cache: "no-store" }),
         fetch(apiPath("/api/admin/dashboard-config"), { cache: "no-store" }),
-        fetch(apiPath("/api/users?kind=admins"), { cache: "no-store" }),
+        fetch(apiPath("/api/users?kind=all"), { cache: "no-store" }),
       ]);
       const fData = await fRes.json().catch(() => ({ facilities: [] }));
       setAll(
@@ -217,14 +217,14 @@ function DashboardConfigEditor({ currentFacilityIds }: { currentFacilityIds: str
       }
       if (aRes.ok) {
         const aData = await aRes.json();
-        setAdmins(
-          (aData.users ?? []).map((u: { username: string; name: string }) => ({
+        setPeople(
+          (aData.users ?? []).map((u: { username: string; name: string; isAdmin?: boolean }) => ({
             username: u.username,
-            name: u.name,
+            name: u.name, isAdmin: u.isAdmin === true,
           }))
         );
       } else {
-        setAdmins([]);
+        setPeople([]);
       }
     } catch {
       setErr("Could not load configuration");
@@ -310,20 +310,20 @@ function DashboardConfigEditor({ currentFacilityIds }: { currentFacilityIds: str
                 aria-label="Users who can view this dashboard"
                 value={allowed}
                 onValueChange={setAllowed}
-                options={(admins ?? []).map((u) => ({
+                options={(people ?? []).map((u) => ({
                   value: u.username,
                   label: u.name,
-                  hint: `@${u.username}`,
+                  hint: u.isAdmin ? `@${u.username} · app admin` : `@${u.username}`,
                 }))}
-                placeholder={allowed.length === 0 ? "Every app admin can view" : "Search and pick users…"}
+                placeholder={allowed.length === 0 ? "App admins have access — add anyone else…" : "Search and pick people…"}
                 searchPlaceholder="Type a name or username…"
-                emptyText="No app admins match"
+                emptyText="No people match"
               />
               <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
                 <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 {allowed.length === 0
-                  ? "Empty — every app admin can view the dashboard. Pick specific users to restrict it."
-                  : "Only the picked users (plus the central super admin) can view the dashboard."}
+                  ? "The app administrator and the central super admin always have access. Add any person below to give them access too."
+                  : "These people can view the dashboard in addition to the app administrators."}
               </p>
             </div>
             <div className="flex items-center gap-2 border-t pt-4">
