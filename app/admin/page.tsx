@@ -110,6 +110,11 @@ export default async function AdminOverviewPage() {
           description="Search, filter and track every booking — by building, facility, user, date range or status."
           href="/admin/all-bookings"
         />
+        <PageCard
+          title="Bookings Dashboard"
+          description="The next 7 days of bookings for the facilities you choose — and only for the admins you choose to show it to."
+          href="/admin/dashboard"
+        />
       </div>
 
       <h2 className="mt-8 text-lg font-semibold">App administrators</h2>

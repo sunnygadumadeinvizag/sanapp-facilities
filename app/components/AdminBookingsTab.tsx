@@ -1,7 +1,13 @@
 "use client";
 import { apiPath } from "sanapp-common-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, FileText, Headphones, Loader2, Pencil, Search, Trash2, X } from "lucide-react";
+import { CalendarClock, FileText, Headphones, History, Loader2, Pencil, Search, Trash2, X } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,12 +15,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DatePicker } from "./DatePicker";
 import { CancelBookingModal } from "./CancelBookingModal";
 import { fmtDuration, fmtIstDateTime, fmtMin, fmtSlotRange, slotDurationMin } from "@/lib/ist";
 
 type AdminBooking = {
   id: string;
+  code: string;
   batchId: string | null;
   type: "SELF" | "ON_BEHALF" | "LONG";
   status: "CONFIRMED" | "CANCELLED";
@@ -73,6 +81,7 @@ export function AdminBookingsTab({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [cancelTargetIds, setCancelTargetIds] = useState<string[] | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
+  const [historyCode, setHistoryCode] = useState<string | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -275,27 +284,34 @@ export function AdminBookingsTab({
         </div>
         <div className="grid gap-1">
           <Label className="text-xs text-muted-foreground">Building</Label>
-          <Select value={buildingId} onValueChange={(v) => { setBuildingId(v); setFacilityId(""); setPage(1); }}>
-            <SelectTrigger><SelectValue placeholder="All buildings" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all">All buildings</SelectItem>
-              {buildings.map((b) => (
-                <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={buildingId}
+            onValueChange={(v) => { setBuildingId(v); setFacilityId(""); setPage(1); }}
+            options={[
+              { value: "__all", label: "All buildings" },
+              ...buildings.map((b) => ({ value: b.id, label: b.name })),
+            ]}
+            placeholder="All buildings"
+            searchPlaceholder="Type a building name…"
+            aria-label="Building"
+            contentClassName="min-w-[16rem]"
+          />
         </div>
         <div className="grid gap-1">
           <Label className="text-xs text-muted-foreground">Room (inside building)</Label>
-          <Select value={facilityId} onValueChange={(v) => { setFacilityId(v); setPage(1); }} disabled={!buildingId}>
-            <SelectTrigger><SelectValue placeholder={buildingId ? "All rooms" : "Pick a building first"} /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all">All rooms</SelectItem>
-              {roomsInBuilding.map((f) => (
-                <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={facilityId}
+            onValueChange={(v) => { setFacilityId(v); setPage(1); }}
+            disabled={!buildingId}
+            options={[
+              { value: "__all", label: "All rooms" },
+              ...roomsInBuilding.map((f) => ({ value: f.id, label: f.name })),
+            ]}
+            placeholder={buildingId ? "All rooms" : "Pick a building first"}
+            searchPlaceholder="Type a room name…"
+            aria-label="Room"
+            contentClassName="min-w-[16rem]"
+          />
         </div>
         <div className="grid gap-1">
           <Label className="text-xs text-muted-foreground">From date</Label>
@@ -360,6 +376,14 @@ export function AdminBookingsTab({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded border bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-primary hover:bg-muted"
+                          title="View this booking's full history (created / edited / cancelled)"
+                          onClick={() => setHistoryCode(b.code)}
+                        >
+                          ID {b.code}
+                        </button>
                         <span className="font-semibold">{b.facility.building.name} — {b.facility.name}</span>
                         <Badge variant={b.type === "LONG" ? "destructive" : "secondary"}>
                           {b.type === "SELF" ? "Self" : b.type === "ON_BEHALF" ? "Blocked" : "Long"}
@@ -394,6 +418,15 @@ export function AdminBookingsTab({
                       )}
                     </div>
                     <div className="flex shrink-0 gap-1.5">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        title="Booking history (created / edited / cancelled)"
+                        onClick={() => setHistoryCode(b.code)}
+                      >
+                        <History className="h-4 w-4" />
+                      </Button>
                       {b.pdf && (
                         <Button variant="outline" size="icon" className="h-8 w-8" asChild title="Attachment">
                           <a href={apiPath(`/api/bookings/${b.id}/pdf`)} target="_blank" rel="noreferrer">
@@ -454,6 +487,12 @@ export function AdminBookingsTab({
         </div>
       </div>
 
+      {/* Booking history dialog (created / edited / cancelled — full audit) */}
+      <AdminBookingHistoryDialog
+        code={historyCode}
+        onClose={() => setHistoryCode(null)}
+      />
+
       {/* Cancel Confirmation Modal */}
       <CancelBookingModal
         open={cancelTargetIds !== null}
@@ -465,5 +504,116 @@ export function AdminBookingsTab({
         busy={cancelBusy}
       />
     </div>
+  );
+}
+
+/* --------------------------- booking history dialog --------------------------- */
+
+type AdminHistoryEvent = {
+  id: string;
+  kind: "CREATED" | "EDITED" | "CANCELLED" | string;
+  at: string;
+  actorName: string | null;
+  actorUsername: string | null;
+  changes: { field: string; before: string; after: string }[] | null;
+  reason: string | null;
+};
+
+function AdminBookingHistoryDialog({
+  code,
+  onClose,
+}: {
+  code: string | null;
+  onClose: () => void;
+}) {
+  const [events, setEvents] = useState<AdminHistoryEvent[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!code) return;
+    setEvents(null);
+    setError(null);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(apiPath(`/api/bookings/history?code=${encodeURIComponent(code)}`), {
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Could not load history");
+        if (!cancelled) setEvents(data.events ?? []);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Could not load history");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  const KIND_BADGE: Record<string, string> = {
+    CREATED: "bg-green-100 text-green-800 border-green-300",
+    EDITED: "bg-amber-100 text-amber-800 border-amber-300",
+    CANCELLED: "bg-red-100 text-red-800 border-red-300",
+  };
+
+  return (
+    <Dialog open={code !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-[560px]">
+        <DialogHeader>
+          <DialogTitle>
+            Booking history <span className="font-mono text-sm text-muted-foreground">{code}</span>
+          </DialogTitle>
+        </DialogHeader>
+        {error && (
+          <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+        )}
+        {!error && events === null && (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading history…
+          </p>
+        )}
+        {events !== null && (
+          <div className="max-h-[55vh] overflow-auto">
+            {events.length === 0 ? (
+              <p className="py-4 text-center text-sm text-muted-foreground">
+                No recorded history for this booking yet (bookings made before this feature have no trail).
+              </p>
+            ) : (
+              <ol className="grid gap-2.5">
+                {events.map((e) => (
+                  <li key={e.id} className="rounded-md border p-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline" className={KIND_BADGE[e.kind] ?? ""}>{e.kind}</Badge>
+                      <span className="text-xs text-muted-foreground">{fmtIstDateTime(e.at)}</span>
+                      {e.actorName && (
+                        <span className="text-xs text-muted-foreground">
+                          by {e.actorName}{e.actorUsername ? ` (@${e.actorUsername})` : ""}
+                        </span>
+                      )}
+                    </div>
+                    {e.changes && e.changes.length > 0 && (
+                      <div className="mt-2 grid gap-1">
+                        {e.changes.map((c, i) => (
+                          <div key={i} className="rounded bg-muted/50 px-2 py-1 text-xs">
+                            <span className="font-semibold">{c.field}:</span>{" "}
+                            <span className="text-muted-foreground line-through">{c.before || "(empty)"}</span>
+                            {" → "}
+                            <span>{c.after || "(empty)"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {e.reason && (
+                      <p className="mt-2 rounded bg-red-50 px-2 py-1 text-xs text-red-700">Reason: {e.reason}</p>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

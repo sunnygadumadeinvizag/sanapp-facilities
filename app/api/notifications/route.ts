@@ -36,9 +36,12 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * POST — mark the user's notifications read: { ids?: string[], all?: boolean }.
- * "all" is scoped to this application so an app's page never clears other
- * apps' notifications.
+ * POST — mark the user's notifications read:
+ * { ids?: string[], all?: boolean, scope?: "all" | "app" }.
+ * Scope "app" (this application's own App Notifications page) keeps "all"
+ * scoped to this application so the page never clears other apps'
+ * notifications; the default "all" is the cross-app header bell, which must
+ * clear every application's rows.
  */
 export async function POST(request: NextRequest) {
   const store = await cookies();
@@ -52,13 +55,17 @@ export async function POST(request: NextRequest) {
   } catch {
     body = {};
   }
+  // The hub scopes "mark all" by basePath, so only forward ours when the
+  // caller asked for app scope — the header bell's "mark all" is cross-app.
+  const scope = body?.scope === "app" ? "app" : "all";
+
   await markAppNotificationsRead({
     mainBaseUrl: MAIN_BASE_URL,
     appKey: MAIN_API_KEY,
     username: user.username,
     ids: Array.isArray(body?.ids) ? body.ids : undefined,
     all: body?.all === true,
-    basePath: BASE_PATH,
+    basePath: scope === "app" ? BASE_PATH : undefined,
   });
   return NextResponse.json({ ok: true });
 }

@@ -110,6 +110,7 @@ model Facility {
   createdAt    DateTime  @default(now())
   bookings     Booking[]
   pocs         FacilityPoc[]
+  notifyConfig FacilityNotifyConfig?
 }
 
 // Facility-level POC. Rows with fromBuilding = true were auto-added because
@@ -130,6 +131,10 @@ model FacilityPoc {
 
 model Booking {
   id         String        @id @default(uuid())
+  // Human-friendly booking reference (e.g. "BK-20260916-X4F2K9"). Carried by
+  // the FIRST slot of each booking submission group (the group's canonical
+  // code); other slots resolve their display code through the shared batchId.
+  code       String? @unique
   facilityId String
   facility   Facility      @relation(fields: [facilityId], references: [id], onDelete: Cascade)
   // Submission group: all slots confirmed in one multi-range submission share
@@ -161,6 +166,10 @@ model Booking {
   isPublicAttachment Boolean @default(false)
   needAvSupport      Boolean @default(false)
   createdAt  DateTime      @default(now())
+  // Audit trail — life-cycle events (created / edited / cancelled).
+  events      BookingEvent[]
+  // Email-notify digest state (one row per booking when notifiers want mails).
+  notifyState BookingNotifyState?
   // Cancellation history — who cancelled, when, and why (set on cancel).
   cancelledAt   DateTime?
   cancelledById String?
@@ -178,4 +187,78 @@ model FacilityRoleLimit {
   role       String // SSO primary role (STAFF_TEACHING, STUDENT, ...)
   maxMinutes Int
   @@unique([facilityId, role])
+}
+
+// ---------------------------------------------------------------------------
+// Booking audit history — every life-cycle event of every slot/booking.
+// Written by the app on create / edit / cancel; never edited after the fact.
+// Powers the admin's booking-history view and the booker's own edit history
+// in My Bookings.
+// ---------------------------------------------------------------------------
+model BookingEvent {
+  id        String   @id @default(uuid())
+  bookingId String
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  // CREATED | EDITED | CANCELLED
+  kind      String
+  at        DateTime @default(now())
+  // Who did it (denormalised snapshot; survives user deletion).
+  actorId       String?
+  actorName     String?
+  actorUsername String?
+  // EDITED: JSON array of {field, before, after} pairs.
+  changes   String?
+  // CANCELLED: free-text reason.
+  reason    String?
+
+  @@index([bookingId, at])
+}
+
+// ---------------------------------------------------------------------------
+// Per-facility notify configuration (the app admin decides, per facility):
+//   notifyOnSlotBooked — email the notifiers whenever a slot of the facility
+//                        is booked / edited / cancelled.
+//   notifyOnAvChange   — email the notifiers whenever the AV-support request
+//                        of a booking is added / edited / removed.
+// Notifiers receive ONE digest email per booking (keyed by the booking code):
+// when another slot joins the same booking, the same notification is UPDATED
+// (re-sent with the full slot list) instead of sending a mail per slot.
+// ---------------------------------------------------------------------------
+model FacilityNotifyConfig {
+  id                 String   @id @default(uuid())
+  facilityId         String   @unique
+  facility           Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  notifyOnSlotBooked Boolean  @default(false)
+  notifyOnAvChange   Boolean  @default(false)
+  // Notifier email addresses (comma / newline separated in the admin UI).
+  notifyEmails       String[] @default([])
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+// Digest state per booking: notifiers get ONE mail per booking; when another
+// slot joins the booking the mail is re-sent with the updated slot list.
+model BookingNotifyState {
+  id        String   @id @default(uuid())
+  bookingId String   @unique
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  code      String
+  // Snapshot of the last emailed body so unchanged bookings are not re-sent.
+  lastBody  String?
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Booking dashboard configuration — the app admin decides WHICH facilities are
+// shown on the "next week bookings" dashboard and WHO may see it.
+// allowedUsernames empty = every app admin sees the dashboard; otherwise only
+// admins whose username is listed (or who hold the central SUPER_ADMIN role).
+// ---------------------------------------------------------------------------
+model DashboardConfig {
+  id               String   @id @default(uuid())
+  // Single-row config (id = "default").
+  facilityIds      String[] @default([])
+  allowedUsernames String[] @default([])
+  updatedAt        DateTime @updatedAt
 }

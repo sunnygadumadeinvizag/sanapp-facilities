@@ -1,7 +1,13 @@
 "use client";
 import { apiPath } from "sanapp-common-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, FileText, Headphones, Loader2, Pencil, Search, Trash2 } from "lucide-react";
+import { CalendarClock, FileText, Headphones, History, Loader2, Pencil, Search, Trash2 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -22,6 +28,7 @@ import { fmtDuration, fmtIstDateTime, fmtMin, fmtSlotRange, slotDurationMin } fr
 
 export type MyBooking = {
   id: string;
+  code: string;
   batchId: string | null;
   type: "SELF" | "ON_BEHALF" | "LONG";
   status: "CONFIRMED" | "CANCELLED";
@@ -71,6 +78,7 @@ export function MyBookingsClient({ today, canEdit }: { today: string; canEdit: b
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [cancelTargetIds, setCancelTargetIds] = useState<string[] | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
+  const [historyCode, setHistoryCode] = useState<string | null>(null);
 
   // Debounce the search box so we don't hit the API on every keystroke.
   useEffect(() => {
@@ -275,6 +283,7 @@ export function MyBookingsClient({ today, canEdit }: { today: string; canEdit: b
                   selected={selected}
                   onToggle={toggle}
                   onCancel={(id) => requestCancel([id])}
+                  onHistory={(code) => setHistoryCode(code)}
                 />
               ))
             : pagedSlots.map((b) => (
@@ -287,6 +296,7 @@ export function MyBookingsClient({ today, canEdit }: { today: string; canEdit: b
                   selected={selected}
                   onToggle={toggle}
                   onCancel={(id) => requestCancel([id])}
+                  onHistory={(code) => setHistoryCode(code)}
                 />
               ))}
         </div>
@@ -326,6 +336,12 @@ export function MyBookingsClient({ today, canEdit }: { today: string; canEdit: b
         </div>
       </div>
 
+      {/* Booking history dialog (created / edited / cancelled) */}
+      <BookingHistoryDialog
+        code={historyCode}
+        onClose={() => setHistoryCode(null)}
+      />
+
       {/* Cancel Confirmation Modal */}
       <CancelBookingModal
         open={cancelTargetIds !== null}
@@ -350,6 +366,7 @@ function BookingGroupCard({
   selected,
   onToggle,
   onCancel,
+  onHistory,
 }: {
   group: BookingGroup;
   tab: string;
@@ -358,6 +375,7 @@ function BookingGroupCard({
   selected: Set<string>;
   onToggle: (id: string) => void;
   onCancel: (id: string) => void;
+  onHistory: (code: string) => void;
 }) {
   const first = group.slots[0];
   const totalMin = group.slots.reduce((acc, b) => acc + slotDurationMin(b.date, b.startMin, b.endDate, b.endMin), 0);
@@ -380,6 +398,23 @@ function BookingGroupCard({
                 Blocked for {first.forUser.name}
               </Badge>
             )}
+            <button
+              type="button"
+              className="rounded border bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-primary hover:bg-muted"
+              title="View this booking's history (created / edited / cancelled)"
+              onClick={() => onHistory(first.code)}
+            >
+              ID {first.code}
+            </button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              title="Booking history"
+              onClick={() => onHistory(first.code)}
+            >
+              <History className="h-3.5 w-3.5" />
+            </Button>
           </div>
 
           <div className="mt-2 flex flex-col gap-1.5">
@@ -474,6 +509,7 @@ function SlotCard({
   selected,
   onToggle,
   onCancel,
+  onHistory,
 }: {
   b: MyBooking;
   tab: string;
@@ -482,6 +518,7 @@ function SlotCard({
   selected: Set<string>;
   onToggle: (id: string) => void;
   onCancel: (id: string) => void;
+  onHistory: (code: string) => void;
 }) {
   const badge = TYPE_BADGE[b.type];
   const dur = slotDurationMin(b.date, b.startMin, b.endDate, b.endMin);
@@ -536,6 +573,25 @@ function SlotCard({
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-2">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              className="rounded border bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-primary hover:bg-muted"
+              title="View this booking's history (created / edited / cancelled)"
+              onClick={() => onHistory(b.code)}
+            >
+              ID {b.code}
+            </button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              title="Booking history"
+              onClick={() => onHistory(b.code)}
+            >
+              <History className="h-4 w-4" />
+            </Button>
+          </div>
           <div className="flex gap-1.5">
             {b.pdf && (
               <Button variant="outline" size="icon" className="h-8 w-8" asChild title="Download attachment">
@@ -575,5 +631,116 @@ function SlotCard({
         </div>
       </div>
     </Card>
+  );
+}
+
+/* --------------------------- booking history dialog --------------------------- */
+
+type HistoryEvent = {
+  id: string;
+  kind: "CREATED" | "EDITED" | "CANCELLED" | string;
+  at: string;
+  actorName: string | null;
+  actorUsername: string | null;
+  changes: { field: string; before: string; after: string }[] | null;
+  reason: string | null;
+};
+
+export function BookingHistoryDialog({
+  code,
+  onClose,
+}: {
+  code: string | null;
+  onClose: () => void;
+}) {
+  const [events, setEvents] = useState<HistoryEvent[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!code) return;
+    setEvents(null);
+    setError(null);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(apiPath(`/api/bookings/history?code=${encodeURIComponent(code)}`), {
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Could not load history");
+        if (!cancelled) setEvents(data.events ?? []);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Could not load history");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  const KIND_BADGE: Record<string, string> = {
+    CREATED: "bg-green-100 text-green-800 border-green-300",
+    EDITED: "bg-amber-100 text-amber-800 border-amber-300",
+    CANCELLED: "bg-red-100 text-red-800 border-red-300",
+  };
+
+  return (
+    <Dialog open={code !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-[560px]">
+        <DialogHeader>
+          <DialogTitle>
+            Booking history <span className="font-mono text-sm text-muted-foreground">{code}</span>
+          </DialogTitle>
+        </DialogHeader>
+        {error && (
+          <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+        )}
+        {!error && events === null && (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading history…
+          </p>
+        )}
+        {events !== null && (
+          <div className="max-h-[55vh] overflow-auto">
+            {events.length === 0 ? (
+              <p className="py-4 text-center text-sm text-muted-foreground">
+                No recorded history for this booking yet (bookings made before this feature have no trail).
+              </p>
+            ) : (
+              <ol className="grid gap-2.5">
+                {events.map((e) => (
+                  <li key={e.id} className="rounded-md border p-3 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline" className={KIND_BADGE[e.kind] ?? ""}>{e.kind}</Badge>
+                      <span className="text-xs text-muted-foreground">{fmtIstDateTime(e.at)}</span>
+                      {e.actorName && (
+                        <span className="text-xs text-muted-foreground">
+                          by {e.actorName}{e.actorUsername ? ` (@${e.actorUsername})` : ""}
+                        </span>
+                      )}
+                    </div>
+                    {e.changes && e.changes.length > 0 && (
+                      <div className="mt-2 grid gap-1">
+                        {e.changes.map((c, i) => (
+                          <div key={i} className="rounded bg-muted/50 px-2 py-1 text-xs">
+                            <span className="font-semibold">{c.field}:</span>{" "}
+                            <span className="text-muted-foreground line-through">{c.before || "(empty)"}</span>
+                            {" → "}
+                            <span>{c.after || "(empty)"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {e.reason && (
+                      <p className="mt-2 rounded bg-red-50 px-2 py-1 text-xs text-red-700">Reason: {e.reason}</p>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

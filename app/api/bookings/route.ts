@@ -14,6 +14,7 @@ import {
   slotIndex,
 } from "@/lib/ist";
 import { effectiveMaxMinutes } from "@/lib/limits";
+import { newBookingCode, recordEvent, sendBookingDigest } from "@/lib/notify";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -26,8 +27,14 @@ function endDayOf(date: string, endDate: string): string {
   return endDate && endDate >= date ? endDate : date;
 }
 
+/** HH:MM label for audit-trail change entries. */
+function fmtMinLabel(m: number): string {
+  return `${Math.floor(m / 60).toString().padStart(2, "0")}:${(m % 60).toString().padStart(2, "0")}`;
+}
+
 const BOOKING_LIST_SELECT = {
   id: true,
+  code: true,
   facilityId: true,
   batchId: true,
   type: true,
@@ -57,11 +64,36 @@ const BOOKING_LIST_SELECT = {
   cancelledBy: { select: { id: true, username: true, name: true, primaryRole: true } },
 };
 
+/**
+ * Display code of a booking slot: slots of one submission share the booking
+ * code, which physically lives on the first slot of the batch. Cache maps
+ * batchId -> code so a list of many slots costs at most one query per batch.
+ */
+async function displayCodeOf(
+  b: { id: string; code: string | null; batchId: string | null },
+  cache: Map<string, string | null>
+): Promise<string> {
+  if (b.code) return b.code;
+  const key = b.batchId ?? b.id;
+  if (!cache.has(key)) {
+    const anchor = b.batchId
+      ? await prisma.booking.findFirst({
+          where: { batchId: b.batchId, code: { not: null } },
+          select: { code: true },
+          orderBy: { createdAt: "asc" },
+        })
+      : null;
+    cache.set(key, anchor?.code ?? b.id);
+  }
+  return cache.get(key) ?? b.id;
+}
+
 /** Redact private fields (purpose, attachment) if viewer is not authorized */
 async function formatBookingForViewer(
   b: any,
   viewerUser: { id: string; role: string },
-  pocFacilityMap?: Map<string, boolean>
+  pocFacilityMap?: Map<string, boolean>,
+  codeCache?: Map<string, string | null>
 ) {
   const isAdmin = viewerUser.role === "ADMIN";
   const isBooker = b.userId === viewerUser.id || b.forUserId === viewerUser.id;
@@ -81,6 +113,9 @@ async function formatBookingForViewer(
 
   return {
     id: b.id,
+    code: codeCache
+      ? await displayCodeOf(b, codeCache)
+      : (b.code ?? b.batchId ?? b.id),
     batchId: b.batchId,
     type: b.type,
     status: b.status,
@@ -231,6 +266,7 @@ export async function GET(request: NextRequest) {
   }
 
   const pocMap = new Map<string, boolean>();
+  const codeCache = new Map<string, string | null>();
 
   if (all) {
     if (user.role !== "ADMIN") return bad("forbidden", 403);
@@ -239,7 +275,7 @@ export async function GET(request: NextRequest) {
       orderBy: [{ date: "desc" }, { startMin: "desc" }],
       select: BOOKING_LIST_SELECT,
     });
-    const bookings = await Promise.all(rows.map((r) => formatBookingForViewer(r, user, pocMap)));
+    const bookings = await Promise.all(rows.map((r) => formatBookingForViewer(r, user, pocMap, codeCache)));
     return NextResponse.json({ bookings });
   }
 
@@ -250,7 +286,7 @@ export async function GET(request: NextRequest) {
       orderBy: [{ date: "asc" }, { startMin: "asc" }],
       select: BOOKING_LIST_SELECT,
     });
-    const bookings = await Promise.all(rows.map((r) => formatBookingForViewer(r, user, pocMap)));
+    const bookings = await Promise.all(rows.map((r) => formatBookingForViewer(r, user, pocMap, codeCache)));
     return NextResponse.json({ bookings });
   }
 
@@ -485,7 +521,18 @@ export async function POST(request: NextRequest) {
 
   const CONFLICT_MSG =
     "That time range is already booked — please pick a free range in the calendar";
-  let booking: Awaited<ReturnType<typeof prisma.booking.create>>;
+  let booking: {
+    id: string;
+    code: string | null;
+    batchId: string | null;
+    facilityId: string;
+    needAvSupport: boolean;
+    purpose: string | null;
+    status: string;
+    facility: { name: string; building: { name: string } };
+    user: { name: string; username: string } | null;
+    forUser: { name: string; username: string } | null;
+  };
   try {
     // Lock the facility row so concurrent booking attempts for the same
     // facility serialise — the conflict re-check and the insert are atomic,
@@ -495,10 +542,19 @@ export async function POST(request: NextRequest) {
       if (await hasConflict(tx, facilityId, startDate, endDate, startMin, endMin)) {
         throw new SlotConflict(CONFLICT_MSG);
       }
-      return await tx.booking.create({
+      // Booking code — the human-friendly reference of the whole submission
+      // group. It lives on the FIRST slot of the batch only (the unique index
+      // on "code" allows exactly one row per code); every other slot of the
+      // same booking resolves the code through the shared batchId.
+      const isFirstOfBatch = batchId
+        ? !(await tx.booking.findFirst({ where: { batchId }, select: { id: true } }))
+        : true;
+      const code = isFirstOfBatch ? newBookingCode() : null;
+      const row = await tx.booking.create({
         data: {
           facilityId,
           batchId,
+          code,
           userId: user.id,
           forUserId: resolvedForUserId,
           type,
@@ -521,6 +577,26 @@ export async function POST(request: NextRequest) {
           forUser: { select: { id: true, username: true, name: true, primaryRole: true } },
         },
       });
+      // Permanent audit trail — every created slot is recorded.
+      await recordEvent(tx, {
+        bookingId: row.id,
+        kind: "CREATED",
+        actorId: user.id,
+        actorName: user.name,
+        actorUsername: user.username,
+      });
+      return {
+        id: row.id,
+        code: row.code,
+        batchId: row.batchId,
+        facilityId: row.facilityId,
+        needAvSupport: row.needAvSupport,
+        purpose: row.purpose,
+        status: row.status,
+        facility: { name: row.facility.name, building: { name: row.facility.building.name } },
+        user: row.user ? { name: row.user.name, username: row.user.username } : null,
+        forUser: row.forUser ? { name: row.forUser.name, username: row.forUser.username } : null,
+      };
     });
   } catch (e) {
     if (e instanceof SlotConflict || isExclusionViolation(e)) {
@@ -529,6 +605,10 @@ export async function POST(request: NextRequest) {
     }
     throw e;
   }
+
+  // Notifier digest — one mail per booking (re-sent/updated when more slots
+  // join the same booking). Fire-and-forget: booking succeeds either way.
+  void sendBookingDigest({ booking });
 
   return NextResponse.json(
     { booking, message: "Booking confirmed" },
@@ -663,11 +743,32 @@ export async function PATCH(request: NextRequest) {
 
   const CONFLICT_MSG = "That time slot is already booked — please pick a free slot";
   let updated: Prisma.BookingGetPayload<{ select: typeof BOOKING_LIST_SELECT }>;
+  let avChanged = false;
   try {
     updated = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Facility" WHERE id = ${facility.id} FOR UPDATE`;
       if (await hasConflict(tx, facility.id, startDate, endDate, startMin, endMin, id)) {
         throw new SlotConflict(CONFLICT_MSG);
+      }
+      // Change diff for the audit trail (before/after pairs).
+      const fmtD = (d: string) => d;
+      const changes: { field: string; before: string; after: string }[] = [];
+      const needAv = body.needAvSupport === undefined
+        ? booking.needAvSupport
+        : body.needAvSupport === true || body.needAvSupport === "true" || body.needAvSupport === "1";
+      avChanged = needAv !== booking.needAvSupport;
+      if (booking.date !== startDate || booking.startMin !== startMin || endDayOf(booking.date, booking.endDate) !== endDayOf(startDate, endDate) || booking.endMin !== endMin) {
+        changes.push({
+          field: "slot",
+          before: `${fmtD(booking.date)} ${fmtMinLabel(booking.startMin)}–${fmtMinLabel(booking.endMin)}`,
+          after: `${fmtD(startDate)} ${fmtMinLabel(startMin)}–${fmtMinLabel(endMin)}`,
+        });
+      }
+      if ((booking.purpose ?? "") !== (purpose ?? "")) {
+        changes.push({ field: "description", before: booking.purpose ?? "", after: purpose ?? "" });
+      }
+      if (body.needAvSupport !== undefined && avChanged) {
+        changes.push({ field: "AV support", before: booking.needAvSupport ? "requested" : "not requested", after: needAv ? "requested" : "not requested" });
       }
       const data: Prisma.BookingUncheckedUpdateInput = {
         date: startDate,
@@ -703,11 +804,23 @@ export async function PATCH(request: NextRequest) {
         data.pdf = null;
         data.pdfName = null;
       }
-      return await tx.booking.update({
+      const saved = await tx.booking.update({
         where: { id },
         data,
         select: BOOKING_LIST_SELECT,
       });
+      // Only log when something actually changed.
+      if (changes.length > 0) {
+        await recordEvent(tx, {
+          bookingId: id,
+          kind: "EDITED",
+          actorId: user.id,
+          actorName: user.name,
+          actorUsername: user.username,
+          changes,
+        });
+      }
+      return saved;
     });
   } catch (e) {
     if (e instanceof SlotConflict || isExclusionViolation(e)) {
@@ -716,6 +829,12 @@ export async function PATCH(request: NextRequest) {
     }
     throw e;
   }
+
+  // Notifier digest — AV-support changes notify even when slot-notify is off
+  // (if the facility opted into AV notifications), and any other edit refreshes
+  // the booking digest for slot notifiers.
+  void sendBookingDigest({ booking: updated, avChanged });
+
   return NextResponse.json({
     booking: { ...updated, pdf: Boolean(updated.pdfName) },
     message: "Booking updated",
@@ -735,7 +854,14 @@ export async function DELETE(request: NextRequest) {
   if (!reason) return bad("Reason for cancellation is required");
   const ids = idParam.split(",").map((s) => s.trim()).filter(Boolean);
 
-  const rows = await prisma.booking.findMany({ where: { id: { in: ids } } });
+  const rows = await prisma.booking.findMany({
+    where: { id: { in: ids } },
+    include: {
+      facility: { select: { id: true, name: true, building: { select: { id: true, name: true } } } },
+      user: { select: { id: true, username: true, name: true, primaryRole: true } },
+      forUser: { select: { id: true, username: true, name: true, primaryRole: true } },
+    },
+  });
   if (rows.length === 0) return bad("No matching bookings found", 404);
 
   const nowIdx = slotIndex(istDateKey(), istMinute());
@@ -759,16 +885,44 @@ export async function DELETE(request: NextRequest) {
       skipped.push({ id: booking.id, reason: "already started" });
       continue;
     }
-    await prisma.booking.update({
-      where: { id: booking.id },
-      data: {
+    await prisma.$transaction([
+      prisma.booking.update({
+        where: { id: booking.id },
+        data: {
+          status: "CANCELLED",
+          cancelledAt: new Date(),
+          cancelledById: user.id,
+          cancelReason: reason,
+        },
+      }),
+      // Audit trail — the cancellation with its reason.
+      prisma.bookingEvent.create({
+        data: {
+          bookingId: booking.id,
+          kind: "CANCELLED",
+          actorId: user.id,
+          actorName: user.name,
+          actorUsername: user.username,
+          reason,
+        },
+      }),
+    ]);
+    results.push(booking.id);
+    // Refresh the notifier digest so notifiers see the CANCELLED marker.
+    void sendBookingDigest({
+      booking: {
+        id: booking.id,
+        code: booking.code,
+        batchId: booking.batchId,
+        facilityId: booking.facilityId,
+        needAvSupport: booking.needAvSupport,
+        purpose: booking.purpose,
         status: "CANCELLED",
-        cancelledAt: new Date(),
-        cancelledById: user.id,
-        cancelReason: reason,
+        facility: { name: booking.facility.name, building: { name: booking.facility.building.name } },
+        user: booking.user ? { name: booking.user.name, username: booking.user.username } : null,
+        forUser: booking.forUser ? { name: booking.forUser.name, username: booking.forUser.username } : null,
       },
     });
-    results.push(booking.id);
   }
 
   return NextResponse.json({

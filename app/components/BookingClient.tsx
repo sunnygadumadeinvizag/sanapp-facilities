@@ -7,6 +7,7 @@ import {
   Calendar as CalendarIcon,
   ChevronLeft,
   ChevronRight,
+  Check,
   Clock,
   Crosshair,
   Headphones,
@@ -390,7 +391,7 @@ export function BookingClient({
 
   /**
    * Auto-commit a selected/dragged range (called by TimeGrid on pointer release
-   * or tap, and by the "Add New Slot" widgets).
+   * or tap, and by the "Add New Slot" / "Save Slot" widgets).
    *
    * Returns false when the range was rejected, so the caller can keep the times
    * the user typed on screen instead of quietly dropping them.
@@ -467,12 +468,12 @@ export function BookingClient({
   const isOnBehalf = forOther;
   const needPurpose = anyLong || isOnBehalf;
 
-  // The one-slot form adds a slot when creating a booking and replaces the slot
-  // when editing one ("Use these times" instead of "Add Slot"). Naming it once
-  // keeps the button, the form and the validation messages in agreement.
+  // The one-slot form saves a slot when creating a booking and replaces the
+  // slot when editing one. Naming the action once ("Save Slot") keeps the
+  // button, the form and the validation messages in agreement.
   const slotToggleLabel = editBooking ? "Change slot times" : "Add new slot";
   const slotFormName = editBooking ? "Change slot times" : "Add New Slot";
-  const slotFormAction = editBooking ? "Use these times" : "Add Slot";
+  const slotFormAction = "Save Slot";
 
   function overCap(r: RangeSelection): boolean {
     if (isAdmin || effMax === null) return false;
@@ -722,9 +723,9 @@ export function BookingClient({
   }
 
   return (
-    <div>
+    <div className="min-w-0 max-w-full overflow-x-hidden">
       {/* Day's schedule chips */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
         <Badge variant="secondary" className="gap-1 font-medium">
           <span>Today: {clock.today}</span>
         </Badge>
@@ -764,14 +765,14 @@ export function BookingClient({
         </div>
       )}
 
-      <div className="mt-4 space-y-4">
-        <Card className="shadow-sm">
-          <CardContent className="p-3 sm:p-4 space-y-3">
+      <div className="mt-4 space-y-4 min-w-0 max-w-full">
+        <Card className="shadow-sm min-w-0">
+          <CardContent className="p-3 sm:p-4 space-y-3 min-w-0">
             {/* Calendar Controls Toolbar */}
-            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between border-b pb-3">
+            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between border-b pb-3 min-w-0">
               {/* Row 1 on mobile: Navigation + Current Date Heading */}
-              <div className="flex flex-wrap items-center justify-between sm:justify-start gap-2">
-                <div className="flex items-center gap-1">
+              <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
+                <div className="flex items-center gap-1 min-w-0">
                   <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" onClick={handlePrev} title="Previous">
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
@@ -783,7 +784,7 @@ export function BookingClient({
                   </Button>
                 </div>
 
-                <div className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold text-foreground">
+                <div className="flex flex-wrap items-center gap-1.5 text-xs sm:text-sm font-semibold text-foreground min-w-0">
                   {viewMode === "day" && <span>{fmtDateHeading(activeDay)}</span>}
                   {viewMode === "3day" && (
                     <span>
@@ -801,7 +802,7 @@ export function BookingClient({
               </div>
 
               {/* Row 2 on mobile: Quick Add Button + View Mode Switcher */}
-              <div className="flex items-center justify-between sm:justify-end gap-2 sm:ml-auto">
+              <div className="flex flex-wrap items-center justify-between gap-2 w-full sm:w-auto sm:justify-end sm:ml-auto min-w-0">
                 <Button
                   type="button"
                   variant="default"
@@ -813,12 +814,12 @@ export function BookingClient({
                   <span>Add by time</span>
                 </Button>
 
-                <div className="flex items-center rounded-lg border bg-muted/50 p-0.5 text-xs">
+                <div className="flex items-center rounded-lg border bg-muted/50 p-0.5 text-xs max-w-full overflow-x-auto">
                   <Button
                     type="button"
                     variant={viewMode === "day" ? "secondary" : "ghost"}
                     size="sm"
-                    className="h-7 px-2.5 text-xs"
+                    className="h-7 px-2.5 text-xs shrink-0"
                     onClick={() => setViewMode("day")}
                   >
                     1 Day
@@ -827,7 +828,7 @@ export function BookingClient({
                     type="button"
                     variant={viewMode === "3day" ? "secondary" : "ghost"}
                     size="sm"
-                    className="h-7 px-2.5 text-xs"
+                    className="h-7 px-2.5 text-xs shrink-0"
                     onClick={() => setViewMode("3day")}
                   >
                     3 Days
@@ -836,7 +837,7 @@ export function BookingClient({
                     type="button"
                     variant={viewMode === "week" ? "secondary" : "ghost"}
                     size="sm"
-                    className="h-7 px-2.5 text-xs"
+                    className="h-7 px-2.5 text-xs shrink-0"
                     onClick={() => setViewMode("week")}
                   >
                     Week
@@ -867,7 +868,7 @@ export function BookingClient({
               onReject={rejectRange}
               nowMin={clock.nowMin}
               todayKey={clock.today}
-              maxHeight="58vh"
+              maxHeight="min(58vh, 480px)"
               onAutoAdvance={(delta) => {
                 const nextWeek = addDays(weekStart, delta);
                 setWeekStart(nextWeek);
@@ -877,7 +878,8 @@ export function BookingClient({
             />
 
             <p className="text-[11px] text-muted-foreground">
-              Tip: Tap any slot cell to select it. Tap adjacent slots to extend, or drag across hours.
+              Tip: Tap any slot cell to select it. Tap adjacent slots to extend. On desktop, drag across
+              hours to select a range. Swipe or use the scroll bars / buttons to move around the calendar.
               On a selected (blue) slot, drag its middle to move it, or its top / bottom edge to shorten
               or extend it — a live tooltip follows your finger, so the same gesture works with a mouse
               and on a phone. On mobile phones, switch to <strong>1 Day</strong> view for full-width time
@@ -888,16 +890,16 @@ export function BookingClient({
 
         {/* Selected slots summary — always on screen so the slot list and the
             "Add new slot" button are reachable without using the calendar. */}
-        <Card className="shadow-sm">
-          <CardContent className="p-4">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
+        <Card className="shadow-sm min-w-0">
+          <CardContent className="p-3 sm:p-4 min-w-0">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
                   <h4 className="text-sm font-semibold">Selected slots ({ranges.length})</h4>
                   {hasOverCap && (
                     <span className="text-xs text-red-600 font-medium">Some slots exceed the {effMaxLabel} limit</span>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     type="button"
                     variant="outline"
@@ -1008,8 +1010,8 @@ export function BookingClient({
           </Card>
 
         {/* Booking details */}
-        <Card className="shadow-sm">
-          <CardContent className="p-4 space-y-4">
+        <Card className="shadow-sm min-w-0">
+          <CardContent className="p-3 sm:p-4 space-y-4 min-w-0">
             {!editBooking && canPoc && (
               <label className="flex items-center gap-2 text-sm font-medium">
                 <Checkbox checked={forOther} onCheckedChange={(v) => setForOther(v === true)} />
@@ -1276,7 +1278,7 @@ function AddNewSlotInlineRow({
   onAdd,
   onCancel,
   heading = "Add New Slot",
-  submitLabel = "Add Slot",
+  submitLabel = "Save Slot",
 }: {
   initialDate?: string;
   todayKey: string;
@@ -1458,7 +1460,7 @@ function AddNewSlotInlineRow({
 
       <div className="flex items-center gap-2 pt-1">
         <Button type="button" size="sm" className="h-8 text-xs gap-1" onClick={handleAdd}>
-          <Plus className="h-3.5 w-3.5" />
+          <Check className="h-3.5 w-3.5" />
           <span>{submitLabel}</span>
         </Button>
         <Button type="button" size="sm" variant="ghost" className="h-8 text-xs" onClick={onCancel}>
@@ -1857,7 +1859,7 @@ function QuickAddSlotDialog({
             Quick Add Slot
           </DialogTitle>
           <DialogDescription>
-            Select a date, start time, and end time or duration to add a slot.
+            Select a date, start time, and end time or duration, then press Save Slot.
           </DialogDescription>
         </DialogHeader>
 
@@ -1961,7 +1963,7 @@ function QuickAddSlotDialog({
             Cancel
           </Button>
           <Button type="button" onClick={handleAdd}>
-            Add Slot
+            Save Slot
           </Button>
         </DialogFooter>
       </DialogContent>

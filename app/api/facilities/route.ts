@@ -23,9 +23,36 @@ export async function GET(request: NextRequest) {
         include: { user: { select: { id: true, name: true, username: true } } },
         orderBy: { createdAt: "asc" },
       },
+      notifyConfig: {
+        select: {
+          notifyOnSlotBooked: true,
+          notifyOnAvChange: true,
+          notifyEmails: true,
+        },
+      },
     },
   });
   return NextResponse.json({ facilities });
+}
+
+/** Notifier emails: accept a string (comma/newline separated) or an array; validate shape. */
+function normalizeNotifyEmails(value: unknown): string[] {
+  const parts: string[] = Array.isArray(value)
+    ? value.map((v) => String(v ?? ""))
+    : typeof value === "string"
+      ? value.split(/[\n,;]+/)
+      : [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of parts) {
+    const email = raw.trim().toLowerCase();
+    if (!email) continue;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+    if (seen.has(email)) continue;
+    seen.add(email);
+    out.push(email);
+  }
+  return out.slice(0, 25);
 }
 
 export async function POST(request: NextRequest) {
@@ -89,6 +116,11 @@ export async function POST(request: NextRequest) {
         .filter((r: { role: string; maxMinutes: number }) => r.role && Number.isInteger(r.maxMinutes) && r.maxMinutes > 0)
     : [];
 
+  // Per-facility notify configuration (app admin decides who gets emailed).
+  const notifyEmails = normalizeNotifyEmails((body as { notifyEmails?: unknown }).notifyEmails);
+  const notifyOnSlotBooked = Boolean((body as { notifyOnSlotBooked?: unknown }).notifyOnSlotBooked);
+  const notifyOnAvChange = Boolean((body as { notifyOnAvChange?: unknown }).notifyOnAvChange);
+
   const facility = await prisma.facility.create({
     data: {
       buildingId,
@@ -105,6 +137,14 @@ export async function POST(request: NextRequest) {
       maxMinutes,
       hasAvSupport: Boolean((body as { hasAvSupport?: unknown }).hasAvSupport),
       roleLimits: { create: roleLimits },
+      notifyConfig: {
+        create: { notifyOnSlotBooked, notifyOnAvChange, notifyEmails },
+      },
+    },
+    include: {
+      notifyConfig: {
+        select: { notifyOnSlotBooked: true, notifyOnAvChange: true, notifyEmails: true },
+      },
     },
   });
   return NextResponse.json({ facility }, { status: 201 });
@@ -136,6 +176,18 @@ export async function PATCH(request: NextRequest) {
   if (typeof b.active === "boolean") data.active = b.active;
   if (typeof b.hasAvSupport === "boolean") data.hasAvSupport = b.hasAvSupport;
 
+  // Notify configuration — upserted so both create and edit forms manage it.
+  const notifyUpdate: Record<string, unknown> | null =
+    b.notifyOnSlotBooked !== undefined ||
+    b.notifyOnAvChange !== undefined ||
+    b.notifyEmails !== undefined
+      ? {
+          notifyOnSlotBooked: Boolean(b.notifyOnSlotBooked),
+          notifyOnAvChange: Boolean(b.notifyOnAvChange),
+          notifyEmails: normalizeNotifyEmails(b.notifyEmails),
+        }
+      : null;
+
   let facility;
   try {
     facility = await prisma.facility.update({ where: { id }, data });
@@ -143,6 +195,14 @@ export async function PATCH(request: NextRequest) {
     const code = (e as { code?: string })?.code;
     if (code === "P2025") return NextResponse.json({ error: "Facility not found" }, { status: 404 });
     throw e;
+  }
+
+  if (notifyUpdate) {
+    await prisma.facilityNotifyConfig.upsert({
+      where: { facilityId: id },
+      update: notifyUpdate,
+      create: { facilityId: id, ...notifyUpdate },
+    });
   }
 
   if (Array.isArray(b.roleLimits)) {
@@ -160,7 +220,15 @@ export async function PATCH(request: NextRequest) {
     ]);
   }
 
-  return NextResponse.json({ facility });
+  const withConfig = await prisma.facility.findUnique({
+    where: { id },
+    include: {
+      notifyConfig: {
+        select: { notifyOnSlotBooked: true, notifyOnAvChange: true, notifyEmails: true },
+      },
+    },
+  });
+  return NextResponse.json({ facility: withConfig ?? facility });
 }
 
 export async function DELETE(request: NextRequest) {

@@ -532,7 +532,18 @@ export function TimeGrid({
       onReject?.("That slot is already booked or unavailable.");
       return;
     }
-    
+
+    // Touch: do not capture or start a drag-select — the browser pans the
+    // scroller (touch-action on the grid). A tap is completed in pointerup.
+    if (e.pointerType === "touch") {
+      isPointerDownRef.current = true;
+      pointerStartPosRef.current = { x: e.clientX, y: e.clientY };
+      dragFrom.current = cell;
+      lastPosRef.current = { x: e.clientX, y: e.clientY };
+      setDragPos({ x: e.clientX, y: e.clientY });
+      return;
+    }
+
     isPointerDownRef.current = true;
     pointerStartPosRef.current = { x: e.clientX, y: e.clientY };
     dragFrom.current = cell;
@@ -551,6 +562,8 @@ export function TimeGrid({
 
   function handlePointerMove(e: React.PointerEvent<HTMLDivElement>) {
     if (!isPointerDownRef.current || !dragFrom.current) return;
+    // Touch is scrolling the calendar natively — don't fight it with a drag.
+    if (e.pointerType === "touch") return;
     lastPosRef.current = { x: e.clientX, y: e.clientY };
     setDragPos({ x: e.clientX, y: e.clientY });
 
@@ -626,6 +639,24 @@ export function TimeGrid({
     setDrag(null);
     setDragPos(null);
 
+    // Touch: only complete a tap (small movement). Swipes are scrolls.
+    if (e.pointerType === "touch") {
+      if (!startPos) return;
+      const dx = Math.abs(e.clientX - startPos.x);
+      const dy = Math.abs(e.clientY - startPos.y);
+      if (dx >= 6 || dy >= 6) return;
+      const preferredEndMin = Math.min(24 * 60, from.min + 60);
+      const tapRange: RangeSelection = {
+        startDate: from.date,
+        startMin: from.min,
+        endDate: from.date,
+        endMin: preferredEndMin,
+      };
+      const use = !conflict(tapRange) ? tapRange : { ...tapRange, endMin: from.min + CELL_MIN };
+      commitFinalRange(from, use);
+      return;
+    }
+
     if (!cur) return;
 
     // Check if it was a single tap (< 6px movement)
@@ -695,11 +726,11 @@ export function TimeGrid({
   }
 
   return (
-    <div>
+    <div className="min-w-0 max-w-full overflow-x-hidden">
       {/* Quick Jump & Multi-Direction Scroll Navigation Bar */}
-      <div className="mb-2 flex flex-col gap-2 bg-muted/30 p-2 rounded-lg border">
+      <div className="mb-2 flex flex-col gap-2 bg-muted/30 p-2 rounded-lg border min-w-0 max-w-full">
         {/* Row 1: Quick Time Jumper Buttons */}
-        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none py-0.5 max-w-full">
+        <div className="flex flex-wrap items-center gap-1 py-0.5 max-w-full min-w-0 overflow-hidden">
           <span className="text-[11px] text-muted-foreground font-semibold mr-0.5 shrink-0 flex items-center gap-1">
             <Clock className="h-3.5 w-3.5 text-primary" /> Jump:
           </span>
@@ -766,8 +797,8 @@ export function TimeGrid({
         </div>
 
         {/* Row 2: Scroll Direction Helpers (Top, Bottom, Up, Down, Left, Right) */}
-        <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-border/50">
-          <div className="flex items-center gap-1 overflow-x-auto scrollbar-none py-0.5">
+        <div className="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-border/50">
+          <div className="flex flex-wrap items-center gap-1 py-0.5 min-w-0">
             <span className="text-[11px] text-muted-foreground font-medium mr-1 shrink-0">
               Scroll:
             </span>
@@ -846,8 +877,8 @@ export function TimeGrid({
         </div>
       </div>
 
-      <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
+      <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <p className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-3 w-3 rounded-sm border-2 border-primary bg-primary/25" /> Tap or drag to select
           </span>
@@ -859,7 +890,7 @@ export function TimeGrid({
             <span className="inline-block h-3 w-3 rounded-sm bg-red-500/20 border border-red-400" /> Already booked
           </span>
         </p>
-        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none pb-0.5">
+        <div className="flex flex-wrap items-center gap-1 pb-0.5 min-w-0">
           <span className="text-[11px] text-muted-foreground mr-1 hidden sm:inline">Zoom:</span>
           {ZOOMS.map((z) => (
             <Button
@@ -876,7 +907,6 @@ export function TimeGrid({
           ))}
         </div>
       </div>
-
       {/* Live from–to tooltip while dragging */}
       {drag && dragPos && (() => {
         const dur = slotDurationMin(drag.startDate, drag.startMin, drag.endDate, drag.endMin);
@@ -928,9 +958,9 @@ export function TimeGrid({
         );
       })()}
 
-      <div ref={scrollerRef} className="overflow-auto rounded-lg border bg-card fb-scroller" style={{ maxHeight: maxHeight ?? "52vh" }}>
+      <div ref={scrollerRef} className="overflow-auto rounded-lg border bg-card fb-scroller" style={{ maxHeight: maxHeight ?? "52vh", minWidth: 0, width: "100%", maxWidth: "100%" }}>
         {/* Day header (sticky) — today is bold */}
-        <div className="sticky top-0 z-20 flex bg-card border-b">
+        <div className="sticky top-0 z-20 flex bg-card border-b min-w-max">
           <div style={{ width: GUTTER_W }} className="shrink-0" />
           {days.map((d) => (
             <div
@@ -948,7 +978,7 @@ export function TimeGrid({
             </div>
           ))}
         </div>
-        <div className="flex">
+        <div className="flex min-w-max">
           {/* Time gutter */}
           <div style={{ width: GUTTER_W, height: colHeight }} className="shrink-0 relative select-none">
             {marks.map((m) => (
@@ -963,11 +993,12 @@ export function TimeGrid({
               </div>
             ))}
           </div>
-          {/* Day columns */}
+          {/* Day columns — pan-x pan-y so a finger scrolls the calendar;
+              mouse/pen still drag-select; touch uses tap + tap-to-extend. */}
           <div
             ref={containerRef}
-            className="relative flex select-none touch-none fb-grid"
-            style={{ height: colHeight, touchAction: "none" }}
+            className="relative flex select-none fb-grid"
+            style={{ height: colHeight, touchAction: "pan-x pan-y" }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}

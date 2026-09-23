@@ -8,13 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Textarea } from "@/components/ui/textarea";
 import { PocManager } from "./PocManager";
 import { capLabel } from "@/lib/limits";
@@ -24,6 +18,12 @@ const PRIMARY_ROLES = ["STAFF_TEACHING", "STAFF_NON_TEACHING", "STUDENT", "SCHOL
 
 type RoleLimit = { role: string; maxMinutes: number };
 type Poc = { userId: string; fromBuilding?: boolean; user: { id: string; name: string; username: string } };
+
+type NotifyConfig = {
+  notifyOnSlotBooked: boolean;
+  notifyOnAvChange: boolean;
+  notifyEmails: string[];
+};
 
 type Facility = {
   id: string;
@@ -36,6 +36,7 @@ type Facility = {
   hasAvSupport: boolean;
   active: boolean;
   pocs: Poc[];
+  notifyConfig?: NotifyConfig | null;
 };
 
 type BuildingWithFacilities = {
@@ -71,6 +72,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                 hasAvSupport: Boolean(f.hasAvSupport),
                 active: f.active !== false,
                 pocs: Array.isArray(f.pocs) ? f.pocs : [],
+                notifyConfig: (facility as { notifyConfig?: NotifyConfig | null }).notifyConfig ?? null,
               };
             })
           : [],
@@ -89,6 +91,9 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
   const [maxMinutes, setMaxMinutes] = useState("");
   const [roleLimits, setRoleLimits] = useState<Record<string, string>>({});
   const [hasAvSupport, setHasAvSupport] = useState(false);
+  const [notifyOnSlotBooked, setNotifyOnSlotBooked] = useState(false);
+  const [notifyOnAvChange, setNotifyOnAvChange] = useState(false);
+  const [notifyEmails, setNotifyEmails] = useState("");
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Record<string, unknown>>({});
@@ -135,6 +140,9 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
         allowedRoles,
         maxMinutes: maxMinutes === "" ? null : Number(maxMinutes),
         hasAvSupport,
+        notifyOnSlotBooked,
+        notifyOnAvChange,
+        notifyEmails,
         roleLimits: Object.entries(roleLimits)
           .filter(([, v]) => v !== "" && Number(v) > 0)
           .map(([role, v]) => ({ role, maxMinutes: Number(v) })),
@@ -144,6 +152,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
     if (!res.ok) return setError(data.error ?? "Could not create facility");
     setError(null);
     setName(""); setDescription(""); setCapacity(""); setAllowedRoles([]); setMaxMinutes(""); setRoleLimits({}); setHasAvSupport(false);
+    setNotifyOnSlotBooked(false); setNotifyOnAvChange(false); setNotifyEmails("");
     await reload();
   }
 
@@ -196,6 +205,9 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       maxMinutes: f.maxMinutes ? String(f.maxMinutes) : "",
       hasAvSupport: f.hasAvSupport,
       roleLimits: Object.fromEntries(f.roleLimits.map((r) => [r.role, String(r.maxMinutes)])),
+      notifyOnSlotBooked: f.notifyConfig?.notifyOnSlotBooked ?? false,
+      notifyOnAvChange: f.notifyConfig?.notifyOnAvChange ?? false,
+      notifyEmails: (f.notifyConfig?.notifyEmails ?? []).join(", "),
     });
   }
 
@@ -210,6 +222,9 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       roleLimits: Object.entries((editForm.roleLimits as Record<string, string>) ?? {})
         .filter(([, v]) => v !== "" && Number(v) > 0)
         .map(([role, v]) => ({ role, maxMinutes: Number(v) })),
+      notifyOnSlotBooked: Boolean(editForm.notifyOnSlotBooked),
+      notifyOnAvChange: Boolean(editForm.notifyOnAvChange),
+      notifyEmails: String(editForm.notifyEmails ?? ""),
     });
     setEditingId(null);
   }
@@ -233,12 +248,14 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       <div className="flex flex-wrap items-end gap-3">
         <div className="grid w-72 gap-1.5">
           <Label>Building</Label>
-          <Select value={buildingId} onValueChange={setBuildingId}>
-            <SelectTrigger><SelectValue placeholder="Select building" /></SelectTrigger>
-            <SelectContent>
-              {buildings.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={buildingId}
+            onValueChange={setBuildingId}
+            options={buildings.map((b) => ({ value: b.id, label: b.name }))}
+            placeholder="Select building"
+            searchPlaceholder="Type a building name…"
+            aria-label="Building"
+          />
         </div>
       </div>
 
@@ -303,6 +320,44 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                 </div>
               </label>
             </div>
+            <div className="rounded-md border p-3 bg-muted/20 grid gap-3">
+              <div className="text-sm font-semibold">Email notifications for this facility</div>
+              <p className="text-xs text-muted-foreground -mt-2">
+                The app admin decides who gets notified. Notifiers receive one email per booking
+                (with the booking ID, slot times, description and AV status) — when another slot
+                joins the same booking, the same notification is updated with the full slot list.
+              </p>
+              <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
+                <Checkbox checked={notifyOnSlotBooked} onCheckedChange={(v) => setNotifyOnSlotBooked(v === true)} className="mt-0.5" />
+                <div>
+                  <span>Notify when a slot is booked, edited or cancelled</span>
+                  <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                    Every booking on this facility emails the notifiers below.
+                  </p>
+                </div>
+              </label>
+              <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
+                <Checkbox checked={notifyOnAvChange} onCheckedChange={(v) => setNotifyOnAvChange(v === true)} className="mt-0.5" />
+                <div>
+                  <span>Notify when AV support is added, edited or removed on a booking</span>
+                  <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                    AV-technician request changes on any booking of this facility.
+                  </p>
+                </div>
+              </label>
+              <div className="grid gap-1.5">
+                <Label>Notifier email addresses</Label>
+                <Textarea
+                  rows={2}
+                  placeholder="notifier1@iipe.ac.in, notifier2@iipe.ac.in"
+                  value={notifyEmails}
+                  onChange={(e) => setNotifyEmails(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Comma or line separated. Notifications are sent only when at least one address is set.
+                </p>
+              </div>
+            </div>
             <div><Button type="submit">Add facility</Button></div>
           </form>
         </CardContent>
@@ -341,6 +396,14 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                     {f.hasAvSupport && (
                       <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-900 font-medium">
                         AV Support Allowed
+                      </Badge>
+                    )}
+                    {f.notifyConfig && f.notifyConfig.notifyEmails.length > 0 && (f.notifyConfig.notifyOnSlotBooked || f.notifyConfig.notifyOnAvChange) && (
+                      <Badge variant="outline" className="border-sky-400 bg-sky-50 text-sky-900 font-medium">
+                        Notify: {[
+                          f.notifyConfig.notifyOnSlotBooked ? "bookings" : null,
+                          f.notifyConfig.notifyOnAvChange ? "AV changes" : null,
+                        ].filter(Boolean).join(" + ")} → {f.notifyConfig.notifyEmails.length} email{f.notifyConfig.notifyEmails.length === 1 ? "" : "s"}
                       </Badge>
                     )}
                     {f.allowedRoles.length === 0 ? (
@@ -429,6 +492,44 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                             </p>
                           </div>
                         </label>
+                      </div>
+                      <div className="rounded-md border p-3 bg-muted/20 grid gap-3">
+                      <div className="text-sm font-semibold">Email notifications for this facility</div>
+                      <p className="text-xs text-muted-foreground -mt-2">
+                        The app admin decides who gets notified. Notifiers receive one email per booking
+                        (with the booking ID, slot times, description and AV status) — when another slot
+                        joins the same booking, the same notification is updated with the full slot list.
+                      </p>
+                      <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
+                        <Checkbox checked={Boolean(editForm.notifyOnSlotBooked)} onCheckedChange={(v) => setEditForm((p) => ({ ...p, notifyOnSlotBooked: v }))} className="mt-0.5" />
+                        <div>
+                          <span>Notify when a slot is booked, edited or cancelled</span>
+                          <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                            Every booking on this facility emails the notifiers below.
+                          </p>
+                        </div>
+                      </label>
+                      <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
+                        <Checkbox checked={Boolean(editForm.notifyOnAvChange)} onCheckedChange={(v) => setEditForm((p) => ({ ...p, notifyOnAvChange: v }))} className="mt-0.5" />
+                        <div>
+                          <span>Notify when AV support is added, edited or removed on a booking</span>
+                          <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                            AV-technician request changes on any booking of this facility.
+                          </p>
+                        </div>
+                      </label>
+                      <div className="grid gap-1.5">
+                        <Label>Notifier email addresses</Label>
+                        <Textarea
+                          rows={2}
+                          placeholder="notifier1@iipe.ac.in, notifier2@iipe.ac.in"
+                          value={String(editForm.notifyEmails ?? "")}
+                          onChange={(e) => setEditForm((p) => ({ ...p, notifyEmails: e.target.value }))}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Comma or line separated. Notifications are sent only when at least one address is set.
+                        </p>
+                      </div>
                       </div>
                       <div className="flex gap-2">
                         <Button size="sm" onClick={() => saveEdit(f)}>Save changes</Button>

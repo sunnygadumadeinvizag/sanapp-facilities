@@ -31,6 +31,7 @@ export async function AppShell({
     | "admin-buildings"
     | "admin-facilities"
     | "admin-bookings"
+    | "admin-dashboard"
     | "my-apps"
     | "applications"
     | "account"
@@ -64,6 +65,7 @@ export async function AppShell({
           { label: "Buildings & POCs", href: "/admin/buildings", active: active === "admin-buildings" },
           { label: "Facilities & POCs", href: "/admin/facilities", active: active === "admin-facilities" },
           { label: "All Bookings", href: "/admin/all-bookings", active: active === "admin-bookings" },
+          { label: "Bookings Dashboard", href: "/admin/dashboard", active: active === "admin-dashboard" },
         ]
       : []),
     { label: "App Notifications", href: "/notifications", active: active === "notifications" },
