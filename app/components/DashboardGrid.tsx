@@ -1,13 +1,13 @@
 "use client";
 import { apiPath } from "sanapp-common-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Building2, CalendarClock, Headphones, Loader2, Settings2, ShieldCheck, Users2, X } from "lucide-react";
+import { Building2, CalendarClock, ChevronLeft, ChevronRight, Headphones, Loader2, Settings2, ShieldCheck, Users2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { MultiSearchableSelect } from "@/components/ui/multi-searchable-select";
-import { fmtMin } from "@/lib/ist";
+import { addDays, fmtMin, mondayOf } from "@/lib/ist";
 
 export type DashSlot = {
   id: string;
@@ -70,9 +70,32 @@ export function DashboardGrid({
   canConfigure: boolean;
 }) {
   const days = useMemo(() => daysBetween(from, to), [from, to]);
+  // Weeks always run Monday → Sunday; `from` is already that Monday.
+  const prevWeek = addDays(from, -7);
+  const nextWeek = addDays(from, 7);
+  const thisWeek = mondayOf(today);
+  const isCurrentWeek = from === thisWeek;
 
   return (
     <div className="grid gap-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" size="sm" asChild>
+          <a href={apiPath(`/admin/dashboard?week=${prevWeek}`)}>
+            <ChevronLeft className="h-4 w-4" /> Previous week
+          </a>
+        </Button>
+        <Button variant={isCurrentWeek ? "secondary" : "outline"} size="sm" asChild>
+          <a href={apiPath("/admin/dashboard")}>This week</a>
+        </Button>
+        <Button variant="outline" size="sm" asChild>
+          <a href={apiPath(`/admin/dashboard?week=${nextWeek}`)}>
+            Next week <ChevronRight className="h-4 w-4" />
+          </a>
+        </Button>
+        <span className="text-sm text-muted-foreground">
+          {isCurrentWeek ? "Showing this week" : "Showing week"} · Mon {from} → Sun {to}
+        </span>
+      </div>
       {unconfigured && canConfigure && (
         <Card className="border-dashed">
           <CardContent className="flex items-start gap-3 p-5 text-sm text-muted-foreground">
@@ -107,15 +130,15 @@ export function DashboardGrid({
                     {facilitySlots.length} slot{facilitySlots.length === 1 ? "" : "s"} this week
                   </Badge>
                 </div>
-                <CardContent className="p-3">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+                <CardContent className="min-w-0 p-3">
+                  <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
                     {days.map((day) => {
                       const list = daySlots(facilitySlots, day, f.id);
                       const isToday = day === today;
                       return (
                         <div
                           key={day}
-                          className={`rounded-lg border p-2 ${isToday ? "border-primary/40 bg-primary/5 shadow-sm" : "bg-card"}`}
+                          className={`min-w-0 rounded-lg border p-2 ${isToday ? "border-primary/40 bg-primary/5 shadow-sm" : "bg-card"}`}
                         >
                           <div className="mb-2 flex items-baseline justify-between">
                             <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -132,7 +155,7 @@ export function DashboardGrid({
                               {list.map((s) => (
                                 <div
                                   key={s.id + day}
-                                  className="rounded-md border-l-2 border-l-primary/60 bg-muted/60 px-2 py-1.5 text-xs"
+                                  className="min-w-0 overflow-hidden rounded-md border-l-2 border-l-primary/60 bg-muted/60 px-2 py-1.5 text-xs"
                                   title={s.purpose ?? undefined}
                                 >
                                   <div className="flex items-center gap-1 font-medium">
@@ -155,8 +178,17 @@ export function DashboardGrid({
                                   <div className="mt-1 truncate text-muted-foreground" title={s.bookedBy}>
                                     {s.bookedBy}
                                   </div>
-                                  {s.purpose && <div className="mt-0.5 line-clamp-2 text-[11px]">{s.purpose}</div>}
-                                  <div className="mt-0.5 font-mono text-[10px] text-muted-foreground/70">{s.code}</div>
+                                  {s.purpose && (
+                                    <div className="mt-0.5 line-clamp-2 break-words text-[11px]">
+                                      {s.purpose}
+                                    </div>
+                                  )}
+                                  <div
+                                    className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground/70"
+                                    title={s.code}
+                                  >
+                                    {s.code}
+                                  </div>
                                 </div>
                               ))}
                             </div>

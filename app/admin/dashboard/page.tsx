@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { verifyAppSession } from "@/lib/session";
 import { isAdminSession } from "@/lib/auth";
-import { addDays, istDateKey } from "@/lib/ist";
+import { addDays, istDateKey, mondayOf } from "@/lib/ist";
 import { dashboardAccess } from "@/lib/dashboard";
 import { AppShell } from "../../components/AppShell";
 import { DashboardGrid } from "../../components/DashboardGrid";
@@ -10,7 +10,11 @@ import { Card, CardContent } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
 
-export default async function FacilitiesDashboardPage() {
+export default async function FacilitiesDashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ week?: string }>;
+}) {
   const store = await cookies();
   const session = store.get("app4_session")?.value ?? "";
   const me = await verifyAppSession(session);
@@ -21,8 +25,16 @@ export default async function FacilitiesDashboardPage() {
   const access = await dashboardAccess();
 
   const today = istDateKey();
-  const from = today; // the next 7 days starting today
-  const to = addDays(today, 6);
+
+  // Weeks run Monday → Sunday. `?week=YYYY-MM-DD` selects which week to
+  // show: any date inside a week picks that whole week, and anything absent
+  // or malformed falls back to the week containing today.
+  const sp = await searchParams;
+  const requested =
+    typeof sp.week === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.week) ? sp.week : null;
+  const weekStart = mondayOf(requested ?? today);
+  const from = weekStart;
+  const to = addDays(weekStart, 6);
 
   if (!access.visible) {
     return (
@@ -75,6 +87,26 @@ export default async function FacilitiesDashboardPage() {
         })
       : [];
 
+  // A booking's reference lives on the first slot of its submission group;
+  // the other slots of the same booking carry no code of their own. Resolve
+  // it per batch so every day of a multi-day booking shows the same readable
+  // reference instead of falling back to a raw UUID.
+  const batchIds = [
+    ...new Set(bookings.map((b) => b.batchId).filter((v): v is string => Boolean(v))),
+  ];
+  const anchors =
+    batchIds.length > 0
+      ? await prisma.booking.findMany({
+          where: { batchId: { in: batchIds }, code: { not: null } },
+          select: { batchId: true, code: true },
+          orderBy: { createdAt: "asc" },
+        })
+      : [];
+  const codeByBatch = new Map<string, string>();
+  for (const a of anchors) {
+    if (a.batchId && a.code && !codeByBatch.has(a.batchId)) codeByBatch.set(a.batchId, a.code);
+  }
+
   const fromIdx = Date.parse(`${from}T00:00:00Z`) / 60000;
   const toIdx = Date.parse(`${to}T00:00:00Z`) / 60000 + 1440;
   const dayIdx = (d: string) => Date.parse(`${d}T00:00:00Z`) / 60000;
@@ -84,7 +116,7 @@ export default async function FacilitiesDashboardPage() {
     .filter((b) => dayIdx(b.date) + b.startMin < toIdx && dayIdx(endDay(b)) + b.endMin > fromIdx)
     .map((b) => ({
       id: b.id,
-      code: b.code ?? b.batchId ?? b.id,
+      code: b.code ?? (b.batchId ? codeByBatch.get(b.batchId) : undefined) ?? "—",
       facilityId: b.facilityId,
       date: b.date,
       endDate: endDay(b),
@@ -99,8 +131,8 @@ export default async function FacilitiesDashboardPage() {
     <AppShell me={me} active="admin-dashboard">
       <h1 className="text-xl font-semibold">Bookings Dashboard</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        The next 7 days ({from} → {to}) for the facilities the app administrator added to this
-        dashboard. Only those facilities&apos; confirmed slots are shown.
+        Monday {from} → Sunday {to}. Use the arrows to step through the weeks — only the
+        facilities the app administrator added to this dashboard are shown.
       </p>
       <DashboardGrid
         today={today}

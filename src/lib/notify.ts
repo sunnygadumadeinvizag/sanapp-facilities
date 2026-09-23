@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@/generated/prisma/client";
 
 /**
  * Booking life-cycle notifications + audit events.
@@ -31,17 +32,18 @@ export type ChangeEntry = { field: string; before: string; after: string };
 /* Booking codes                                                              */
 /* -------------------------------------------------------------------------- */
 
-const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I/1, O/0 confusion
-
-/** "BK-YYYYMMDD-XXXXXX" — date is the day the booking was created (IST). */
-export function newBookingCode(now = new Date()): string {
-  const ist = new Date(now.getTime() + (5 * 60 + 30) * 60_000);
-  const ymd = ist.toISOString().slice(0, 10).replace(/-/g, "");
-  let tail = "";
-  for (let i = 0; i < 6; i++) {
-    tail += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
-  }
-  return `BK-${ymd}-${tail}`;
+/**
+ * The next human-readable booking reference, e.g. "FACLTY-BKG-R1".
+ *
+ * The number comes from the `booking_code_seq` Postgres sequence instead of a
+ * MAX()/count query, so two bookings created at the same instant can never be
+ * handed the same reference. Called inside the transaction that inserts the
+ * slot, so a rolled-back booking also releases its number.
+ */
+export async function nextBookingCode(tx: Prisma.TransactionClient): Promise<string> {
+  const [row] = await tx.$queryRaw<{ n: bigint }[]>`SELECT nextval('booking_code_seq') AS n`;
+  if (!row) throw new Error("booking_code_seq returned no value");
+  return `FACLTY-BKG-R${row.n}`;
 }
 
 /** The booking's display code: the shared batch code, or the slot id fallback. */

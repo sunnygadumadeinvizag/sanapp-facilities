@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Check,
+  CheckCircle2,
   Clock,
   Crosshair,
   Headphones,
@@ -273,6 +274,9 @@ export function BookingClient({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // The readable booking reference (FACLTY-BKG-R…) handed back by the API,
+  // shown beside the success message so it can be quoted later.
+  const [successCode, setSuccessCode] = useState<string | null>(null);
   const rejectTimer = useRef<number | null>(null);
   // Set when the server rejects a slot because someone else booked it while
   // this user was completing the form (the classic two-user race).
@@ -567,12 +571,14 @@ export function BookingClient({
     const blocker = resolveBlocker();
     if (blocker) {
       setSuccess(null);
+      setSuccessCode(null);
       setError(blocker);
       return;
     }
     setBusy(true);
     setError(null);
     setSuccess(null);
+    setSuccessCode(null);
 
     // Edit mode: PATCH the single existing booking.
     if (editBooking) {
@@ -633,6 +639,7 @@ export function BookingClient({
           throw new Error(data.error ?? "Could not update the booking");
         }
         setSuccess("Booking updated.");
+        setSuccessCode(typeof data.booking?.code === "string" ? data.booking.code : null);
         setBusy(false);
         onEdited?.();
         router.refresh();
@@ -647,6 +654,9 @@ export function BookingClient({
 
     const batchId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
     const created: string[] = [];
+    // References handed back for this submission — only the first slot of the
+    // batch carries one; the other slots of the same booking share it.
+    const createdCodes: string[] = [];
     const failed: string[] = [];
     let conflictHit: ConflictInfo | null = null;
     for (let i = 0; i < ranges.length; i++) {
@@ -669,6 +679,9 @@ export function BookingClient({
         const data = await res.json();
         if (res.ok) {
           created.push(data.booking?.id ?? "");
+          if (typeof data.booking?.code === "string" && data.booking.code) {
+            createdCodes.push(data.booking.code);
+          }
           continue;
         }
         if (res.status === 409) {
@@ -700,6 +713,7 @@ export function BookingClient({
     }
 
     if (created.length > 0) {
+      setSuccessCode(createdCodes[0] ?? null);
       setSuccess(
         `${created.length} booking${created.length === 1 ? "" : "s"} confirmed${
           failed.length > 0 ? ` — ${failed.length} failed` : ""
@@ -1179,8 +1193,28 @@ export function BookingClient({
               <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
             )}
             {success && (
-              <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2 text-sm text-green-700">
-                {success}
+              <div className="rounded-md border border-green-300 bg-green-50 px-3 py-2.5 text-sm text-green-800">
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
+                  <div className="min-w-0">
+                    <p className="font-medium">{success}</p>
+                    {successCode && (
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-green-700">Booking ID</span>
+                        <span className="rounded border border-green-300 bg-white px-1.5 py-0.5 font-mono text-xs font-semibold text-green-900">
+                          {successCode}
+                        </span>
+                        <span className="text-xs text-green-700">keep this to follow up later</span>
+                      </div>
+                    )}
+                    <a
+                      href={apiPath("/my-bookings")}
+                      className="mt-1.5 inline-block text-xs font-semibold text-green-800 underline underline-offset-2"
+                    >
+                      Show it in My Bookings →
+                    </a>
+                  </div>
+                </div>
               </div>
             )}
 

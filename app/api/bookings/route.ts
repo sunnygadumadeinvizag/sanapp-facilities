@@ -14,7 +14,7 @@ import {
   slotIndex,
 } from "@/lib/ist";
 import { effectiveMaxMinutes } from "@/lib/limits";
-import { newBookingCode, recordEvent, sendBookingDigest } from "@/lib/notify";
+import { nextBookingCode, recordEvent, sendBookingDigest } from "@/lib/notify";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -549,7 +549,7 @@ export async function POST(request: NextRequest) {
       const isFirstOfBatch = batchId
         ? !(await tx.booking.findFirst({ where: { batchId }, select: { id: true } }))
         : true;
-      const code = isFirstOfBatch ? newBookingCode() : null;
+      const code = isFirstOfBatch ? await nextBookingCode(tx) : null;
       const row = await tx.booking.create({
         data: {
           facilityId,
