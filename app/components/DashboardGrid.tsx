@@ -1,7 +1,7 @@
 "use client";
 import { apiPath } from "sanapp-common-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Building2, CalendarClock, ChevronLeft, ChevronRight, Headphones, Loader2, Settings2, ShieldCheck, Users2, X } from "lucide-react";
+import { Building2, CalendarClock, ChevronLeft, ChevronRight, Download, Headphones, Loader2, Settings2, ShieldCheck, Users2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -95,6 +95,20 @@ export function DashboardGrid({
         <span className="text-sm text-muted-foreground">
           {isCurrentWeek ? "Showing this week" : "Showing week"} · Mon {from} → Sun {to}
         </span>
+        {facilities.length > 0 && (
+          <Button variant="outline" size="sm" asChild className="sm:ml-auto">
+            <a
+              href={apiPath(
+                `/api/dashboard/export?facilityId=${facilities.map((f) => f.id).join(",")}`
+              )}
+              title="Download the complete booking history of every facility shown here, as CSV"
+            >
+              <Download className="h-4 w-4" />
+              Export history
+              {facilities.length > 1 ? ` (${facilities.length} facilities)` : ""}
+            </a>
+          </Button>
+        )}
       </div>
       {unconfigured && canConfigure && (
         <Card className="border-dashed">
@@ -129,6 +143,14 @@ export function DashboardGrid({
                   <Badge variant="secondary" className="ml-auto">
                     {facilitySlots.length} slot{facilitySlots.length === 1 ? "" : "s"} this week
                   </Badge>
+                  <Button variant="outline" size="sm" asChild>
+                    <a
+                      href={apiPath(`/api/dashboard/export?facilityId=${f.id}`)}
+                      title="Download this facility's complete booking history as CSV — every slot, all dates"
+                    >
+                      <Download className="h-3.5 w-3.5" /> Export CSV
+                    </a>
+                  </Button>
                 </div>
                 <CardContent className="min-w-0 p-3">
                   <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { cookies } from "next/headers";
 import { Breadcrumb } from "sanapp-common-ui";
 import { prisma } from "@/lib/prisma";
+import type { BookingStatus } from "@/generated/prisma/client";
 import { verifyAppSession } from "@/lib/session";
 import { AppShell } from "../../components/AppShell";
 import { BookingClient, type SlotItem } from "../../components/BookingClient";
@@ -11,6 +12,9 @@ import { capLabel } from "@/lib/limits";
 import { isPocOfFacility } from "@/lib/poc";
 
 export const dynamic = "force-dynamic";
+
+/** Slots that occupy the calendar: confirmed bookings and held requests. */
+const OCCUPYING_STATUSES: BookingStatus[] = ["CONFIRMED", "PENDING_APPROVAL"];
 
 export default async function BookPage({
   params,
@@ -39,7 +43,8 @@ export default async function BookPage({
       building: true,
       roleLimits: { select: { role: true, maxMinutes: true } },
       bookings: {
-        where: { date: istDateKey(), status: "CONFIRMED" },
+        // Today's held requests are shown too — they occupy the slot.
+        where: { date: istDateKey(), status: { in: OCCUPYING_STATUSES } },
         orderBy: { startMin: "asc" },
         include: {
           user: { select: { id: true, username: true, name: true, primaryRole: true } },
@@ -92,7 +97,7 @@ export default async function BookPage({
     if (
       b &&
       b.facilityId === facility.id &&
-      b.status === "CONFIRMED" &&
+      (b.status === "CONFIRMED" || b.status === "PENDING_APPROVAL") &&
       (b.userId === local?.id || local?.role === "ADMIN" || b.forUserId === local?.id)
     ) {
       editBooking = {
@@ -128,6 +133,7 @@ export default async function BookPage({
     forUsername: b.forUser?.username ?? null,
     forPrimaryRole: b.forUser?.primaryRole ?? null,
     needAvSupport: b.needAvSupport,
+    status: b.status,
   }));
 
   // ADMINs can book any facility (the server bypasses restrictions).
@@ -164,6 +170,11 @@ export default async function BookPage({
           <Badge variant={eligible ? "default" : "secondary"}>
             {eligible ? "You can book this facility" : "Restricted to specific roles"}
           </Badge>
+          {facility.requiresApproval && (
+            <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-900">
+              Approval required before a slot is confirmed
+            </Badge>
+          )}
           {(facility.maxMinutes ?? facility.building.maxMinutes) !== null && (facility.maxMinutes ?? facility.building.maxMinutes)! > 0 && (
             <span className="text-xs text-muted-foreground">
               Max {capLabel(facility.maxMinutes ?? facility.building.maxMinutes)} per booking
@@ -173,7 +184,12 @@ export default async function BookPage({
       </div>
 
       <BookingClient
-        facility={{ id: facility.id, name: facility.name, hasAvSupport: facility.hasAvSupport }}
+        facility={{
+          id: facility.id,
+          name: facility.name,
+          hasAvSupport: facility.hasAvSupport,
+          requiresApproval: facility.requiresApproval,
+        }}
         editBooking={editBooking}
         buildingName={facility.building.name}
         today={today}

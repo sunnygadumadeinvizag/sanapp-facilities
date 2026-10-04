@@ -73,6 +73,8 @@ export type SlotItem = {
   forUsername?: string | null;
   forPrimaryRole?: string | null;
   needAvSupport?: boolean;
+  /** CONFIRMED / PENDING_APPROVAL — a held request is shown as such. */
+  status?: string;
 };
 
 export type BookingMe = {
@@ -182,7 +184,7 @@ export function BookingClient({
   editBooking = null,
   onEdited,
 }: {
-  facility: { id: string; name: string; hasAvSupport?: boolean };
+  facility: { id: string; name: string; hasAvSupport?: boolean; requiresApproval?: boolean };
   buildingName: string;
   today: string;
   todaySlots: SlotItem[];
@@ -198,6 +200,9 @@ export function BookingClient({
   const router = useRouter();
   const canPoc = me.isPocHere || me.role === "ADMIN";
   const isAdmin = me.role === "ADMIN";
+  // On a facility that requires an approval, a request made by someone who is
+  // not one of its deciders waits for a decision instead of confirming itself.
+  const needsApproval = Boolean(facility.requiresApproval) && !canPoc;
 
   // Live IST clock: keeps the past-time shading and the conflict checks fresh
   // while the page stays open (server-provided today/nowMin go stale).
@@ -332,6 +337,7 @@ export function BookingClient({
               pdfName: b.pdfName ?? null,
               isPublicAttachment: Boolean(b.isPublicAttachment),
               needAvSupport: Boolean(b.needAvSupport),
+              status: b.status,
             }))
           );
         }
@@ -654,6 +660,8 @@ export function BookingClient({
 
     const batchId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
     const created: string[] = [];
+    // Slots handed back as "waiting for approval" rather than confirmed.
+    const waiting: string[] = [];
     // References handed back for this submission — only the first slot of the
     // batch carries one; the other slots of the same booking share it.
     const createdCodes: string[] = [];
@@ -679,6 +687,7 @@ export function BookingClient({
         const data = await res.json();
         if (res.ok) {
           created.push(data.booking?.id ?? "");
+          if (data.booking?.status === "PENDING_APPROVAL") waiting.push(data.booking?.id ?? "");
           if (typeof data.booking?.code === "string" && data.booking.code) {
             createdCodes.push(data.booking.code);
           }
@@ -714,8 +723,14 @@ export function BookingClient({
 
     if (created.length > 0) {
       setSuccessCode(createdCodes[0] ?? null);
+      const outcome =
+        waiting.length === 0
+          ? "confirmed"
+          : waiting.length === created.length
+            ? "requested — waiting for the approval person to confirm"
+            : `confirmed, ${waiting.length} waiting for approval`;
       setSuccess(
-        `${created.length} booking${created.length === 1 ? "" : "s"} confirmed${
+        `${created.length} booking${created.length === 1 ? "" : "s"} ${outcome}${
           failed.length > 0 ? ` — ${failed.length} failed` : ""
         }.`
       );
@@ -748,7 +763,11 @@ export function BookingClient({
             <Badge
               key={s.id}
               variant="outline"
-              className="gap-1.5 text-red-700 border-red-300 bg-red-50"
+              className={
+                s.status === "PENDING_APPROVAL"
+                  ? "gap-1.5 text-amber-800 border-amber-400 border-dashed bg-amber-50"
+                  : "gap-1.5 text-red-700 border-red-300 bg-red-50"
+              }
               title={
                 s.forName
                   ? `Blocked for ${s.forName} (@${s.forUsername || "—"} · ${s.forPrimaryRole || "User"}) by ${s.bookerName} (@${s.bookerUsername || "—"} · ${s.bookerPrimaryRole || "User"})${s.needAvSupport ? " · AV Support Requested" : ""}`
@@ -762,6 +781,11 @@ export function BookingClient({
               {s.needAvSupport && (
                 <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded bg-amber-200 text-amber-900 font-bold text-[10px]">
                   <Headphones className="h-2.5 w-2.5" /> AV
+                </span>
+              )}
+              {s.status === "PENDING_APPROVAL" && (
+                <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded bg-amber-200 text-amber-900 font-bold text-[10px]">
+                  Approval requested
                 </span>
               )}
             </Badge>
@@ -1218,6 +1242,15 @@ export function BookingClient({
               </div>
             )}
 
+            {needsApproval && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <strong className="font-semibold">This facility requires an approval.</strong> The time you
+                select stays held as “Approval requested” (amber on the calendar) instead of being
+                confirmed — its approval person is emailed straight away and decides, and you are
+                emailed the outcome. Until it is approved, nobody has been given the slot.
+              </div>
+            )}
+
             {/* Not `disabled` for missing fields: the click must explain what is
                 missing (see resolveBlocker) rather than do nothing. */}
             <Button
@@ -1226,7 +1259,13 @@ export function BookingClient({
               onClick={submit}
               disabled={busy}
             >
-              {busy ? "Saving…" : editBooking ? "Save changes" : `Confirm ${ranges.length > 1 ? `${ranges.length} slots` : "booking"}`}
+              {busy
+                ? "Saving…"
+                : editBooking
+                  ? "Save changes"
+                  : needsApproval
+                    ? `Request ${ranges.length > 1 ? `${ranges.length} slots` : "this slot"} for approval`
+                    : `Confirm ${ranges.length > 1 ? `${ranges.length} slots` : "booking"}`}
             </Button>
           </CardContent>
         </Card>

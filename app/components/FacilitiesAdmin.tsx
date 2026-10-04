@@ -1,13 +1,14 @@
 "use client";
 import { apiPath } from "sanapp-common-ui";
 import { useEffect, useState } from "react";
-import { Pencil } from "lucide-react";
+import { Loader2, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MultiSearchableSelect } from "@/components/ui/multi-searchable-select";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Textarea } from "@/components/ui/textarea";
 import { PocManager } from "./PocManager";
@@ -18,6 +19,7 @@ const PRIMARY_ROLES = ["STAFF_TEACHING", "STAFF_NON_TEACHING", "STUDENT", "SCHOL
 
 type RoleLimit = { role: string; maxMinutes: number };
 type Poc = { userId: string; fromBuilding?: boolean; user: { id: string; name: string; username: string } };
+type PersonRow = { userId: string; user: { id: string; name: string; username: string } };
 
 type NotifyConfig = {
   notifyOnSlotBooked: boolean;
@@ -36,8 +38,14 @@ type Facility = {
   maxMinutes: number | null;
   roleLimits: RoleLimit[];
   hasAvSupport: boolean;
+  /** A booking on this facility waits for an approval person's decision. */
+  requiresApproval: boolean;
   active: boolean;
   pocs: Poc[];
+  /** The people who decide requests on this facility. */
+  approvers: PersonRow[];
+  /** Extra people allowed to see this facility on the dashboard / export it. */
+  dashboardViewers: PersonRow[];
   notifyConfig?: NotifyConfig | null;
 };
 
@@ -48,6 +56,95 @@ type BuildingWithFacilities = {
   active: boolean;
   facilities: Facility[];
 };
+
+type Person = { username: string; name: string; isAdmin: boolean };
+
+/**
+ * Picker for a list of people (a facility's approval people, its extra
+ * dashboard viewers).
+ *
+ * The institute directory is loaded on demand from the admin-only
+ * /api/users?kind=all endpoint and offered as a searchable multi-select. The
+ * stored value is the username, so somebody who has never signed into this app
+ * can still be picked before their first login.
+ */
+function PeoplePicker({
+  value,
+  onChange,
+  ariaLabel,
+  placeholder,
+}: {
+  value: string[];
+  onChange: (value: string[]) => void;
+  ariaLabel: string;
+  placeholder: string;
+}) {
+  const [people, setPeople] = useState<Person[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await fetch(apiPath("/api/users?kind=all"), { cache: "no-store" });
+        const data = (await res.json().catch(() => ({}))) as {
+          users?: { username?: string; name?: string; isAdmin?: boolean }[];
+        };
+        if (!alive) return;
+        if (!res.ok) {
+          setFailed(true);
+          setPeople([]);
+          return;
+        }
+        setPeople(
+          (data.users ?? []).map((u) => ({
+            username: String(u.username ?? ""),
+            name: String(u.name ?? u.username ?? ""),
+            isAdmin: u.isAdmin === true,
+          }))
+        );
+      } catch {
+        if (!alive) return;
+        setFailed(true);
+        setPeople([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (people === null) {
+    return (
+      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading people…
+      </p>
+    );
+  }
+
+  return (
+    <div className="grid gap-1">
+      <MultiSearchableSelect
+        aria-label={ariaLabel}
+        value={value}
+        onValueChange={onChange}
+        options={people.map((p) => ({
+          value: p.username,
+          label: p.name,
+          hint: p.isAdmin ? `@${p.username} · app admin` : `@${p.username}`,
+        }))}
+        placeholder={placeholder}
+        searchPlaceholder="Type a name or username…"
+        emptyText="No people match"
+      />
+      {failed && (
+        <p className="text-xs text-red-600">
+          Could not load the user directory — please refresh the page and try again.
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: BuildingWithFacilities[] }) {
   const [error, setError] = useState<string | null>(null);
@@ -72,8 +169,11 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                 maxMinutes: f.maxMinutes ?? null,
                 roleLimits: Array.isArray(f.roleLimits) ? f.roleLimits : [],
                 hasAvSupport: Boolean(f.hasAvSupport),
+                requiresApproval: Boolean(f.requiresApproval),
                 active: f.active !== false,
                 pocs: Array.isArray(f.pocs) ? f.pocs : [],
+                approvers: Array.isArray(f.approvers) ? f.approvers : [],
+                dashboardViewers: Array.isArray(f.dashboardViewers) ? f.dashboardViewers : [],
                 notifyConfig: (facility as { notifyConfig?: NotifyConfig | null }).notifyConfig ?? null,
               };
             })
@@ -98,6 +198,9 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
   const [notifyBookingUser, setNotifyBookingUser] = useState(false);
   const [notifyForUser, setNotifyForUser] = useState(false);
   const [notifyEmails, setNotifyEmails] = useState("");
+  const [requiresApproval, setRequiresApproval] = useState(false);
+  const [approverUsernames, setApproverUsernames] = useState<string[]>([]);
+  const [viewerUsernames, setViewerUsernames] = useState<string[]>([]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Record<string, unknown>>({});
@@ -144,6 +247,9 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
         allowedRoles,
         maxMinutes: maxMinutes === "" ? null : Number(maxMinutes),
         hasAvSupport,
+        requiresApproval,
+        approverUsernames,
+        dashboardViewerUsernames: viewerUsernames,
         notifyOnSlotBooked,
         notifyOnAvChange,
         notifyBookingUser,
@@ -160,6 +266,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
     setName(""); setDescription(""); setCapacity(""); setAllowedRoles([]); setMaxMinutes(""); setRoleLimits({}); setHasAvSupport(false);
     setNotifyOnSlotBooked(false); setNotifyOnAvChange(false);
     setNotifyBookingUser(false); setNotifyForUser(false); setNotifyEmails("");
+    setRequiresApproval(false); setApproverUsernames([]); setViewerUsernames([]);
     await reload();
   }
 
@@ -211,6 +318,9 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       allowedRoles: f.allowedRoles,
       maxMinutes: f.maxMinutes ? String(f.maxMinutes) : "",
       hasAvSupport: f.hasAvSupport,
+      requiresApproval: f.requiresApproval,
+      approverUsernames: f.approvers.map((a) => a.user.username),
+      dashboardViewerUsernames: f.dashboardViewers.map((v) => v.user.username),
       roleLimits: Object.fromEntries(f.roleLimits.map((r) => [r.role, String(r.maxMinutes)])),
       notifyOnSlotBooked: f.notifyConfig?.notifyOnSlotBooked ?? false,
       notifyOnAvChange: f.notifyConfig?.notifyOnAvChange ?? false,
@@ -228,6 +338,9 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       allowedRoles: Array.isArray(editForm.allowedRoles) ? editForm.allowedRoles : f.allowedRoles,
       maxMinutes: editForm.maxMinutes === "" || editForm.maxMinutes === null ? null : Number(editForm.maxMinutes),
       hasAvSupport: Boolean(editForm.hasAvSupport),
+      requiresApproval: Boolean(editForm.requiresApproval),
+      approverUsernames: (editForm.approverUsernames as string[]) ?? [],
+      dashboardViewerUsernames: (editForm.dashboardViewerUsernames as string[]) ?? [],
       roleLimits: Object.entries((editForm.roleLimits as Record<string, string>) ?? {})
         .filter(([, v]) => v !== "" && Number(v) > 0)
         .map(([role, v]) => ({ role, maxMinutes: Number(v) })),
@@ -332,6 +445,52 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
               </label>
             </div>
             <div className="rounded-md border p-3 bg-muted/20 grid gap-3">
+              <div className="text-sm font-semibold">Approval before a slot is confirmed</div>
+              <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
+                <Checkbox
+                  checked={requiresApproval}
+                  onCheckedChange={(v) => setRequiresApproval(v === true)}
+                  className="mt-0.5"
+                />
+                <div>
+                  <span>Require approval before a slot is confirmed</span>
+                  <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                    A slot requested on this facility is held as “Approval requested” (shown in amber
+                    on the calendar) until one of the approval people confirms it. They are emailed
+                    the moment a request is made, and the person who asked is emailed the decision.
+                    Facility POCs, building POCs and app admins keep booking directly.
+                  </p>
+                </div>
+              </label>
+              <div className="grid gap-1.5">
+                <Label>Approval people</Label>
+                <PeoplePicker
+                  ariaLabel="Approval people"
+                  placeholder="Search and pick the approval people…"
+                  value={approverUsernames}
+                  onChange={setApproverUsernames}
+                />
+                <p className="text-xs text-muted-foreground">
+                  They decide requests on this facility and always see it on the dashboard. If nobody
+                  is listed, the facility POCs, its building POCs and app admins can decide — so the
+                  facility never blocks.
+                </p>
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Dashboard viewers for this facility</Label>
+                <PeoplePicker
+                  ariaLabel="Dashboard viewers for this facility"
+                  placeholder="Search and pick people…"
+                  value={viewerUsernames}
+                  onChange={setViewerUsernames}
+                />
+                <p className="text-xs text-muted-foreground">
+                  These people may open the bookings dashboard and download this facility&apos;s booking
+                  history. POCs and approval people already have access.
+                </p>
+              </div>
+            </div>
+            <div className="rounded-md border p-3 bg-muted/20 grid gap-3">
               <div className="text-sm font-semibold">Email notifications for this facility</div>
               <p className="text-xs text-muted-foreground -mt-2">
                 The app admin decides who gets notified. Everyone receives one email per booking —
@@ -428,6 +587,19 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                     {f.hasAvSupport && (
                       <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-900 font-medium">
                         AV Support Allowed
+                      </Badge>
+                    )}
+                    {f.requiresApproval && (
+                      <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-900 font-medium">
+                        Approval required
+                        {f.approvers.length > 0
+                          ? ` · ${f.approvers.length} approval ${f.approvers.length === 1 ? "person" : "people"}`
+                          : " · POCs and admins decide"}
+                      </Badge>
+                    )}
+                    {f.dashboardViewers.length > 0 && (
+                      <Badge variant="outline" className="border-sky-400 bg-sky-50 text-sky-900 font-medium">
+                        Dashboard: {f.dashboardViewers.length} extra viewer{f.dashboardViewers.length === 1 ? "" : "s"}
                       </Badge>
                     )}
                     {f.notifyConfig && (f.notifyConfig.notifyOnSlotBooked || f.notifyConfig.notifyOnAvChange || f.notifyConfig.notifyBookingUser || f.notifyConfig.notifyForUser) && (
@@ -529,6 +701,43 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                             </p>
                           </div>
                         </label>
+                      </div>
+                      <div className="rounded-md border p-2.5 bg-muted/20 grid gap-3">
+                        <div className="text-xs font-semibold">Approval before a slot is confirmed</div>
+                        <label className="flex items-start gap-2 text-xs font-medium cursor-pointer">
+                          <Checkbox
+                            checked={Boolean(editForm.requiresApproval)}
+                            onCheckedChange={(v) => setEditForm((p) => ({ ...p, requiresApproval: v === true }))}
+                            className="mt-0.5"
+                          />
+                          <div>
+                            <span>Require approval before a slot is confirmed</span>
+                            <p className="text-[11px] text-muted-foreground font-normal">
+                              Requested slots are held as “Approval requested” until an approval person
+                              confirms them. The approval people are emailed each request, the requester
+                              is emailed the decision, and moving an already-confirmed slot on this
+                              facility asks for approval again.
+                            </p>
+                          </div>
+                        </label>
+                        <div className="grid gap-1">
+                          <Label className="text-xs">Approval people</Label>
+                          <PeoplePicker
+                            ariaLabel="Approval people"
+                            placeholder="Search and pick the approval people…"
+                            value={(editForm.approverUsernames as string[]) ?? []}
+                            onChange={(v) => setEditForm((p) => ({ ...p, approverUsernames: v }))}
+                          />
+                        </div>
+                        <div className="grid gap-1">
+                          <Label className="text-xs">Dashboard viewers for this facility</Label>
+                          <PeoplePicker
+                            ariaLabel="Dashboard viewers for this facility"
+                            placeholder="Search and pick people…"
+                            value={(editForm.dashboardViewerUsernames as string[]) ?? []}
+                            onChange={(v) => setEditForm((p) => ({ ...p, dashboardViewerUsernames: v }))}
+                          />
+                        </div>
                       </div>
                       <div className="rounded-md border p-3 bg-muted/20 grid gap-3">
                       <div className="text-sm font-semibold">Email notifications for this facility</div>

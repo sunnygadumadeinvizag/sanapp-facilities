@@ -170,6 +170,13 @@ h6 {
   line-height: 1.2;
   color: var(--iipe-text);
 }
+/* A slot whose booking is still waiting for an approval person's decision.
+   Deliberately NOT the danger tint of a confirmed booking: the slot is held,
+   but nobody has been given it yet. Amber + a dashed edge says "provisional". */
+.fb-booked-pending {
+  background: color-mix(in srgb, var(--iipe-warning, #f59e0b) 18%, var(--iipe-surface));
+  border: 1px dashed color-mix(in srgb, var(--iipe-warning, #f59e0b) 55%, transparent);
+}
 .fb-booked-label {
   pointer-events: none;
   overflow: hidden;

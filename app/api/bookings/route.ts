@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { Prisma } from "@/generated/prisma/client";
+import { Prisma, type BookingStatus } from "@/generated/prisma/client";
 import { currentUser, listSsoUsers } from "@/lib/auth";
 import { isPocOfFacility } from "@/lib/poc";
 import {
@@ -15,6 +15,11 @@ import {
 } from "@/lib/ist";
 import { effectiveMaxMinutes } from "@/lib/limits";
 import { nextBookingCode, recordEvent, sendBookingDigest, type NotifyBooking } from "@/lib/notify";
+import { approvalContext } from "@/lib/approval";
+import { queueApprovalRequestMail } from "@/lib/approval-mail";
+
+/** Slots that occupy the calendar: confirmed bookings and requests awaiting a decision. */
+const OCCUPYING_STATUSES: BookingStatus[] = ["CONFIRMED", "PENDING_APPROVAL"];
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -62,6 +67,10 @@ const BOOKING_LIST_SELECT = {
   cancelledAt: true,
   cancelReason: true,
   cancelledBy: { select: { id: true, username: true, name: true, primaryRole: true } },
+  approvalRequestedAt: true,
+  decidedAt: true,
+  decisionNote: true,
+  decidedBy: { select: { id: true, username: true, name: true, primaryRole: true } },
 };
 
 /**
@@ -135,6 +144,12 @@ async function formatBookingForViewer(
     cancelledAt: b.cancelledAt,
     cancelReason: b.cancelReason,
     cancelledBy: b.cancelledBy,
+    // Approval workflow: when the slot started waiting, who decided it and
+    // what they said. Null for facilities that never needed an approval.
+    approvalRequestedAt: b.approvalRequestedAt ?? null,
+    decidedAt: b.decidedAt ?? null,
+    decidedBy: b.decidedBy ? `${b.decidedBy.name} (@${b.decidedBy.username})` : null,
+    decisionNote: b.decisionNote ?? null,
   };
 }
 
@@ -163,7 +178,9 @@ async function hasConflict(
   const overlapping = await client.booking.findMany({
     where: {
       facilityId,
-      status: "CONFIRMED",
+      // A request awaiting approval holds its slot exactly like a confirmed
+      // booking, so it counts as a conflict too.
+      status: { in: OCCUPYING_STATUSES },
       NOT: excludeId ? { id: excludeId } : undefined,
     },
     select: { id: true, date: true, endDate: true, startMin: true, endMin: true },
@@ -188,8 +205,9 @@ async function conflictDetails(
   const startIdx = slotIndex(startDate, startMin);
   const endIdx = slotIndex(endDate, endMin);
   const rows = await prisma.booking.findMany({
-    where: { facilityId, status: "CONFIRMED" },
+    where: { facilityId, status: { in: OCCUPYING_STATUSES } },
     select: {
+      status: true,
       date: true,
       endDate: true,
       startMin: true,
@@ -201,8 +219,18 @@ async function conflictDetails(
   for (const b of rows) {
     const bEnd = endDayOf(b.date, b.endDate);
     if (startIdx < slotIndex(bEnd, b.endMin) && endIdx > slotIndex(b.date, b.startMin)) {
+      const pending = b.status === "PENDING_APPROVAL";
       return {
-        booker: b.forUser?.name ? `${b.forUser.name} (@${b.forUser.username})` : b.user?.name ? `${b.user.name} (@${b.user.username})` : null,
+        // A request that is still waiting is somebody else's business: the
+        // person who asked is not named to whoever ran into it.
+        booker: pending
+          ? null
+          : b.forUser?.name
+            ? `${b.forUser.name} (@${b.forUser.username})`
+            : b.user?.name
+              ? `${b.user.name} (@${b.user.username})`
+              : null,
+        pending,
         date: b.date,
         endDate: bEnd,
         startMin: b.startMin,
@@ -236,7 +264,14 @@ export async function GET(request: NextRequest) {
   const dateTo = searchParams.get("dateTo") ?? "";
 
   const listWhere: Record<string, unknown> = {};
-  if (status === "CONFIRMED" || status === "CANCELLED") listWhere.status = status;
+  if (
+    status === "CONFIRMED" ||
+    status === "CANCELLED" ||
+    status === "PENDING_APPROVAL" ||
+    status === "REJECTED"
+  ) {
+    listWhere.status = status;
+  }
   if (userId) {
     // The admin user filter searches the SSO registry, so accept the local
     // id, the SSO id or the username and resolve to the local user.
@@ -295,7 +330,10 @@ export async function GET(request: NextRequest) {
   // Calendar range query: bookings overlapping [from, to] (both inclusive).
   if (from && to && DATE_RE.test(from) && DATE_RE.test(to)) {
     const rows = await prisma.booking.findMany({
-      where: { facilityId, status: "CONFIRMED" },
+      // Requests awaiting a decision are shown on the calendar as well (in
+      // their own colour) — they hold the slot, so hiding them would invite
+      // exactly the clash the hold exists to prevent.
+      where: { facilityId, status: { in: OCCUPYING_STATUSES } },
       orderBy: [{ date: "asc" }, { startMin: "asc" }],
       select: BOOKING_LIST_SELECT,
     });
@@ -312,7 +350,7 @@ export async function GET(request: NextRequest) {
   // Single-day query (kept for compatibility): exact day.
   if (!date || !DATE_RE.test(date)) return bad("date (YYYY-MM-DD), from/to, or mine is required");
   const rows = await prisma.booking.findMany({
-    where: { facilityId, date, status: "CONFIRMED" },
+    where: { facilityId, date, status: { in: OCCUPYING_STATUSES } },
     orderBy: { startMin: "asc" },
     select: BOOKING_LIST_SELECT,
   });
@@ -509,6 +547,14 @@ export async function POST(request: NextRequest) {
     type = "LONG";
   }
 
+  // --- Approval gate (facilities with requiresApproval) --------------------
+  // A regular user's request is created as PENDING_APPROVAL: the slot is held
+  // while an approval person of the facility decides. App ADMINs, the
+  // facility's approval people and its POCs (who are the ones making ON_BEHALF
+  // and LONG blocks) book directly — they are the deciders themselves.
+  const approval = await approvalContext(facilityId, user.id, user.role);
+  const needsApproval = approval.needsApproval;
+
   // The slot must not be in the past (server time is IST).
   const nowIdx = slotIndex(istDateKey(), istMinute());
   if (startIdx <= nowIdx) {
@@ -558,7 +604,8 @@ export async function POST(request: NextRequest) {
           userId: user.id,
           forUserId: resolvedForUserId,
           type,
-          status: "CONFIRMED",
+          status: needsApproval ? "PENDING_APPROVAL" : "CONFIRMED",
+          approvalRequestedAt: needsApproval ? new Date() : null,
           date: startDate,
           endDate,
           startMin,
@@ -606,12 +653,24 @@ export async function POST(request: NextRequest) {
     throw e;
   }
 
-  // Notifier digest — one mail per booking (re-sent/updated when more slots
-  // join the same booking). Fire-and-forget: booking succeeds either way.
-  void sendBookingDigest({ booking });
+  if (needsApproval) {
+    // The request is not a confirmation, so the facility's booking notifiers
+    // are NOT mailed yet — they hear about it once it is decided. The approval
+    // people are told instead (one mail per request, not per slot).
+    queueApprovalRequestMail(booking);
+  } else {
+    // Notifier digest — one mail per booking (re-sent/updated when more slots
+    // join the same booking). Fire-and-forget: booking succeeds either way.
+    void sendBookingDigest({ booking });
+  }
 
   return NextResponse.json(
-    { booking, message: "Booking confirmed" },
+    {
+      booking,
+      message: needsApproval
+        ? "Slot requested — waiting for the approval person to confirm it"
+        : "Booking confirmed",
+    },
     { status: 201 }
   );
 }
@@ -675,6 +734,9 @@ export async function PATCH(request: NextRequest) {
   const booking = await prisma.booking.findUnique({ where: { id } });
   if (!booking) return bad("Booking not found", 404);
   if (booking.status === "CANCELLED") return bad("A cancelled booking cannot be edited", 409);
+  if (booking.status === "REJECTED") {
+    return bad("This request was declined — please make a new booking instead", 409);
+  }
 
   const canEdit = booking.userId === user.id || user.role === "ADMIN";
   if (!canEdit) {
@@ -741,6 +803,12 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
+  // Moving or re-timing a slot of an approval facility has to be approved
+  // again: the decision covered the time range that was requested, not a new
+  // one. Without this, a request could be approved and then quietly moved.
+  const approval = await approvalContext(facility.id, user.id, user.role);
+  const needsApproval = approval.needsApproval;
+
   const CONFLICT_MSG = "That time slot is already booked — please pick a free slot";
   let updated: Prisma.BookingGetPayload<{ select: typeof BOOKING_LIST_SELECT }>;
   let avChanged = false;
@@ -777,6 +845,20 @@ export async function PATCH(request: NextRequest) {
         endMin,
         purpose,
       };
+      if (needsApproval && booking.status === "CONFIRMED") {
+        // Back to waiting: the slot is held again and the approval people
+        // decide on the new time range.
+        data.status = "PENDING_APPROVAL";
+        data.approvalRequestedAt = new Date();
+        data.decidedAt = null;
+        data.decidedById = null;
+        data.decisionNote = null;
+        changes.push({
+          field: "approval",
+          before: "confirmed",
+          after: "approval requested again for the new time range",
+        });
+      }
       if (body.isPublicPurpose !== undefined) {
         data.isPublicPurpose =
           body.isPublicPurpose === true ||
@@ -830,14 +912,24 @@ export async function PATCH(request: NextRequest) {
     throw e;
   }
 
-  // Notifier digest — AV-support changes notify even when slot-notify is off
-  // (if the facility opted into AV notifications), and any other edit refreshes
-  // the booking digest for slot notifiers.
-  void sendBookingDigest({ booking: updated, avChanged });
+  if (updated.status === "PENDING_APPROVAL") {
+    // Still (or again) waiting for a decision: the approval people hear about
+    // the new time range, and the booking notifiers hear nothing — there is no
+    // confirmed booking to tell them about yet.
+    queueApprovalRequestMail(updated);
+  } else {
+    // Notifier digest — AV-support changes notify even when slot-notify is off
+    // (if the facility opted into AV notifications), and any other edit refreshes
+    // the booking digest for slot notifiers.
+    void sendBookingDigest({ booking: updated, avChanged });
+  }
 
   return NextResponse.json({
     booking: { ...updated, pdf: Boolean(updated.pdfName) },
-    message: "Booking updated",
+    message:
+      updated.status === "PENDING_APPROVAL"
+        ? "Booking updated — waiting for the approval person to confirm it"
+        : "Booking updated",
   });
 }
 

@@ -53,6 +53,8 @@ export type BookingBlock = {
   pdfName?: string | null;
   isPublicAttachment?: boolean;
   needAvSupport?: boolean;
+  /** CONFIRMED, PENDING_APPROVAL, … — decides how the block is drawn. */
+  status?: string;
 };
 
 export type RangeSelection = {
@@ -889,6 +891,10 @@ export function TimeGrid({
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-3 w-3 rounded-sm bg-red-500/20 border border-red-400" /> Already booked
           </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded-sm border border-dashed border-amber-500 bg-amber-500/20" />
+            Approval requested — held, not confirmed
+          </span>
         </p>
         <div className="flex flex-wrap items-center gap-1 pb-0.5 min-w-0">
           <span className="text-[11px] text-muted-foreground mr-1 hidden sm:inline">Zoom:</span>
@@ -1035,6 +1041,9 @@ export function TimeGrid({
               const isMultiDay = b.startDate !== b.endDate;
               const heightPx = Math.max(16, ((f.bottomMin - f.topMin) / (24 * 60)) * colHeight - 2);
               const isShort = heightPx < 32;
+              // A request awaiting approval holds its slot but is not confirmed,
+              // so it is drawn in amber and labelled as such.
+              const isPending = b.status === "PENDING_APPROVAL";
               const durDisplay = fmtDuration(totalDur);
               const timeDisplay = isMultiDay
                 ? `${fmtDay(b.startDate)} ${fmtMin(b.startMin)} → ${fmtDay(b.endDate)} ${fmtMin(b.endMin)}`
@@ -1043,7 +1052,9 @@ export function TimeGrid({
               return (
                 <div
                   key={f.id + f.date}
-                  className="fb-booked pointer-events-auto hover:brightness-90 transition-all shadow-xs"
+                  className={`fb-booked pointer-events-auto hover:brightness-90 transition-all shadow-xs${
+                    isPending ? " fb-booked-pending" : ""
+                  }`}
                   role="button"
                   tabIndex={0}
                   onPointerDown={(e) => {
@@ -1061,7 +1072,7 @@ export function TimeGrid({
                     e.stopPropagation();
                     setSelectedBooking(b);
                   }}
-                  title={`Booked: ${fmtSlotRange(b.startDate, b.startMin, b.endDate, b.endMin)} (${durDisplay})\nBooked by: ${b.bookerName || "User"}${b.forName ? ` on behalf of ${b.forName}` : ""}\nClick to view booking details`}
+                  title={`${isPending ? "Approval requested — the slot is held, not confirmed yet" : "Booked"}: ${fmtSlotRange(b.startDate, b.startMin, b.endDate, b.endMin)} (${durDisplay})\nBooked by: ${b.bookerName || "User"}${b.forName ? ` on behalf of ${b.forName}` : ""}${isPending ? "\nWaiting for the facility's approval person to confirm it" : ""}\nClick to view booking details`}
                   style={{
                     left: days.indexOf(f.date) * colW + 2,
                     width: colW - 4,
@@ -1073,10 +1084,22 @@ export function TimeGrid({
                     {/* Time and duration header */}
                     <div className="flex items-center justify-between gap-1 text-[10px] font-bold text-foreground truncate mb-0.5">
                       <span className="truncate flex items-center gap-0.5">
-                        <Clock className="h-2.5 w-2.5 shrink-0 text-red-600 dark:text-red-400 inline" />
+                        <Clock
+                          className={`h-2.5 w-2.5 shrink-0 inline ${
+                            isPending
+                              ? "text-amber-600 dark:text-amber-400"
+                              : "text-red-600 dark:text-red-400"
+                          }`}
+                        />
                         <span>{timeDisplay}</span>
                       </span>
-                      <span className="shrink-0 px-1 py-0.2 rounded text-[9px] font-bold bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500/30">
+                      <span
+                        className={`shrink-0 px-1 py-0.2 rounded text-[9px] font-bold border ${
+                          isPending
+                            ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40"
+                            : "bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/30"
+                        }`}
+                      >
                         {durDisplay}
                       </span>
                     </div>
@@ -1098,6 +1121,14 @@ export function TimeGrid({
                       {b.pdf && (
                         <span title="Has attachment" className="inline-flex shrink-0">
                           <Paperclip className="h-3 w-3 text-primary" />
+                        </span>
+                      )}
+                      {isPending && (
+                        <span
+                          title="Approval requested — the slot is held until the facility's approval person confirms it"
+                          className="shrink-0 rounded border border-amber-500/40 bg-amber-500/20 px-1 py-0.5 text-[9px] font-bold leading-none text-amber-800 dark:text-amber-200"
+                        >
+                          {isShort ? "Approval" : "Approval requested"}
                         </span>
                       )}
                     </div>

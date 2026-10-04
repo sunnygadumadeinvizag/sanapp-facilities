@@ -11,6 +11,8 @@ import {
 import type { AppUserSession } from "@/lib/session";
 import { verifyAppSession } from "@/lib/session";
 import { roleLabel } from "@/lib/labels";
+import { decidableFacilityIds, pendingApprovalCount } from "@/lib/approval";
+import { currentUser } from "@/lib/auth";
 
 const SSO_BASE_URL = process.env.SSO_BASE_URL ?? "http://localhost:3000";
 const MAIN_BASE_URL = process.env.MAIN_BASE_URL ?? "http://localhost:3001";
@@ -27,6 +29,7 @@ export async function AppShell({
   active?:
     | "home"
     | "my-bookings"
+    | "approvals"
     | "admin"
     | "admin-buildings"
     | "admin-facilities"
@@ -44,6 +47,17 @@ export async function AppShell({
   const isSuperAdmin = ssoRole === "SUPER_ADMIN";
   const isAdmin = me.role === "ADMIN" || isSuperAdmin;
 
+  // The approval queue: the entry appears for the people who may actually
+  // decide a request, and carries how many slots are waiting so a request is
+  // never missed without the mail being read.
+  const local = await currentUser();
+  const approvalScope = local
+    ? await decidableFacilityIds(local.id, local.role).catch(() => [] as string[])
+    : [];
+  const canDecide = approvalScope === "all" || approvalScope.length > 0;
+  const waitingApprovals =
+    canDecide && local ? await pendingApprovalCount(local.id, local.role).catch(() => 0) : 0;
+
   const appName = await lookupAppName({
     mainBaseUrl: MAIN_BASE_URL,
     appKey: process.env.MAIN_API_KEY,
@@ -56,6 +70,15 @@ export async function AppShell({
   const effectiveSidebar: SidebarItem[] = [
     { label: "Facilities Home", href: "/", active: active === "home" },
     { label: "My Bookings", href: "/my-bookings", active: active === "my-bookings" },
+    ...(canDecide
+      ? [
+          {
+            label: waitingApprovals > 0 ? `Approvals (${waitingApprovals})` : "Approvals",
+            href: "/approvals",
+            active: active === "approvals",
+          },
+        ]
+      : []),
     // The app admin console — visible only to app admins (app ADMIN role
     // or a central SUPER_ADMIN).
     ...(isAdmin

@@ -33,6 +33,12 @@ enum BookingType {
 enum BookingStatus {
   CONFIRMED
   CANCELLED
+  // Waiting for a facility approval person's decision. The slot is held (it
+  // blocks overlapping requests) but nobody is told the slot is theirs yet,
+  // and the calendar shows it as "Approval requested".
+  PENDING_APPROVAL
+  // The approval person declined the request; the slot is released again.
+  REJECTED
 }
 
 model AppUser {
@@ -56,8 +62,11 @@ model AppUser {
   bookings    Booking[] @relation("Booker")
   onBehalf    Booking[] @relation("ForUser")
   cancellations Booking[] @relation("CancelledBy")
+  decisions     Booking[] @relation("BookingDecision")
   buildingPocs  BuildingPoc[]
   facilityPocs  FacilityPoc[]
+  facilityApprovals  FacilityApprover[]
+  facilityDashboards FacilityDashboardViewer[]
 }
 
 model Building {
@@ -106,10 +115,16 @@ model Facility {
   roleLimits   FacilityRoleLimit[]
   // Whether AV technician support requests are allowed for this facility
   hasAvSupport Boolean   @default(false)
+  // When true, a booking by a regular user is created as PENDING_APPROVAL and
+  // only becomes CONFIRMED once an approval person of this facility decides in
+  // its favour. App ADMINs and POCs of the facility/building book directly.
+  requiresApproval Boolean @default(false)
   active       Boolean   @default(true)
   createdAt    DateTime  @default(now())
   bookings     Booking[]
   pocs         FacilityPoc[]
+  approvers    FacilityApprover[]
+  dashboardViewers FacilityDashboardViewer[]
   notifyConfig FacilityNotifyConfig?
 }
 
@@ -125,6 +140,36 @@ model FacilityPoc {
   user        AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
   fromBuilding Boolean @default(false)
   createdAt   DateTime @default(now())
+
+  @@unique([facilityId, userId])
+}
+
+// Facility approval person — the people who decide whether a requested slot
+// becomes a confirmed booking on a facility with requiresApproval = true.
+// App ADMINs and the facility's / building's POCs may decide as well, so a
+// facility can keep working even when nobody is on this list.
+model FacilityApprover {
+  id         String   @id @default(uuid())
+  facilityId String
+  facility   Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  userId     String
+  user       AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([facilityId, userId])
+}
+
+// Per-facility dashboard access granted person by person by the app admin:
+// who may open the bookings dashboard and export the history of THIS
+// facility. POCs of the facility/building and its approval people are given
+// access implicitly and never need a row here.
+model FacilityDashboardViewer {
+  id         String   @id @default(uuid())
+  facilityId String
+  facility   Facility @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  userId     String
+  user       AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
 
   @@unique([facilityId, userId])
 }
@@ -175,6 +220,15 @@ model Booking {
   cancelledById String?
   cancelledBy   AppUser?      @relation("CancelledBy", fields: [cancelledById], references: [id], onDelete: SetNull)
   cancelReason  String?
+  // ---- Approval workflow (facilities with requiresApproval = true) --------
+  // When the slot started waiting for a decision, who decided it (approve /
+  // decline) and with what note. All NULL for facilities that never needed
+  // an approval and for slots booked directly by a POC / ADMIN.
+  approvalRequestedAt DateTime?
+  decidedAt           DateTime?
+  decidedById         String?
+  decidedBy           AppUser?  @relation("BookingDecision", fields: [decidedById], references: [id], onDelete: SetNull)
+  decisionNote        String?
   @@index([facilityId, date, status])
   @@index([userId, date])
 }

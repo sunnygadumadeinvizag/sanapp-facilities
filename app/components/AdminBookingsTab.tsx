@@ -1,7 +1,7 @@
 "use client";
 import { apiPath } from "sanapp-common-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, FileText, Headphones, History, Loader2, Pencil, Search, Trash2, X } from "lucide-react";
+import { CalendarClock, Clock, FileText, Headphones, History, Loader2, Pencil, Search, Trash2, X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -15,6 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { bookingStatusLabel, eventLabel } from "@/lib/labels";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { DatePicker } from "./DatePicker";
 import { CancelBookingModal } from "./CancelBookingModal";
@@ -25,7 +26,7 @@ type AdminBooking = {
   code: string;
   batchId: string | null;
   type: "SELF" | "ON_BEHALF" | "LONG";
-  status: "CONFIRMED" | "CANCELLED";
+  status: "CONFIRMED" | "CANCELLED" | "PENDING_APPROVAL" | "REJECTED";
   date: string;
   endDate: string;
   startMin: number;
@@ -47,7 +48,7 @@ type LocalUser = { id: string; username: string; name: string };
 type Building = { id: string; name: string; facilities: { id: string; name: string }[] };
 
 const PAGE_SIZES = [10, 20, 50, 100];
-const STATUSES = ["ALL", "CONFIRMED", "CANCELLED"] as const;
+const STATUSES = ["ALL", "CONFIRMED", "PENDING_APPROVAL", "REJECTED", "CANCELLED"] as const;
 
 export function AdminBookingsTab({
   onError,
@@ -331,7 +332,7 @@ export function AdminBookingsTab({
                 variant={statusFilter === st ? "default" : "outline"}
                 onClick={() => { setStatusFilter(st); setPage(1); }}
               >
-                {st === "ALL" ? "All" : st === "CONFIRMED" ? "Confirmed" : "Cancelled"}
+                {st === "ALL" ? "All" : bookingStatusLabel(st)}
               </Button>
             ))}
           </div>
@@ -391,6 +392,19 @@ export function AdminBookingsTab({
                         {b.needAvSupport && (
                           <Badge variant="outline" className="border-amber-400 bg-amber-100 text-amber-900 gap-1 text-[11px]">
                             <Headphones className="h-3 w-3 text-amber-700" /> AV Support
+                          </Badge>
+                        )}
+                        {b.status === "PENDING_APPROVAL" && (
+                          <Badge
+                            variant="outline"
+                            className="border-amber-400 bg-amber-100 text-amber-900 gap-1 text-[11px]"
+                          >
+                            <Clock className="h-3 w-3" /> Approval requested
+                          </Badge>
+                        )}
+                        {b.status === "REJECTED" && (
+                          <Badge variant="outline" className="border-red-300 bg-red-100 text-red-800 text-[11px]">
+                            Declined
                           </Badge>
                         )}
                         {b.status === "CANCELLED" && <Badge variant="outline">Cancelled</Badge>}
@@ -555,6 +569,8 @@ function AdminBookingHistoryDialog({
     CREATED: "bg-green-100 text-green-800 border-green-300",
     EDITED: "bg-amber-100 text-amber-800 border-amber-300",
     CANCELLED: "bg-red-100 text-red-800 border-red-300",
+    APPROVED: "bg-emerald-100 text-emerald-800 border-emerald-300",
+    REJECTED: "bg-red-100 text-red-800 border-red-300",
   };
 
   return (
@@ -584,7 +600,9 @@ function AdminBookingHistoryDialog({
                 {events.map((e) => (
                   <li key={e.id} className="rounded-md border p-3 text-sm">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline" className={KIND_BADGE[e.kind] ?? ""}>{e.kind}</Badge>
+                      <Badge variant="outline" className={KIND_BADGE[e.kind] ?? ""}>
+                        {eventLabel(e.kind)}
+                      </Badge>
                       <span className="text-xs text-muted-foreground">{fmtIstDateTime(e.at)}</span>
                       {e.actorName && (
                         <span className="text-xs text-muted-foreground">

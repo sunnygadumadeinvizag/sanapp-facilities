@@ -43,9 +43,11 @@ export default async function FacilitiesDashboardPage({
         <Card className="p-6">
           <h2 className="text-lg font-semibold">You have not been added to this dashboard</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            The bookings dashboard is limited to the facilities and the people chosen by the app
-            administrator. Ask the app administrator to add your username to the dashboard viewers
-            list.
+            The bookings dashboard is limited to the facilities you have been given access to. Ask
+            the app administrator to add your username as a dashboard viewer of the facilities you
+            need — or to make you an approval person / POC of them. Being an approval person or a POC
+            of a facility already gives you its dashboard, and the right to download its booking
+            history.
           </p>
         </Card>
       </AppShell>
@@ -132,7 +134,10 @@ export default async function FacilitiesDashboardPage({
       <h1 className="text-xl font-semibold">Bookings Dashboard</h1>
       <p className="mt-1 text-sm text-muted-foreground">
         Monday {from} → Sunday {to}. Use the arrows to step through the weeks — only the
-        facilities the app administrator added to this dashboard are shown.
+        facilities you have been given access to are shown. Each facility&apos;s complete booking
+        history (every slot, whatever its state, with dates, times and people) can be downloaded as
+        a CSV file from its own header; the button beside the week arrows downloads all of them at
+        once.
       </p>
       <DashboardGrid
         today={today}

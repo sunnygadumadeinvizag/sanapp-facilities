@@ -28,7 +28,46 @@ import type { Prisma } from "@/generated/prisma/client";
 const SSO_BASE_URL = process.env.SSO_BASE_URL ?? "";
 const SSO_ADMIN_KEY = process.env.SSO_ADMIN_KEY ?? "";
 
-export const EVENT_KINDS = ["CREATED", "EDITED", "CANCELLED"] as const;
+/**
+ * Post one or more mails through the SSO's key-guarded internal relay, which
+ * owns the SMTP credentials. Every recipient group gets the same plain-text
+ * body under its own subject. Never throws: a relay outage is logged only, so
+ * it can never fail the caller's booking operation.
+ *
+ * `label` is the booking reference, used only in log lines.
+ */
+export async function relayMail(
+  groups: { to: string[]; subject: string }[],
+  body: string,
+  label: string
+): Promise<boolean> {
+  if (!SSO_BASE_URL || !SSO_ADMIN_KEY) {
+    console.warn(`mail: SSO mail relay not configured — mail for ${label} not sent`);
+    return false;
+  }
+  let sent = false;
+  for (const group of groups) {
+    if (group.to.length === 0) continue;
+    try {
+      const res = await fetch(`${SSO_BASE_URL}/api/admin/mail`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-admin-key": SSO_ADMIN_KEY },
+        body: JSON.stringify({ to: group.to, subject: group.subject, text: body }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000),
+      });
+      if (res.ok) sent = true;
+      else console.error("mail failed:", group.subject, res.status, await res.text().catch(() => ""));
+    } catch (e) {
+      console.error("mail error:", group.subject, e);
+    }
+  }
+  return sent;
+}
+
+// APPROVED / REJECTED are the approval-workflow decisions on a facility that
+// requires an approval; they are written by src/lib/approval.ts.
+export const EVENT_KINDS = ["CREATED", "EDITED", "CANCELLED", "APPROVED", "REJECTED"] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 
 export type ChangeEntry = { field: string; before: string; after: string };
@@ -341,6 +380,12 @@ async function buildRecipients(opts: {
 export async function sendBookingDigest(opts: {
   booking: NotifyBooking;
   avChanged?: boolean;
+  /**
+   * Tell the facility's notifier list only. Used where the people involved are
+   * already being mailed directly (an approval decision mails the requester
+   * itself) and would otherwise get the same news twice.
+   */
+  onlyNotifiers?: boolean;
 }): Promise<boolean> {
   const { booking } = opts;
   try {
@@ -350,8 +395,8 @@ export async function sendBookingDigest(opts: {
     if (!cfg) return false;
 
     const wantsNotifiers = shouldNotify(cfg, opts.avChanged === true);
-    const wantsBooker = cfg.notifyBookingUser;
-    const wantsForUser = cfg.notifyForUser && Boolean(booking.forUser);
+    const wantsBooker = cfg.notifyBookingUser && opts.onlyNotifiers !== true;
+    const wantsForUser = cfg.notifyForUser && Boolean(booking.forUser) && opts.onlyNotifiers !== true;
     if (!wantsNotifiers && !wantsBooker && !wantsForUser) return false;
 
     const code = await resolveBookingCode(booking);
@@ -389,26 +434,7 @@ export async function sendBookingDigest(opts: {
     });
     if (groups.length === 0) return false;
 
-    let sent = false;
-    if (SSO_BASE_URL && SSO_ADMIN_KEY) {
-      for (const group of groups) {
-        try {
-          const res = await fetch(`${SSO_BASE_URL}/api/admin/mail`, {
-            method: "POST",
-            headers: { "content-type": "application/json", "x-admin-key": SSO_ADMIN_KEY },
-            body: JSON.stringify({ to: group.to, subject: group.subject, text: body }),
-            cache: "no-store",
-            signal: AbortSignal.timeout(15000),
-          });
-          if (res.ok) sent = true;
-          else console.error("booking notify mail failed:", res.status, await res.text().catch(() => ""));
-        } catch (e) {
-          console.error("booking notify mail error:", e);
-        }
-      }
-    } else {
-      console.warn(`booking notify: SSO mail relay not configured — mail for ${code} not sent`);
-    }
+    const sent = await relayMail(groups, body, code);
 
     // Record the body only when something actually went out, so a relay outage
     // is retried on the next change instead of silencing the booking forever.

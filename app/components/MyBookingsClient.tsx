@@ -1,7 +1,8 @@
 "use client";
 import { apiPath } from "sanapp-common-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarClock, FileText, Headphones, History, Loader2, Pencil, Search, Trash2 } from "lucide-react";
+import { CalendarClock, Clock, FileText, Headphones, History, Loader2, Pencil, Search, Trash2 } from "lucide-react";
+import { eventLabel } from "@/lib/labels";
 import {
   Dialog,
   DialogContent,
@@ -31,7 +32,7 @@ export type MyBooking = {
   code: string;
   batchId: string | null;
   type: "SELF" | "ON_BEHALF" | "LONG";
-  status: "CONFIRMED" | "CANCELLED";
+  status: "CONFIRMED" | "CANCELLED" | "PENDING_APPROVAL" | "REJECTED";
   date: string;
   endDate: string;
   startMin: number;
@@ -44,6 +45,11 @@ export type MyBooking = {
   cancelledAt: string | null;
   cancelReason: string | null;
   cancelledBy: { id: string; username: string; name: string; primaryRole?: string | null } | null;
+  /** Approval workflow — set on facilities that require an approval. */
+  approvalRequestedAt?: string | null;
+  decidedAt?: string | null;
+  decidedBy?: string | null;
+  decisionNote?: string | null;
   facility: { id: string; name: string; building: { id: string; name: string } };
   user?: { id: string; username: string; name: string; primaryRole?: string | null };
   forUser: { id: string; username: string; name: string; primaryRole?: string | null } | null;
@@ -113,9 +119,13 @@ export function MyBookingsClient({ today, canEdit }: { today: string; canEdit: b
     void load();
   }, [load]);
 
-  // Upcoming = confirmed and still in the future (its end is today or later).
+  // Upcoming = still holding a slot in the future: a confirmed booking, or a
+  // request waiting for an approval (its end is today or later).
   const upcoming = useMemo(
-    () => (bookings ?? []).filter((b) => b.status === "CONFIRMED" && b.endDate >= today),
+    () =>
+      (bookings ?? []).filter(
+        (b) => (b.status === "CONFIRMED" || b.status === "PENDING_APPROVAL") && b.endDate >= today
+      ),
     [bookings, today]
   );
   const history = useMemo(
@@ -180,7 +190,11 @@ export function MyBookingsClient({ today, canEdit }: { today: string; canEdit: b
     const pool = view === "bookings"
       ? pagedGroups.flatMap((g) => g.slots)
       : pagedSlots;
-    return pool.filter((b) => b.status === "CONFIRMED" && b.endDate >= today).map((b) => b.id);
+    return pool
+      .filter(
+        (b) => (b.status === "CONFIRMED" || b.status === "PENDING_APPROVAL") && b.endDate >= today
+      )
+      .map((b) => b.id);
   }, [view, pagedGroups, pagedSlots, today]);
 
   function toggle(id: string) {
@@ -380,8 +394,11 @@ function BookingGroupCard({
   const first = group.slots[0];
   const totalMin = group.slots.reduce((acc, b) => acc + slotDurationMin(b.date, b.startMin, b.endDate, b.endMin), 0);
   const confirmedCount = group.slots.filter((b) => b.status === "CONFIRMED").length;
-  const cancellable = group.slots.filter((b) => b.status === "CONFIRMED" && b.endDate >= today);
-  const allCancelled = confirmedCount === 0;
+  const pendingCount = group.slots.filter((b) => b.status === "PENDING_APPROVAL").length;
+  const cancellable = group.slots.filter(
+    (b) => (b.status === "CONFIRMED" || b.status === "PENDING_APPROVAL") && b.endDate >= today
+  );
+  const allCancelled = confirmedCount === 0 && pendingCount === 0;
 
   return (
     <Card className="p-4">
@@ -392,7 +409,16 @@ function BookingGroupCard({
             <span className="text-muted-foreground">/</span>
             <span className="font-medium">{first.facility.name}</span>
             <Badge variant="secondary">{group.slots.length} slot{group.slots.length === 1 ? "" : "s"}</Badge>
-            <Badge variant="outline">{allCancelled ? "Cancelled" : `${confirmedCount} confirmed`}</Badge>
+            {pendingCount > 0 ? (
+              <Badge variant="outline" className="border-amber-400 bg-amber-100 text-amber-900 gap-1">
+                <Clock className="h-3 w-3" />
+                {pendingCount} awaiting approval
+              </Badge>
+            ) : (
+              <Badge variant="outline">
+                {allCancelled ? "Cancelled" : `${confirmedCount} confirmed`}
+              </Badge>
+            )}
             {first.forUser && (
               <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-300">
                 Blocked for {first.forUser.name}
@@ -436,6 +462,19 @@ function BookingGroupCard({
                       <Headphones className="h-3 w-3 text-amber-700" /> AV Support
                     </Badge>
                   )}
+                  {b.status === "PENDING_APPROVAL" && (
+                    <Badge
+                      variant="outline"
+                      className="border-amber-400 bg-amber-100 text-amber-900 gap-1 text-[11px]"
+                    >
+                      <Clock className="h-3 w-3" /> Approval requested
+                    </Badge>
+                  )}
+                  {b.status === "REJECTED" && (
+                    <Badge variant="outline" className="border-red-300 bg-red-100 text-red-800 text-[11px]">
+                      Declined{b.decisionNote ? ` — “${b.decisionNote}”` : ""}
+                    </Badge>
+                  )}
                   {b.status === "CANCELLED" && (
                     <Badge variant="secondary" className="gap-1">
                       Cancelled{b.cancelledBy ? ` by ${b.cancelledBy.name}` : ""}
@@ -454,7 +493,10 @@ function BookingGroupCard({
                       <Checkbox
                         checked={selected.has(b.id)}
                         onCheckedChange={() => onToggle(b.id)}
-                        disabled={b.status !== "CONFIRMED" || b.endDate < today}
+                        disabled={
+                          (b.status !== "CONFIRMED" && b.status !== "PENDING_APPROVAL") ||
+                          b.endDate < today
+                        }
                         aria-label={`Select ${b.facility.name} slot ${fmtSlotRange(b.date, b.startMin, b.endDate, b.endMin)}`}
                       />
                     )}
@@ -522,7 +564,8 @@ function SlotCard({
 }) {
   const badge = TYPE_BADGE[b.type];
   const dur = slotDurationMin(b.date, b.startMin, b.endDate, b.endMin);
-  const cancellable = b.status === "CONFIRMED" && b.endDate >= today;
+  const cancellable =
+    (b.status === "CONFIRMED" || b.status === "PENDING_APPROVAL") && b.endDate >= today;
   return (
     <Card className="p-4">
       <div className="flex items-start gap-3">
@@ -545,6 +588,16 @@ function SlotCard({
                 <Headphones className="h-3 w-3 text-amber-700" /> AV Support
               </Badge>
             )}
+            {b.status === "PENDING_APPROVAL" && (
+              <Badge variant="outline" className="border-amber-400 bg-amber-100 text-amber-900 gap-1 text-[11px]">
+                <Clock className="h-3 w-3" /> Approval requested
+              </Badge>
+            )}
+            {b.status === "REJECTED" && (
+              <Badge variant="outline" className="border-red-300 bg-red-100 text-red-800 text-[11px]">
+                Declined
+              </Badge>
+            )}
             {b.status === "CANCELLED" && <Badge variant="secondary">Cancelled</Badge>}
           </div>
 
@@ -563,6 +616,19 @@ function SlotCard({
           )}
           {b.purpose && <p className="mt-1.5 text-sm">{b.purpose}</p>}
 
+          {b.status === "PENDING_APPROVAL" && (
+            <div className="mt-1.5 rounded-md bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">
+              Waiting for the facility&apos;s approval person to confirm this slot. The slot is held for
+              you meanwhile — you are emailed as soon as it is approved or declined.
+            </div>
+          )}
+          {b.status === "REJECTED" && (
+            <div className="mt-1.5 rounded-md bg-red-50 px-2.5 py-1.5 text-xs text-red-700">
+              Declined{b.decidedBy ? ` by ${b.decidedBy}` : ""}
+              {b.decidedAt ? ` on ${fmtIstDateTime(b.decidedAt)}` : ""}
+              {b.decisionNote ? ` — “${b.decisionNote}”` : ""} — the slot has been released.
+            </div>
+          )}
           {b.status === "CANCELLED" && (
             <div className="mt-1.5 rounded-md bg-red-50 px-2.5 py-1.5 text-xs text-red-700">
               Cancelled{b.cancelledBy ? ` by ${b.cancelledBy.name} (@${b.cancelledBy.username})` : ""}
@@ -682,6 +748,8 @@ export function BookingHistoryDialog({
     CREATED: "bg-green-100 text-green-800 border-green-300",
     EDITED: "bg-amber-100 text-amber-800 border-amber-300",
     CANCELLED: "bg-red-100 text-red-800 border-red-300",
+    APPROVED: "bg-emerald-100 text-emerald-800 border-emerald-300",
+    REJECTED: "bg-red-100 text-red-800 border-red-300",
   };
 
   return (
@@ -711,7 +779,9 @@ export function BookingHistoryDialog({
                 {events.map((e) => (
                   <li key={e.id} className="rounded-md border p-3 text-sm">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline" className={KIND_BADGE[e.kind] ?? ""}>{e.kind}</Badge>
+                      <Badge variant="outline" className={KIND_BADGE[e.kind] ?? ""}>
+                        {eventLabel(e.kind)}
+                      </Badge>
                       <span className="text-xs text-muted-foreground">{fmtIstDateTime(e.at)}</span>
                       {e.actorName && (
                         <span className="text-xs text-muted-foreground">
