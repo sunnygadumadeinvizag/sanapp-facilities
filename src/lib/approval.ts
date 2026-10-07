@@ -197,6 +197,11 @@ export type PendingApproval = {
   bookerUsername: string;
   forName: string | null;
   forUsername: string | null;
+  /** LAB facilities: who supervises the session and for which department. */
+  isLab: boolean;
+  supervisorName: string | null;
+  supervisorUsername: string | null;
+  department: string | null;
   requestedAt: string | null;
   decidedAt: string | null;
   decidedBy: string | null;
@@ -219,7 +224,10 @@ function toPending(row: {
   approvalRequestedAt: Date | null;
   decidedAt: Date | null;
   decisionNote: string | null;
-  facility: { name: string; building: { name: string } };
+  supervisorName: string | null;
+  supervisorUsername: string | null;
+  department: string | null;
+  facility: { name: string; isLab: boolean; building: { name: string } };
   user: { id: string; name: string; username: string } | null;
   forUser: { name: string; username: string } | null;
   decidedBy: { name: string } | null;
@@ -244,6 +252,10 @@ function toPending(row: {
     bookerUsername: row.user?.username ?? "",
     forName: row.forUser?.name ?? null,
     forUsername: row.forUser?.username ?? null,
+    isLab: Boolean(row.facility.isLab),
+    supervisorName: row.supervisorName ?? null,
+    supervisorUsername: row.supervisorUsername ?? null,
+    department: row.department ?? null,
     requestedAt: row.approvalRequestedAt ? row.approvalRequestedAt.toISOString() : null,
     decidedAt: row.decidedAt ? row.decidedAt.toISOString() : null,
     decidedBy: row.decidedBy?.name ?? null,
@@ -267,7 +279,10 @@ const APPROVAL_SELECT = {
   approvalRequestedAt: true,
   decidedAt: true,
   decisionNote: true,
-  facility: { select: { name: true, building: { select: { name: true } } } },
+  supervisorName: true,
+  supervisorUsername: true,
+  department: true,
+  facility: { select: { name: true, isLab: true, building: { select: { name: true } } } },
   user: { select: { id: true, name: true, username: true } },
   forUser: { select: { name: true, username: true } },
   decidedBy: { select: { name: true } },

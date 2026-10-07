@@ -67,6 +67,7 @@ import {
   slotDurationMin,
   slotIndex,
 } from "@/lib/ist";
+import { labDetailsError } from "@/lib/lab";
 
 export type SlotItem = {
   id: string;
@@ -186,6 +187,10 @@ export type EditBookingInfo = {
   pdfName?: string | null;
   isPublicAttachment?: boolean;
   needAvSupport?: boolean;
+  /** LAB facilities: the supervisor and department stored on the booking. */
+  supervisorUsername?: string | null;
+  supervisorName?: string | null;
+  department?: string | null;
 };
 
 export function BookingClient({
@@ -205,7 +210,14 @@ export function BookingClient({
   editBooking = null,
   onEdited,
 }: {
-  facility: { id: string; name: string; hasAvSupport?: boolean; requiresApproval?: boolean };
+  facility: {
+    id: string;
+    name: string;
+    hasAvSupport?: boolean;
+    requiresApproval?: boolean;
+    /** A LAB facility: supervisor and department are mandatory on a booking. */
+    isLab?: boolean;
+  };
   buildingName: string;
   today: string;
   todaySlots: SlotItem[];
@@ -230,6 +242,9 @@ export function BookingClient({
   // facility's approval people.
   const canBlockFor = me.mayBlockForOthers || me.role === "ADMIN";
   const isAdmin = me.role === "ADMIN";
+  // A LAB facility may not be booked without naming the supervisor (a faculty
+  // member) and the department the session belongs to.
+  const isLabFacility = Boolean(facility.isLab);
   // Every booking on an AV-required facility needs the AV technician.
   const avRequired = Boolean(avSupportRequired) && Boolean(facility.hasAvSupport);
 
@@ -306,6 +321,29 @@ export function BookingClient({
   // applies, so the amber note never contradicts the button.
   const directBooker = Boolean(facility.requiresApproval) && me.booksDirectly;
   const needsApproval = Boolean(facility.requiresApproval) && !me.booksDirectly;
+
+  // ---- LAB facilities: the supervisor and the department -----------------
+  // The supervisor is a faculty member (the SSO registry's teaching staff) and
+  // the department comes from the same registry, so both stay in step with the
+  // institute directory.
+  const [supervisor, setSupervisor] = useState<{ username: string; name: string } | null>(
+    editBooking?.supervisorUsername
+      ? {
+          username: editBooking.supervisorUsername,
+          name: editBooking.supervisorName ?? editBooking.supervisorUsername,
+        }
+      : null
+  );
+  const [supervisorQuery, setSupervisorQuery] = useState(
+    editBooking?.supervisorName
+      ? `${editBooking.supervisorName} (@${editBooking.supervisorUsername ?? ""})`
+      : ""
+  );
+  const [supervisorResults, setSupervisorResults] = useState<
+    { id: string; username: string; name: string; departmentName?: string | null }[]
+  >([]);
+  const [department, setDepartment] = useState(editBooking?.department ?? "");
+  const [departments, setDepartments] = useState<string[]>([]);
   const [purpose, setPurpose] = useState(editBooking?.purpose ?? "");
   const [isPublicPurpose, setIsPublicPurpose] = useState(editBooking?.isPublicPurpose ?? false);
   // On an AV-required facility the AV technician is always requested, and the
@@ -398,6 +436,47 @@ export function BookingClient({
   useEffect(() => {
     void loadBookings(weekStart);
   }, [weekStart, loadBookings]);
+
+  // The department list is loaded once, and only for a lab facility.
+  useEffect(() => {
+    if (!isLabFacility) return;
+    let live = true;
+    void (async () => {
+      try {
+        const res = await fetch(apiPath("/api/departments"));
+        if (!res.ok) return;
+        const data = await res.json();
+        if (live) {
+          setDepartments(
+            (data.departments ?? [])
+              .map((d: { name?: string }) => String(d?.name ?? "").trim())
+              .filter(Boolean)
+          );
+        }
+      } catch {
+        /* the picker falls back to a typed department */
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [isLabFacility]);
+
+  async function searchSupervisors(q: string) {
+    if (!q.trim()) {
+      setSupervisorResults([]);
+      return;
+    }
+    try {
+      const res = await fetch(apiPath(`/api/users?kind=faculty&q=${encodeURIComponent(q)}`));
+      if (res.ok) {
+        const data = await res.json();
+        setSupervisorResults(data.users ?? []);
+      }
+    } catch {
+      setSupervisorResults([]);
+    }
+  }
 
   async function searchUsers(q: string) {
     if (!q.trim()) {
@@ -634,6 +713,12 @@ export function BookingClient({
     if ((liveAnyLong() || isOnBehalf) && !purpose.trim()) {
       return "A description is required for this booking.";
     }
+    const labMissing = labDetailsError(isLabFacility, {
+      supervisorUsername: supervisor?.username,
+      supervisorName: supervisor?.name,
+      department,
+    });
+    if (labMissing) return labMissing;
     return null;
   }
 
@@ -669,6 +754,11 @@ export function BookingClient({
           payload.set("isPublicPurpose", isPublicPurpose ? "1" : "0");
           payload.set("isPublicAttachment", isPublicAttachment ? "1" : "0");
           payload.set("needAvSupport", needAvSupport ? "1" : "0");
+          if (isLabFacility) {
+            payload.set("supervisorUsername", supervisor?.username ?? "");
+            payload.set("supervisorName", supervisor?.name ?? "");
+            payload.set("department", department);
+          }
           if (pdfClear && !pdf) payload.set("pdfClear", "1");
           if (pdf) payload.set("pdf", pdf, pdf.name);
         }
@@ -688,6 +778,13 @@ export function BookingClient({
                   isPublicPurpose,
                   isPublicAttachment,
                   needAvSupport,
+                  ...(isLabFacility
+                    ? {
+                        supervisorUsername: supervisor?.username ?? "",
+                        supervisorName: supervisor?.name ?? "",
+                        department,
+                      }
+                    : {}),
                 }),
               }),
         });
@@ -746,6 +843,13 @@ export function BookingClient({
       form.set("isPublicPurpose", isPublicPurpose ? "1" : "0");
       form.set("isPublicAttachment", isPublicAttachment ? "1" : "0");
       form.set("needAvSupport", needAvSupport ? "1" : "0");
+      // LAB facilities: the supervisor and the department travel with every slot
+      // of the submission.
+      if (isLabFacility) {
+        form.set("supervisorUsername", supervisor?.username ?? "");
+        form.set("supervisorName", supervisor?.name ?? "");
+        form.set("department", department);
+      }
       if (isOnBehalf && forUserId) form.set("forUserId", forUserId);
       if (pdf) form.set("pdf", pdf, pdf.name);
       try {
@@ -967,6 +1071,7 @@ export function BookingClient({
                   availability.closedDates.includes(d) ||
                   availability.closedWeekdays.includes(weekdayOf(d))
               )}
+              dayWindows={availability.dayWindows}
               bookings={bookings}
               committed={ranges.map((p) => p.range)}
               onCommit={commitRange}
@@ -1128,6 +1233,97 @@ export function BookingClient({
                 <Checkbox checked={forOther} onCheckedChange={(v) => setForOther(v === true)} />
                 Block these slots for another user
               </label>
+            )}
+
+            {isLabFacility && (
+              <div className="grid gap-3 rounded-md border border-sky-300 bg-sky-50/70 p-3">
+                <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+                  <Badge
+                    variant="outline"
+                    className="border-sky-400 bg-sky-50 text-sky-900 text-[11px]"
+                  >
+                    LAB
+                  </Badge>
+                  Lab session details — both are required
+                </div>
+
+                <div className="grid gap-1 max-w-md">
+                  <Label htmlFor="lab-supervisor">Supervisor (faculty)</Label>
+                  <Input
+                    id="lab-supervisor"
+                    value={supervisorQuery}
+                    placeholder="Search a faculty member by name or username"
+                    autoComplete="off"
+                    onChange={(e) => {
+                      setSupervisorQuery(e.target.value);
+                      setSupervisor(null);
+                      void searchSupervisors(e.target.value);
+                    }}
+                  />
+                  {supervisorResults.length > 0 && (
+                    <div className="mt-1 flex max-h-48 flex-col gap-1 overflow-y-auto rounded-md border bg-card p-1 shadow-sm">
+                      {supervisorResults.map((u) => (
+                        <Button
+                          key={u.id}
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="justify-start text-xs"
+                          onClick={() => {
+                            setSupervisor({ username: u.username, name: u.name });
+                            setSupervisorQuery(`${u.name} (@${u.username})`);
+                            setSupervisorResults([]);
+                            // The supervisor's own department is usually the one
+                            // the session belongs to, so offer it as the default.
+                            if (u.departmentName) setDepartment((prev) => prev || u.departmentName!);
+                          }}
+                        >
+                          {u.name} (@{u.username})
+                          {u.departmentName ? (
+                            <span className="ml-1 text-muted-foreground">· {u.departmentName}</span>
+                          ) : null}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+                  {supervisor ? (
+                    <span className="text-[11px] font-medium text-emerald-700">
+                      Supervisor: {supervisor.name} (@{supervisor.username})
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="grid gap-1 max-w-md">
+                  <Label htmlFor="lab-department">Department</Label>
+                  {departments.length > 0 ? (
+                    <Select value={department} onValueChange={setDepartment}>
+                      <SelectTrigger id="lab-department">
+                        <SelectValue placeholder="Choose the department" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {departments.map((d) => (
+                          <SelectItem key={d} value={d}>
+                            {d}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      id="lab-department"
+                      value={department}
+                      placeholder="Type the department"
+                      onChange={(e) => setDepartment(e.target.value)}
+                    />
+                  )}
+                </div>
+
+                <p className="text-[11px] text-sky-900">
+                  The supervisor is the faculty member responsible for the lab session; the department
+                  is whose work it belongs to. Both are shown to this facility&apos;s approval people
+                  and on the bookings dashboard, and both appear in the CSV export.
+                </p>
+              </div>
             )}
 
             {forOther && (

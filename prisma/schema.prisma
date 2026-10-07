@@ -131,6 +131,11 @@ model Facility {
   closedWeekdays Int[]   @default([])
   // One-off closures — plain YYYY-MM-DD (IST) dates the facility is closed.
   closedDates  String[]  @default([])
+  // Per-weekday bookable hours — {"1": {"open": 540, "close": 1080}} makes
+  // Mondays 09:00–18:00 whatever the rest of the week does. A weekday that is
+  // closed outright belongs in closedWeekdays instead, and a weekday that is
+  // absent here uses openMin/closeMin.
+  dayWindows   Json?
   // When true, a booking by a regular user is created as PENDING_APPROVAL and
   // only becomes CONFIRMED once an approval person of this facility decides in
   // its favour. The facility's approval people and app ADMINs book directly.
@@ -226,6 +231,15 @@ model Booking {
   pdfName    String?
   isPublicAttachment Boolean @default(false)
   needAvSupport      Boolean @default(false)
+  // ---- LAB facilities only -------------------------------------------------
+  // A slot on a facility marked "LAB facility" must name the faculty member who
+  // supervises the session and the department the work belongs to. Both are
+  // snapshotted (username + name) so the record stays readable whatever happens
+  // to the person's SSO entry later, and so the dashboard, the approval queue
+  // and the CSV export can show who supervised a lab slot.
+  supervisorUsername String?
+  supervisorName     String?
+  department         String?
   createdAt  DateTime      @default(now())
   // Audit trail — life-cycle events (created / edited / cancelled).
   events      BookingEvent[]

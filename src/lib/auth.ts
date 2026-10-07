@@ -40,6 +40,8 @@ export type SsoUser = {
   name: string;
   email: string | null;
   primaryRole: string;
+  /** The person's department in the central registry, when they have one. */
+  departmentName: string | null;
   isActive: boolean;
 };
 
@@ -69,6 +71,7 @@ export async function listSsoUsers(): Promise<SsoUser[]> {
       name: u.name,
       email: u.email ?? null,
       primaryRole: u.primaryRole || "",
+      departmentName: u.department?.name ?? null,
       isActive: u.isActive !== false,
     }));
     ssoUsersCache = { at: Date.now(), users };

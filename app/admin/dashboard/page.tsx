@@ -82,6 +82,10 @@ export default async function FacilitiesDashboardPage({
             endMin: true,
             purpose: true,
             needAvSupport: true,
+            supervisorName: true,
+            supervisorUsername: true,
+            department: true,
+            facility: { select: { isLab: true } },
             user: { select: { name: true, username: true } },
             forUser: { select: { name: true, username: true } },
           },
@@ -126,6 +130,15 @@ export default async function FacilitiesDashboardPage({
       endMin: b.endMin,
       purpose: b.purpose,
       needAvSupport: b.needAvSupport,
+      // A lab slot shows who supervises it and for which department, so the
+      // people watching the dashboard can see what each lab session is.
+      isLab: b.facility.isLab,
+      supervisor: b.supervisorName
+        ? b.supervisorUsername
+          ? `${b.supervisorName} (@${b.supervisorUsername})`
+          : b.supervisorName
+        : null,
+      department: b.department,
       bookedBy: b.forUser ? `${b.forUser.name} (@${b.forUser.username})` : b.user ? `${b.user.name} (@${b.user.username})` : "—",
     }));
 

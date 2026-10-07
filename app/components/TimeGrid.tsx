@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtDuration, fmtMin, fmtSlotRange, slotDurationMin } from "@/lib/ist";
+import { weekdayOf } from "@/lib/availability";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -149,6 +150,7 @@ export function TimeGrid({
   openMin = 0,
   closeMin = 1440,
   closedDays = [],
+  dayWindows = {},
 }: {
   days: string[];
   bookings: BookingBlock[];
@@ -192,6 +194,12 @@ export function TimeGrid({
   closeMin?: number;
   /** Days within `days` the facility is closed (recurring or one-off). */
   closedDays?: string[];
+  /**
+   * Per-weekday hours that override `openMin`/`closeMin` on that weekday —
+   * {"1": {open: 540, close: 780}} makes Mondays 09:00–13:00 only. A weekday
+   * that is not listed uses the facility's own window.
+   */
+  dayWindows?: Record<string, { open: number; close: number }>;
 }) {
   const [zoomKey, setZoomKey] = useState("1h");
   const zoom = ZOOMS.find((z) => z.key === zoomKey) ?? ZOOMS[1];
@@ -383,12 +391,18 @@ export function TimeGrid({
    * facility's approval people). The grid also shades these cells, and the
    * server refuses them whatever the client does.
    */
+  /** The hours of one day: that weekday's own window, or the facility's. */
+  function hoursOf(date: string): { open: number; close: number } {
+    return dayWindows[String(weekdayOf(date))] ?? { open: openMin, close: closeMin };
+  }
+
   function whyUnavailable(date: string, min: number): string | null {
     if (closedDays.includes(date)) {
       return "This facility is closed on that day — please pick one of the open days.";
     }
-    if (min < openMin || min >= closeMin) {
-      return `This facility is bookable ${fmtMin(openMin)}–${fmtMin(closeMin)} IST only — pick a slot inside those hours.`;
+    const hours = hoursOf(date);
+    if (min < hours.open || min >= hours.close) {
+      return `This facility is bookable ${fmtMin(hours.open)}–${fmtMin(hours.close)} IST on that day — pick a slot inside those hours.`;
     }
     return null;
   }
@@ -632,12 +646,14 @@ export function TimeGrid({
       onReject?.(`This facility is closed on ${closed} — please pick another day.`);
       return;
     }
-    if (range.startMin < openMin) {
-      onReject?.(`This facility is bookable from ${fmtMin(openMin)} IST only.`);
+    const startHours = hoursOf(range.startDate);
+    if (range.startMin < startHours.open) {
+      onReject?.(`This facility is bookable from ${fmtMin(startHours.open)} IST only on that day.`);
       return;
     }
-    if (range.endMin > closeMin) {
-      onReject?.(`A booking on this facility must end by ${fmtMin(closeMin)} IST.`);
+    const endHours = hoursOf(range.endDate);
+    if (range.endMin > endHours.close) {
+      onReject?.(`A booking on this facility must end by ${fmtMin(endHours.close)} IST on that day.`);
       return;
     }
     if (conflict(range)) {
@@ -1074,17 +1090,17 @@ export function TimeGrid({
                     }}
                   />
                 ))}
-                {/* Outside the facility's bookable hours — shaded, never selectable. */}
-                {openMin > 0 && (
+                {/* Outside this day's bookable hours — shaded, never selectable. */}
+                {hoursOf(d).open > 0 && (
                   <div
                     className="absolute left-0 right-0 top-0 pointer-events-none border-b border-dashed fb-unavailable"
-                    style={{ height: (openMin / (24 * 60)) * colHeight }}
+                    style={{ height: (hoursOf(d).open / (24 * 60)) * colHeight }}
                   />
                 )}
-                {closeMin < 24 * 60 && (
+                {hoursOf(d).close < 24 * 60 && (
                   <div
                     className="absolute left-0 right-0 bottom-0 pointer-events-none border-t border-dashed fb-unavailable"
-                    style={{ height: ((24 * 60 - closeMin) / (24 * 60)) * colHeight }}
+                    style={{ height: ((24 * 60 - hoursOf(d).close) / (24 * 60)) * colHeight }}
                   />
                 )}
                 {/* A day the facility is closed on: the whole column is out of play. */}

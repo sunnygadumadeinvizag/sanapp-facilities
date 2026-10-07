@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { currentUser, isAdmin, listSsoUsers } from "@/lib/auth";
 import { isPocAnywhere, resolveUserByUsername } from "@/lib/poc";
+import { isFaculty } from "@/lib/lab";
 
 export async function GET(request: NextRequest) {
   const user = await currentUser();
@@ -10,6 +11,28 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const kind = searchParams.get("kind") ?? "sso";
   const q = (searchParams.get("q") ?? "").trim().toLowerCase();
+
+  if (kind === "faculty") {
+    // The supervisors a LAB booking may name: the institute's teaching staff.
+    // Every signed-in user may search them — a lab booking must name one — but
+    // only the directory fields travel, never anything personal.
+    const sso = await listSsoUsers();
+    const faculty = sso
+      .filter((u) => u.isActive && isFaculty(u.primaryRole))
+      .map((u) => ({
+        id: u.id,
+        username: u.username,
+        name: u.name,
+        primaryRole: u.primaryRole,
+        departmentName: u.departmentName,
+      }));
+    const filtered = q
+      ? faculty.filter(
+          (u) => u.username.toLowerCase().includes(q) || u.name.toLowerCase().includes(q)
+        )
+      : faculty;
+    return NextResponse.json({ users: filtered.slice(0, 25), total: faculty.length });
+  }
 
   if (kind === "sso") {
     // For ON_BEHALF bookings and POC lookup: any POC (or admin) may search

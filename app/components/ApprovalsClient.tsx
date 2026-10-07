@@ -6,6 +6,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  FlaskConical,
+  GraduationCap,
   Headphones,
   Loader2,
   RefreshCw,
@@ -36,6 +38,11 @@ export type ApprovalRow = {
   type: string;
   purpose: string | null;
   needAvSupport: boolean;
+  /** LAB facilities: the label, the supervisor and the department. */
+  isLab: boolean;
+  supervisorName: string | null;
+  supervisorUsername: string | null;
+  department: string | null;
   bookerId: string;
   bookerName: string;
   bookerUsername: string;
@@ -61,6 +68,10 @@ type RequestGroup = {
   requestedAt: string | null;
   purpose: string | null;
   needAvSupport: boolean;
+  isLab: boolean;
+  supervisorName: string | null;
+  supervisorUsername: string | null;
+  department: string | null;
   slots: ApprovalRow[];
 };
 
@@ -85,6 +96,10 @@ function groupRequests(rows: ApprovalRow[]): RequestGroup[] {
       requestedAt: row.requestedAt,
       purpose: row.purpose,
       needAvSupport: row.needAvSupport,
+      isLab: row.isLab,
+      supervisorName: row.supervisorName,
+      supervisorUsername: row.supervisorUsername,
+      department: row.department,
       slots: [row],
     });
   }
@@ -264,6 +279,15 @@ export function ApprovalsClient({
                       <span className="font-semibold text-sm">
                         {group.buildingName} — {group.facilityName}
                       </span>
+                      {group.isLab && (
+                        <Badge
+                          variant="outline"
+                          className="border-sky-400 bg-sky-50 text-sky-900 gap-1 text-[11px]"
+                        >
+                          <FlaskConical className="h-3 w-3" />
+                          LAB
+                        </Badge>
+                      )}
                       <code className="text-[11px] rounded bg-muted px-1.5 py-0.5">{group.code}</code>
                     </div>
                     <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -276,6 +300,17 @@ export function ApprovalsClient({
                         <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300 font-medium">
                           <Headphones className="h-3 w-3" />
                           AV support needed
+                        </span>
+                      )}
+                      {(group.supervisorName || group.department) && (
+                        <span className="inline-flex items-center gap-1">
+                          <GraduationCap className="h-3 w-3" />
+                          {group.supervisorName
+                            ? `Supervisor: ${group.supervisorName}${
+                                group.supervisorUsername ? ` (@${group.supervisorUsername})` : ""
+                              }`
+                            : "Supervisor: not recorded"}
+                          {group.department ? ` · ${group.department}` : ""}
                         </span>
                       )}
                     </div>

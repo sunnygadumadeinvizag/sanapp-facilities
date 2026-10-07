@@ -15,7 +15,8 @@ import {
   slotIndex,
 } from "@/lib/ist";
 import { effectiveMaxMinutes } from "@/lib/limits";
-import { availabilityError } from "@/lib/availability";
+import { availabilityError, facilityAvailability } from "@/lib/availability";
+import { cleanText, labDetailsError } from "@/lib/lab";
 import { nextBookingCode, recordEvent, sendBookingDigest, type NotifyBooking } from "@/lib/notify";
 import { approvalContext } from "@/lib/approval";
 import { queueApprovalRequestMail } from "@/lib/approval-mail";
@@ -55,12 +56,19 @@ const BOOKING_LIST_SELECT = {
   pdfName: true,
   isPublicAttachment: true,
   needAvSupport: true,
+  // LAB facilities: who supervises the session and for which department. Shown
+  // to the people who may see a booking's details, hidden from everybody else
+  // (see formatBookingForViewer).
+  supervisorUsername: true,
+  supervisorName: true,
+  department: true,
   userId: true,
   forUserId: true,
   facility: {
     select: {
       id: true,
       name: true,
+      isLab: true,
       building: { select: { id: true, name: true } },
     },
   },
@@ -173,6 +181,14 @@ async function formatBookingForViewer(
     pdfName: canSeeAttachment ? b.pdfName : null,
     isPublicAttachment: Boolean(b.isPublicAttachment),
     needAvSupport: canViewPrivate ? Boolean(b.needAvSupport) : false,
+    // The lab's supervisor and department are part of a booking's detail: they
+    // travel to the booker, the facility's approval people, its POCs and app
+    // admins — and to nobody else.
+    supervisorUsername: canViewPrivate ? (b.supervisorUsername ?? null) : null,
+    supervisorName: canViewPrivate ? (b.supervisorName ?? null) : null,
+    department: canViewPrivate ? (b.department ?? null) : null,
+    /** True for a facility marked "LAB facility" (public: it is a label only). */
+    isLab: Boolean(b.facility.isLab),
     /** True when the viewer is seeing a redacted slot (time + booker + state). */
     redacted: !canViewPrivate,
     cancelledAt: canViewPrivate ? b.cancelledAt : null,
@@ -421,6 +437,9 @@ export async function POST(request: NextRequest) {
       "needAvSupport",
       "forUserId",
       "batchId",
+      "supervisorUsername",
+      "supervisorName",
+      "department",
     ]) {
       const v = form.get(key);
       if (v !== null && v !== undefined && typeof v === "string") body[key] = v;
@@ -500,7 +519,7 @@ export async function POST(request: NextRequest) {
   // The facility's own hours and closed days (set by the app admin or its
   // approval people). The calendar hides these slots too, but the server rules.
   const outsideAvailability = availabilityError(
-    facility,
+    facilityAvailability(facility),
     startDate,
     startMin,
     endDate,
@@ -511,6 +530,20 @@ export async function POST(request: NextRequest) {
   // On an AV-required facility EVERY booking needs the AV technician, whether
   // the booker asked for it or not.
   const needAvSupport = facility.avSupportRequired || needAvSupportRequested;
+
+  // A LAB facility may not be booked without naming the supervisor — the faculty
+  // member supervising the session — and the department the work belongs to.
+  // Both are recorded on every slot of the submission so the dashboard, the
+  // approval queue and the CSV export can say who supervised a lab slot.
+  const labSupervisorUsername = cleanText(body.supervisorUsername, 120);
+  const labSupervisorName = cleanText(body.supervisorName, 200);
+  const labDepartment = cleanText(body.department, 200);
+  const labError = labDetailsError(facility.isLab, {
+    supervisorUsername: labSupervisorUsername,
+    supervisorName: labSupervisorName,
+    department: labDepartment,
+  });
+  if (labError) return bad(labError);
 
   // POC = POC of this facility OR of its building (or an app ADMIN).
   const access = await facilityAccess(facilityId, user.id, user.role);
@@ -676,6 +709,10 @@ export async function POST(request: NextRequest) {
           endMin,
           purpose: purpose || null,
           isPublicPurpose,
+          // LAB facilities only: the supervisor and department of the session.
+          supervisorUsername: facility.isLab ? labSupervisorUsername : null,
+          supervisorName: facility.isLab ? labSupervisorName : null,
+          department: facility.isLab ? labDepartment : null,
           // Buffer -> Uint8Array<ArrayBuffer> for Prisma Bytes.
           pdf: pdf ? (() => { const b = new Uint8Array(pdf.byteLength); b.set(pdf); return b; })() : undefined,
           pdfName: pdfName ?? undefined,
@@ -768,6 +805,9 @@ export async function PATCH(request: NextRequest) {
       "isPublicPurpose",
       "isPublicAttachment",
       "needAvSupport",
+      "supervisorUsername",
+      "supervisorName",
+      "department",
     ]) {
       const v = form.get(key);
       if (v !== null && v !== undefined && typeof v === "string") body[key] = v;
@@ -869,13 +909,28 @@ export async function PATCH(request: NextRequest) {
 
   // --- Bookable availability (the facility's hours and closed days) --------
   const outsideAvailability = availabilityError(
-    facility,
+    facilityAvailability(facility),
     startDate,
     startMin,
     endDate,
     endMin
   );
   if (outsideAvailability) return bad(outsideAvailability);
+
+  // A LAB facility keeps its supervisor and department: an edit may change them,
+  // and a lab booking that somehow has none may not be left without them.
+  const labPatchUsername =
+    body.supervisorUsername === undefined ? undefined : cleanText(body.supervisorUsername, 120);
+  const labPatchName =
+    body.supervisorName === undefined ? undefined : cleanText(body.supervisorName, 200);
+  const labPatchDepartment =
+    body.department === undefined ? undefined : cleanText(body.department, 200);
+  const labPatchError = labDetailsError(facility.isLab, {
+    supervisorUsername: labPatchUsername ?? booking.supervisorUsername,
+    supervisorName: labPatchName ?? booking.supervisorName,
+    department: labPatchDepartment ?? booking.department,
+  });
+  if (labPatchError) return bad(labPatchError);
 
   // Moving or re-timing a slot of an approval facility has to be approved
   // again: the decision covered the time range that was requested, not a new
@@ -918,6 +973,9 @@ export async function PATCH(request: NextRequest) {
         startMin,
         endMin,
         purpose,
+        ...(labPatchUsername !== undefined ? { supervisorUsername: labPatchUsername } : {}),
+        ...(labPatchName !== undefined ? { supervisorName: labPatchName } : {}),
+        ...(labPatchDepartment !== undefined ? { department: labPatchDepartment } : {}),
       };
       if (needsApproval && booking.status === "CONFIRMED") {
         // Back to waiting: the slot is held again and the approval people

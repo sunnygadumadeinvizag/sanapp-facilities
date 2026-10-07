@@ -5,6 +5,7 @@ import { Building2, CalendarClock, ChevronLeft, ChevronRight, Download, Headphon
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MultiSearchableSelect } from "@/components/ui/multi-searchable-select";
 import { addDays, fmtMin, mondayOf } from "@/lib/ist";
@@ -19,6 +20,10 @@ export type DashSlot = {
   endMin: number;
   purpose: string | null;
   needAvSupport: boolean;
+  /** LAB facilities: the label, the supervisor and the department. */
+  isLab: boolean;
+  supervisor: string | null;
+  department: string | null;
   bookedBy: string;
 };
 
@@ -70,6 +75,17 @@ export function DashboardGrid({
   canConfigure: boolean;
 }) {
   const days = useMemo(() => daysBetween(from, to), [from, to]);
+  // The export range: it starts on the week on screen and can be widened to any
+  // period — "the booking data between these two dates".
+  const [exportFrom, setExportFrom] = useState(from);
+  const [exportTo, setExportTo] = useState(to);
+  const exportHref = (ids: string[]) => {
+    const params = new URLSearchParams();
+    if (ids.length > 0) params.set("facilityId", ids.join(","));
+    if (/^\d{4}-\d{2}-\d{2}$/.test(exportFrom)) params.set("from", exportFrom);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(exportTo)) params.set("to", exportTo);
+    return apiPath(`/api/dashboard/export?${params.toString()}`);
+  };
   // Weeks always run Monday → Sunday; `from` is already that Monday.
   const prevWeek = addDays(from, -7);
   const nextWeek = addDays(from, 7);
@@ -96,18 +112,42 @@ export function DashboardGrid({
           {isCurrentWeek ? "Showing this week" : "Showing week"} · Mon {from} → Sun {to}
         </span>
         {facilities.length > 0 && (
-          <Button variant="outline" size="sm" asChild className="sm:ml-auto">
-            <a
-              href={apiPath(
-                `/api/dashboard/export?facilityId=${facilities.map((f) => f.id).join(",")}`
-              )}
-              title="Download the complete booking history of every facility shown here, as CSV"
-            >
-              <Download className="h-4 w-4" />
-              Export history
-              {facilities.length > 1 ? ` (${facilities.length} facilities)` : ""}
-            </a>
-          </Button>
+          <div className="flex flex-wrap items-end gap-2 rounded-md border bg-muted/30 px-2 py-1.5 sm:ml-auto">
+            <div className="grid gap-0.5">
+              <Label htmlFor="export-from" className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Export from
+              </Label>
+              <Input
+                id="export-from"
+                type="date"
+                className="h-8 w-[150px]"
+                value={exportFrom}
+                onChange={(e) => setExportFrom(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-0.5">
+              <Label htmlFor="export-to" className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                to
+              </Label>
+              <Input
+                id="export-to"
+                type="date"
+                className="h-8 w-[150px]"
+                value={exportTo}
+                onChange={(e) => setExportTo(e.target.value)}
+              />
+            </div>
+            <Button variant="outline" size="sm" asChild>
+              <a
+                href={exportHref(facilities.map((f) => f.id))}
+                title="Download the booking history of the facilities shown here for the dates above, as CSV — every slot, whatever its state"
+              >
+                <Download className="h-4 w-4" />
+                Export CSV
+                {facilities.length > 1 ? ` (${facilities.length} facilities)` : ""}
+              </a>
+            </Button>
+          </div>
         )}
       </div>
       {unconfigured && canConfigure && (
@@ -145,8 +185,8 @@ export function DashboardGrid({
                   </Badge>
                   <Button variant="outline" size="sm" asChild>
                     <a
-                      href={apiPath(`/api/dashboard/export?facilityId=${f.id}`)}
-                      title="Download this facility's complete booking history as CSV — every slot, all dates"
+                      href={exportHref([f.id])}
+                      title="Download this facility's booking history for the dates chosen above, as CSV"
                     >
                       <Download className="h-3.5 w-3.5" /> Export CSV
                     </a>
@@ -197,9 +237,26 @@ export function DashboardGrid({
                                       <Headphones className="h-2.5 w-2.5" /> AV
                                     </Badge>
                                   )}
+                                  {s.isLab && (
+                                    <Badge variant="outline" className="mt-1 gap-0.5 border-sky-400 bg-sky-100 text-sky-900 px-1 py-0 text-[10px]">
+                                      LAB
+                                    </Badge>
+                                  )}
                                   <div className="mt-1 truncate text-muted-foreground" title={s.bookedBy}>
                                     {s.bookedBy}
                                   </div>
+                                  {(s.supervisor || s.department) && (
+                                    <div
+                                      className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted-foreground"
+                                      title={`${s.supervisor ?? ""}${
+                                        s.supervisor && s.department ? " · " : ""
+                                      }${s.department ?? ""}`}
+                                    >
+                                      {s.supervisor ? `Supervisor: ${s.supervisor}` : null}
+                                      {s.supervisor && s.department ? " · " : null}
+                                      {s.department ? `Dept: ${s.department}` : null}
+                                    </div>
+                                  )}
                                   {s.purpose && (
                                     <div className="mt-0.5 line-clamp-2 break-words text-[11px]">
                                       {s.purpose}

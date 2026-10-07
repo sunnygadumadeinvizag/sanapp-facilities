@@ -6,6 +6,7 @@ import { decidableFacilityIds, listPendingApprovals, listRecentDecisions } from 
 import { AppShell } from "../components/AppShell";
 import { ApprovalsClient } from "../components/ApprovalsClient";
 import { AvailabilityEditor } from "../components/AvailabilityEditor";
+import { dayWindowsFromDb } from "@/lib/availability";
 import { Card, CardContent } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
@@ -71,6 +72,7 @@ export default async function ApprovalsPage() {
       closeMin: true,
       closedWeekdays: true,
       closedDates: true,
+      dayWindows: true,
       maxMinutes: true,
       requiresApproval: true,
       isLab: true,
@@ -119,6 +121,7 @@ export default async function ApprovalsPage() {
             closeMin: f.closeMin,
             closedWeekdays: f.closedWeekdays,
             closedDates: f.closedDates,
+            dayWindows: dayWindowsFromDb(f.dayWindows),
             maxMinutes: f.maxMinutes,
             requiresApproval: f.requiresApproval,
             isLab: f.isLab,

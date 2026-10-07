@@ -2,13 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { apiPath } from "sanapp-common-ui";
-import { CalendarOff, Clock, Loader2, Save, Timer } from "lucide-react";
+import { CalendarClock, CalendarOff, Clock, Loader2, Save, Timer } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { availabilityLines, minuteLabel, WEEKDAY_NAMES } from "@/lib/availability";
+import { availabilityLines, minuteLabel, WEEKDAY_NAMES, windowLabel } from "@/lib/availability";
 import { capLabel } from "@/lib/limits";
 
 /**
@@ -28,6 +29,8 @@ export type AvailabilityFacility = {
   closeMin: number;
   closedWeekdays: number[];
   closedDates: string[];
+  /** Per-weekday hours, keyed by weekday number as a string ("0" … "6"). */
+  dayWindows: Record<string, { open: number; close: number }>;
   maxMinutes: number | null;
   requiresApproval: boolean;
   isLab: boolean;
@@ -132,18 +135,38 @@ function AvailabilityForm({ facility }: { facility: AvailabilityFacility }) {
   const [closeMin, setCloseMin] = useState(facility.closeMin);
   const [closedWeekdays, setClosedWeekdays] = useState<number[]>(facility.closedWeekdays);
   const [closedDates, setClosedDates] = useState<string[]>(facility.closedDates);
+  const [dayWindows, setDayWindows] = useState<Record<string, { open: number; close: number }>>(
+    facility.dayWindows ?? {}
+  );
   const [maxMinutes, setMaxMinutes] = useState<number | null>(facility.maxMinutes);
   const [newDate, setNewDate] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const av = { openMin, closeMin, closedWeekdays, closedDates };
+  const av = { openMin, closeMin, closedWeekdays, closedDates, dayWindows };
+
+  /** Give one weekday its own hours (they start from the facility's window). */
+  function setDayWindow(day: number, window: { open: number; close: number }) {
+    setDayWindows((prev) => ({ ...prev, [String(day)]: window }));
+  }
+
+  /** Put one weekday back on the facility's own hours. */
+  function clearDayWindow(day: number) {
+    setDayWindows((prev) => {
+      const next = { ...prev };
+      delete next[String(day)];
+      return next;
+    });
+  }
 
   function toggleWeekday(day: number) {
+    const closing = !closedWeekdays.includes(day);
     setClosedWeekdays((prev) =>
       prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort((a, b) => a - b)
     );
+    // A day that is closed outright keeps no hours of its own.
+    if (closing) clearDayWindow(day);
   }
 
   function addDate() {
@@ -171,6 +194,7 @@ function AvailabilityForm({ facility }: { facility: AvailabilityFacility }) {
           closeMin,
           closedWeekdays,
           closedDates,
+          dayWindows,
           maxMinutes,
         }),
       });
@@ -251,6 +275,94 @@ function AvailabilityForm({ facility }: { facility: AvailabilityFacility }) {
             these hours cannot be selected on the booking calendar, and the server refuses them even
             if one is forced.
           </p>
+        </div>
+
+        {/* Per-weekday hours — the days a lab is bookable, and when */}
+        <div className="grid gap-2">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <CalendarClock className="h-4 w-4 text-primary" />
+            Hours on individual days of the week
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            A day left on the facility hours above follows those hours. Give a day its own From / To
+            times to make that weekday different — a lab open 09:00–18:00 from Monday to Friday but
+            only 09:00–13:00 on Saturdays. Use the closed switch to take a weekday out of play
+            entirely.
+          </p>
+          <div className="grid gap-1.5">
+            {WEEKDAY_NAMES.map((name, day) => {
+              const own = dayWindows[String(day)];
+              const closed = closedWeekdays.includes(day);
+              return (
+                <div
+                  key={name}
+                  className="flex flex-wrap items-center gap-2 rounded-md border px-2 py-1.5"
+                >
+                  <span className="w-[78px] text-xs font-semibold">{name}</span>
+                  <label className="flex items-center gap-1.5 text-xs">
+                    <Checkbox checked={closed} onCheckedChange={() => toggleWeekday(day)} />
+                    Closed
+                  </label>
+                  {closed ? (
+                    <span className="text-xs text-muted-foreground">
+                      Closed every {name} — no slot can be booked then.
+                    </span>
+                  ) : own ? (
+                    <>
+                      <Input
+                        type="time"
+                        className="h-8 w-[118px]"
+                        aria-label={`${name} opening time`}
+                        value={timeValue(own.open)}
+                        onChange={(e) => {
+                          const m = minutesOf(e.target.value, false);
+                          if (m !== null) setDayWindow(day, { ...own, open: m });
+                        }}
+                      />
+                      <span className="text-xs text-muted-foreground">to</span>
+                      <Input
+                        type="time"
+                        className="h-8 w-[118px]"
+                        aria-label={`${name} closing time`}
+                        value={timeValue(own.close >= 1440 ? 0 : own.close)}
+                        onChange={(e) => {
+                          const m = minutesOf(e.target.value, true);
+                          if (m !== null) setDayWindow(day, { ...own, close: m });
+                        }}
+                      />
+                      <span className="text-[11px] text-muted-foreground">
+                        {own.close >= 1440 ? "00:00 means midnight" : `until ${minuteLabel(own.close)}`}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => clearDayWindow(day)}
+                      >
+                        Use facility hours
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-xs text-muted-foreground">
+                        Facility hours · {windowLabel(av)}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setDayWindow(day, { open: openMin, close: closeMin })}
+                      >
+                        Give {name.slice(0, 3)} its own hours
+                      </Button>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* Recurring closures */}
