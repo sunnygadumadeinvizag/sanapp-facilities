@@ -195,11 +195,16 @@ export default async function BookPage({
           <Badge variant={eligible ? "default" : "secondary"}>
             {eligible ? "You can book this facility" : "Restricted to specific roles"}
           </Badge>
-          {facility.requiresApproval && (
-            <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-900">
-              Approval required before a slot is confirmed
-            </Badge>
-          )}
+          {facility.requiresApproval &&
+            (access.booksDirectly ? (
+              <Badge variant="outline" className="border-sky-400 bg-sky-50 text-sky-900">
+                Your own bookings are confirmed immediately — you approve this facility
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-900">
+                Approval required before a slot is confirmed
+              </Badge>
+            ))}
           {(facility.maxMinutes ?? facility.building.maxMinutes) !== null && (facility.maxMinutes ?? facility.building.maxMinutes)! > 0 && (
             <span className="text-xs text-muted-foreground">
               Max {capLabel(facility.maxMinutes ?? facility.building.maxMinutes)} per booking

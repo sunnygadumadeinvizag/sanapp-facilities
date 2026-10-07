@@ -611,16 +611,12 @@ export async function POST(request: NextRequest) {
   }
 
   // --- Approval gate (facilities with requiresApproval) --------------------
-  // EVERY booking of one's own is created as PENDING_APPROVAL: the slot is held
-  // while an approval person of the facility decides, and it is confirmed only
-  // when they do. That includes an app ADMIN's and an approval person's own
-  // booking — the gate is never skipped silently, so the requester cannot
-  // confirm their own slot. The only booking that is confirmed at once is the
-  // ON_BEHALF block a decider makes for SOMEBODY ELSE: blocking the slot for
-  // that person is the approval act, not a request.
-  const approval = await approvalContext(facilityId, user.id, user.role, {
-    onBehalfOf: type === "ON_BEHALF",
-  });
+  // A regular user's (and a POC's) request is created as PENDING_APPROVAL: the
+  // slot is held while an approval person of the facility decides, and it is
+  // confirmed only when one of them does. App ADMINs and the facility's
+  // approval people book directly — they are the deciders themselves — and so
+  // does the ON_BEHALF block they make for somebody else.
+  const approval = await approvalContext(facilityId, user.id, user.role);
   const needsApproval = approval.needsApproval;
 
   // The slot must not be in the past (server time is IST).
@@ -884,11 +880,7 @@ export async function PATCH(request: NextRequest) {
   // Moving or re-timing a slot of an approval facility has to be approved
   // again: the decision covered the time range that was requested, not a new
   // one. Without this, a request could be approved and then quietly moved.
-  // Editing the block a decider made for SOMEBODY ELSE stays direct (see the
-  // create path): it is the same approval act, only re-timed.
-  const approval = await approvalContext(facility.id, user.id, user.role, {
-    onBehalfOf: booking.type === "ON_BEHALF",
-  });
+  const approval = await approvalContext(facility.id, user.id, user.role);
   const needsApproval = approval.needsApproval;
 
   const CONFLICT_MSG = "That time slot is already booked — please pick a free slot";

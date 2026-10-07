@@ -50,11 +50,11 @@ export type FacilityAccess = {
    */
   manages: boolean;
   /**
-   * May hand out a slot on this facility without waiting for a decision: an app
-   * admin or one of the facility's approval people. On a facility that requires
-   * an approval this is what lets them BLOCK a slot for somebody else directly
-   * (the ON_BEHALF booking) — the act of giving the slot away IS the approval.
-   * Their own bookings wait for a decision like everybody else's.
+   * Books a slot directly, with no approval request: an app admin or one of the
+   * facility's approval people. Everybody else — POCs included — raises a
+   * request that waits for a decision, and the booking page says which of the
+   * two applies in as many words, because a decider's own slot is confirmed the
+   * moment they submit it.
    */
   booksDirectly: boolean;
 };
@@ -87,8 +87,7 @@ export async function facilityAccess(
 export async function approvalContext(
   facilityId: string,
   userId: string,
-  role: string,
-  opts: { onBehalfOf?: boolean } = {}
+  role: string
 ): Promise<ApprovalContext> {
   const [facility, access] = await Promise.all([
     prisma.facility.findUnique({
@@ -98,21 +97,20 @@ export async function approvalContext(
     facilityAccess(facilityId, userId, role),
   ]);
   const requiresApproval = Boolean(facility?.requiresApproval);
-  // A facility that requires an approval gates EVERY booking for its own use —
-  // an app admin's and an approval person's included, so the gate can never be
-  // skipped by accident: the slot is held and waits until an approval person
-  // decides on it. The one thing that is not a request is the direct block of a
-  // slot for SOMEBODY ELSE (ON_BEHALF) made by an app admin / approval person:
-  // handing that slot to that person is the approval itself, and it is
-  // confirmed at once.
-  const directBlock = opts.onBehalfOf === true && access.booksDirectly;
+  // A facility that requires an approval holds everybody else's slot as a
+  // REQUEST until one of its approval people decides on it. An app ADMIN and
+  // the facility's approval people are the deciders themselves, so they book
+  // directly: their own slot — and the slot they block for SOMEBODY ELSE — is
+  // confirmed the moment they submit it and never waits. The booking page
+  // spells that difference out, so the amber "approval required" note can
+  // never sit next to a Confirm button without explaining itself.
   return {
     requiresApproval,
     isApprover: access.isApprover,
     isPoc: access.isPoc,
     isAdmin: access.isAdmin,
     canDecide: access.manages,
-    needsApproval: requiresApproval && !directBlock,
+    needsApproval: requiresApproval && !access.booksDirectly,
   };
 }
 

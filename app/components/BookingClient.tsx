@@ -92,10 +92,8 @@ export type BookingMe = {
   /** POC of this facility or its building (or an app ADMIN). */
   isPocHere: boolean;
   /**
-   * May hand out a slot without waiting for a decision — an app admin or one of
-   * this facility's approval people. On a facility that requires an approval
-   * that is what lets them block a slot for SOMEBODY ELSE directly; their own
-   * bookings are requests like everybody else's.
+   * Books directly, with no approval request — an app admin or one of this
+   * facility's approval people. Everybody else submits a request that waits.
    */
   booksDirectly: boolean;
   /**
@@ -300,14 +298,14 @@ export function BookingClient({
   const [forResults, setForResults] = useState<{ id: string; username: string; name: string }[]>([]);
   const [forUserId, setForUserId] = useState(editBooking?.forUserId ?? "");
 
-  // On a facility that requires an approval EVERY booking of one's own is a
-  // REQUEST — an app admin's and an approval person's included: the slot is
-  // held and waits, and it is confirmed only when the facility's approval
-  // person confirms it. The single exception is blocking a slot for SOMEBODY
-  // ELSE below (`forOther` + a chosen user): handing that slot to that person
-  // is the approval act itself, so a decider's block is confirmed at once.
-  const directBlock = me.booksDirectly && forOther && Boolean(forUserId);
-  const needsApproval = Boolean(facility.requiresApproval) && !directBlock;
+  // On a facility that requires an approval, only an app admin or one of its
+  // approval people books a slot directly — their own slot, and the slot they
+  // block for somebody else, is confirmed the moment they submit it, because
+  // they are the ones who decide. Everyone else — POCs included — SUBMITS A
+  // REQUEST that waits, and the panel under the button says which of the two
+  // applies, so the amber note never contradicts the button.
+  const directBooker = Boolean(facility.requiresApproval) && me.booksDirectly;
+  const needsApproval = Boolean(facility.requiresApproval) && !me.booksDirectly;
   const [purpose, setPurpose] = useState(editBooking?.purpose ?? "");
   const [isPublicPurpose, setIsPublicPurpose] = useState(editBooking?.isPublicPurpose ?? false);
   // On an AV-required facility the AV technician is always requested, and the
@@ -1339,13 +1337,16 @@ export function BookingClient({
                 the facility&apos;s approval person confirms it. The approval person is emailed the
                 moment you submit, and you are emailed the decision — a declined request frees the
                 slot again.
-                {me.booksDirectly && (
-                  <>
-                    {" "}
-                    As an app admin or one of its approval people you can confirm this request
-                    yourself straight away on the Approvals page.
-                  </>
-                )}
+              </div>
+            )}
+
+            {directBooker && (
+              <div className="rounded-md border border-sky-300 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                <strong className="font-semibold">You book this facility directly.</strong> As an app admin or
+                one of its approval people, your own slot — and any slot you block for somebody else — is
+                confirmed immediately and never waits for an approval. Every other user&apos;s booking on this
+                facility is held as a request until an approval person decides on it; those requests are
+                waiting for you on the Approvals page.
               </div>
             )}
 
