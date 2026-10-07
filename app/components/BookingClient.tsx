@@ -42,6 +42,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TimeGrid, type BookingBlock, type FocusRequest, type RangeSelection } from "./TimeGrid";
+import {
+  FULL_DAY,
+  availabilityError,
+  availabilityLines,
+  isFullDay,
+  weekdayOf,
+  type Availability,
+} from "@/lib/availability";
 import { DatePicker } from "./DatePicker";
 import { effectiveMaxMinutes, capLabel } from "@/lib/limits";
 import { primaryRoleLabel } from "@/lib/labels";
@@ -83,6 +91,18 @@ export type BookingMe = {
   role: string;
   /** POC of this facility or its building (or an app ADMIN). */
   isPocHere: boolean;
+  /**
+   * May hand out a slot without waiting for a decision — an app admin or one of
+   * this facility's approval people. On a facility that requires an approval
+   * that is what lets them block a slot for SOMEBODY ELSE directly; their own
+   * bookings are requests like everybody else's.
+   */
+  booksDirectly: boolean;
+  /**
+   * May block a slot for another user: a POC of the facility / its building, an
+   * app admin, or one of the facility's approval people.
+   */
+  mayBlockForOthers: boolean;
 };
 
 const WEEK_DAYS = 7;
@@ -176,6 +196,9 @@ export function BookingClient({
   today,
   todaySlots,
   me,
+  availability = FULL_DAY,
+  avSupportRequired = false,
+  canManage = false,
   eligible,
   nowMin = 0,
   maxMinutes = null,
@@ -194,15 +217,23 @@ export function BookingClient({
   maxMinutes?: number | null;
   buildingMaxMinutes?: number | null;
   roleLimits?: { role: string; maxMinutes: number }[];
+  /** The facility's bookable hours and closed days. */
+  availability?: Availability;
+  /** An AV facility whose bookings always need an AV technician. */
+  avSupportRequired?: boolean;
+  /** May change the facility's availability (admin / approval person / POC). */
+  canManage?: boolean;
   editBooking?: EditBookingInfo | null;
   onEdited?: () => void;
 }) {
   const router = useRouter();
   const canPoc = me.isPocHere || me.role === "ADMIN";
+  // Blocking a slot for somebody else: the POCs, an app admin, and the
+  // facility's approval people.
+  const canBlockFor = me.mayBlockForOthers || me.role === "ADMIN";
   const isAdmin = me.role === "ADMIN";
-  // On a facility that requires an approval, a request made by someone who is
-  // not one of its deciders waits for a decision instead of confirming itself.
-  const needsApproval = Boolean(facility.requiresApproval) && !canPoc;
+  // Every booking on an AV-required facility needs the AV technician.
+  const avRequired = Boolean(avSupportRequired) && Boolean(facility.hasAvSupport);
 
   // Live IST clock: keeps the past-time shading and the conflict checks fresh
   // while the page stays open (server-provided today/nowMin go stale).
@@ -268,9 +299,22 @@ export function BookingClient({
   const [forQuery, setForQuery] = useState("");
   const [forResults, setForResults] = useState<{ id: string; username: string; name: string }[]>([]);
   const [forUserId, setForUserId] = useState(editBooking?.forUserId ?? "");
+
+  // On a facility that requires an approval EVERY booking of one's own is a
+  // REQUEST — an app admin's and an approval person's included: the slot is
+  // held and waits, and it is confirmed only when the facility's approval
+  // person confirms it. The single exception is blocking a slot for SOMEBODY
+  // ELSE below (`forOther` + a chosen user): handing that slot to that person
+  // is the approval act itself, so a decider's block is confirmed at once.
+  const directBlock = me.booksDirectly && forOther && Boolean(forUserId);
+  const needsApproval = Boolean(facility.requiresApproval) && !directBlock;
   const [purpose, setPurpose] = useState(editBooking?.purpose ?? "");
   const [isPublicPurpose, setIsPublicPurpose] = useState(editBooking?.isPublicPurpose ?? false);
-  const [needAvSupport, setNeedAvSupport] = useState(editBooking?.needAvSupport ?? false);
+  // On an AV-required facility the AV technician is always requested, and the
+  // booker cannot turn it off.
+  const [needAvSupport, setNeedAvSupport] = useState(
+    avSupportRequired ? true : (editBooking?.needAvSupport ?? false)
+  );
   const [pdfName, setPdfName] = useState("");
   const [pdf, setPdf] = useState<File | null>(null);
   const [pdfClear, setPdfClear] = useState(false);
@@ -331,6 +375,9 @@ export function BookingClient({
               forName: b.forUser?.name ?? null,
               forUsername: b.forUser?.username ?? null,
               forPrimaryRole: b.forUser?.primaryRole ?? null,
+              // True when the server redacted this slot for this viewer: only
+              // the time, who booked it and its state are on screen.
+              redacted: Boolean(b.redacted),
               purpose: b.purpose ?? null,
               isPublicPurpose: Boolean(b.isPublicPurpose),
               pdf: Boolean(b.pdf),
@@ -407,6 +454,19 @@ export function BookingClient({
    * the user typed on screen instead of quietly dropping them.
    */
   function commitRange(range: RangeSelection, mergeIndices?: number[]): boolean {
+    // The facility's own hours and closed days come first: a slot outside them
+    // is rejected whether it was dragged, tapped or typed.
+    const outside = availabilityError(
+      availability,
+      range.startDate,
+      range.startMin,
+      range.endDate,
+      range.endMin
+    );
+    if (outside) {
+      rejectRange(outside);
+      return false;
+    }
     const prev = rangesRef.current;
     // In edit mode there is exactly one range — a new selection replaces it.
     if (editBooking) {
@@ -446,6 +506,14 @@ export function BookingClient({
   function updateRange(id: number, next: RangeSelection): string | null {
     const dur = slotDurationMin(next.startDate, next.startMin, next.endDate, next.endMin);
     if (dur < 15) return "End must be at least 15 minutes after start.";
+    const outside = availabilityError(
+      availability,
+      next.startDate,
+      next.startMin,
+      next.endDate,
+      next.endMin
+    );
+    if (outside) return outside;
     if (slotIndex(next.startDate, next.startMin) <= slotIndex(clock.today, clock.nowMin)) {
       return "Start must be in the future.";
     }
@@ -785,7 +853,7 @@ export function BookingClient({
               )}
               {s.status === "PENDING_APPROVAL" && (
                 <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded bg-amber-200 text-amber-900 font-bold text-[10px]">
-                  Approval requested
+                  Awaiting approval
                 </span>
               )}
             </Badge>
@@ -894,6 +962,13 @@ export function BookingClient({
 
             <TimeGrid
               days={displayedDays}
+              openMin={availability.openMin}
+              closeMin={availability.closeMin}
+              closedDays={displayedDays.filter(
+                (d) =>
+                  availability.closedDates.includes(d) ||
+                  availability.closedWeekdays.includes(weekdayOf(d))
+              )}
               bookings={bookings}
               committed={ranges.map((p) => p.range)}
               onCommit={commitRange}
@@ -1050,7 +1125,7 @@ export function BookingClient({
         {/* Booking details */}
         <Card className="shadow-sm min-w-0">
           <CardContent className="p-3 sm:p-4 space-y-4 min-w-0">
-            {!editBooking && canPoc && (
+            {!editBooking && canBlockFor && (
               <label className="flex items-center gap-2 text-sm font-medium">
                 <Checkbox checked={forOther} onCheckedChange={(v) => setForOther(v === true)} />
                 Block these slots for another user
@@ -1194,8 +1269,12 @@ export function BookingClient({
               <div className="rounded-lg border-2 border-amber-300/80 bg-amber-50/70 p-3.5 flex items-start gap-3 shadow-xs animate-in fade-in duration-200">
                 <Checkbox
                   id={`av-support-${facility.id}`}
-                  checked={needAvSupport}
-                  onCheckedChange={(v) => setNeedAvSupport(v === true)}
+                  checked={avRequired ? true : needAvSupport}
+                  disabled={avRequired}
+                  onCheckedChange={(v) => {
+                    if (avRequired) return;
+                    setNeedAvSupport(v === true);
+                  }}
                   className="mt-0.5 border-amber-400 data-[state=checked]:bg-amber-600 data-[state=checked]:border-amber-600"
                 />
                 <div className="grid gap-0.5 leading-none">
@@ -1207,7 +1286,17 @@ export function BookingClient({
                     </Badge>
                   </Label>
                   <p className="text-[11px] text-amber-800 leading-relaxed mt-0.5">
-                    Checking this adds an <strong>AV Support</strong> indicator visible to everyone on the calendar so AV technicians are notified and ready to assist during your session.
+                    {avRequired ? (
+                      <>
+                        <strong>This facility always requires AV support.</strong> Every booking on it
+                        carries the AV Support indicator so the AV technicians are notified and ready
+                        to assist during your session.
+                      </>
+                    ) : (
+                      <>
+                        Checking this adds an <strong>AV Support</strong> indicator visible to everyone on the calendar so AV technicians are notified and ready to assist during your session.
+                      </>
+                    )}
                   </p>
                 </div>
               </div>
@@ -1244,10 +1333,35 @@ export function BookingClient({
 
             {needsApproval && (
               <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                <strong className="font-semibold">This facility requires an approval.</strong> The time you
-                select stays held as “Approval requested” (amber on the calendar) instead of being
-                confirmed — its approval person is emailed straight away and decides, and you are
-                emailed the outcome. Until it is approved, nobody has been given the slot.
+                <strong className="font-semibold">This facility requires an approval.</strong> Your slot is
+                SUBMITTED AS A REQUEST (amber “Awaiting approval” on the calendar) instead of being
+                confirmed. It is held for you, nobody else can take it, and it is confirmed only when
+                the facility&apos;s approval person confirms it. The approval person is emailed the
+                moment you submit, and you are emailed the decision — a declined request frees the
+                slot again.
+                {me.booksDirectly && (
+                  <>
+                    {" "}
+                    As an app admin or one of its approval people you can confirm this request
+                    yourself straight away on the Approvals page.
+                  </>
+                )}
+              </div>
+            )}
+
+            {!isFullDay(availability) && (
+              <div className="rounded-md border border-sky-300 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                <strong className="font-semibold">Bookable hours:</strong>{" "}
+                {availabilityLines(availability).join(" · ")}
+                {canManage && (
+                  <span className="block text-[11px] text-sky-800 mt-0.5">
+                    You can change these on the{" "}
+                    <a href={apiPath("/approvals")} className="font-semibold underline underline-offset-2">
+                      Approvals
+                    </a>{" "}
+                    page.
+                  </span>
+                )}
               </div>
             )}
 
@@ -1264,7 +1378,7 @@ export function BookingClient({
                 : editBooking
                   ? "Save changes"
                   : needsApproval
-                    ? `Request ${ranges.length > 1 ? `${ranges.length} slots` : "this slot"} for approval`
+                    ? `Submit the request${ranges.length > 1 ? ` · ${ranges.length} slots` : ""}`
                     : `Confirm ${ranges.length > 1 ? `${ranges.length} slots` : "booking"}`}
             </Button>
           </CardContent>

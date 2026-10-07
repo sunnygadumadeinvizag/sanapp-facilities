@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma, type BookingStatus } from "@/generated/prisma/client";
 import { currentUser, listSsoUsers } from "@/lib/auth";
 import { isPocOfFacility } from "@/lib/poc";
+import { facilityAccess, isApproverOfFacility } from "@/lib/approval";
 import {
   PDF_MAX_BYTES,
   SLOT_MAX_MINUTES,
@@ -14,6 +15,7 @@ import {
   slotIndex,
 } from "@/lib/ist";
 import { effectiveMaxMinutes } from "@/lib/limits";
+import { availabilityError } from "@/lib/availability";
 import { nextBookingCode, recordEvent, sendBookingDigest, type NotifyBooking } from "@/lib/notify";
 import { approvalContext } from "@/lib/approval";
 import { queueApprovalRequestMail } from "@/lib/approval-mail";
@@ -97,16 +99,32 @@ async function displayCodeOf(
   return cache.get(key) ?? b.id;
 }
 
-/** Redact private fields (purpose, attachment) if viewer is not authorized */
+/**
+ * What one viewer may see of a slot on the booking calendar.
+ *
+ * A slot's own details — what it is for, the description, the attachment, the
+ * AV request, who it was blocked for, who confirmed it — are only for the
+ * people with a reason to know: the booker, the person it was blocked for, the
+ * facility's approval people, its POCs, and app admins.
+ *
+ * Everybody else who is signed in sees exactly three things: when the slot is,
+ * WHO booked it, and whether it is confirmed or still awaiting approval. The
+ * calendar is shared by the whole institute, so nothing else leaks from it.
+ *
+ * The redaction happens here, on the server, so a field the viewer may not see
+ * never reaches their browser at all.
+ */
 async function formatBookingForViewer(
   b: any,
   viewerUser: { id: string; role: string },
   pocFacilityMap?: Map<string, boolean>,
-  codeCache?: Map<string, string | null>
+  codeCache?: Map<string, string | null>,
+  approverFacilityMap?: Map<string, boolean>
 ) {
   const isAdmin = viewerUser.role === "ADMIN";
   const isBooker = b.userId === viewerUser.id || b.forUserId === viewerUser.id;
   let isPoc = false;
+  let isApprover = false;
   if (!isAdmin && !isBooker && b.facilityId) {
     if (pocFacilityMap?.has(b.facilityId)) {
       isPoc = pocFacilityMap.get(b.facilityId)!;
@@ -114,8 +132,16 @@ async function formatBookingForViewer(
       isPoc = await isPocOfFacility(viewerUser.id, b.facilityId);
       pocFacilityMap?.set(b.facilityId, isPoc);
     }
+    if (!isPoc) {
+      if (approverFacilityMap?.has(b.facilityId)) {
+        isApprover = approverFacilityMap.get(b.facilityId)!;
+      } else {
+        isApprover = await isApproverOfFacility(viewerUser.id, b.facilityId);
+        approverFacilityMap?.set(b.facilityId, isApprover);
+      }
+    }
   }
-  const canViewPrivate = isAdmin || isBooker || isPoc;
+  const canViewPrivate = isAdmin || isBooker || isPoc || isApprover;
 
   const canSeePurpose = Boolean(b.isPublicPurpose) || canViewPrivate;
   const canSeeAttachment = Boolean(b.isPublicAttachment) || canViewPrivate;
@@ -133,23 +159,34 @@ async function formatBookingForViewer(
     startMin: b.startMin,
     endMin: b.endMin,
     facility: b.facility,
-    user: b.user,
-    forUser: b.forUser,
+    // Who booked the slot — the one person everybody may see. Without access
+    // to the details only the name, the username and the id travel.
+    user: canViewPrivate
+      ? b.user
+      : b.user
+        ? { id: b.user.id, name: b.user.name, username: b.user.username }
+        : null,
+    forUser: canViewPrivate ? b.forUser : null,
     purpose: canSeePurpose ? b.purpose : null,
     isPublicPurpose: Boolean(b.isPublicPurpose),
     pdf: canSeeAttachment ? Boolean(b.pdfName) : false,
     pdfName: canSeeAttachment ? b.pdfName : null,
     isPublicAttachment: Boolean(b.isPublicAttachment),
-    needAvSupport: Boolean(b.needAvSupport),
-    cancelledAt: b.cancelledAt,
-    cancelReason: b.cancelReason,
-    cancelledBy: b.cancelledBy,
+    needAvSupport: canViewPrivate ? Boolean(b.needAvSupport) : false,
+    /** True when the viewer is seeing a redacted slot (time + booker + state). */
+    redacted: !canViewPrivate,
+    cancelledAt: canViewPrivate ? b.cancelledAt : null,
+    cancelReason: canViewPrivate ? b.cancelReason : null,
+    cancelledBy: canViewPrivate ? b.cancelledBy : null,
     // Approval workflow: when the slot started waiting, who decided it and
     // what they said. Null for facilities that never needed an approval.
-    approvalRequestedAt: b.approvalRequestedAt ?? null,
-    decidedAt: b.decidedAt ?? null,
-    decidedBy: b.decidedBy ? `${b.decidedBy.name} (@${b.decidedBy.username})` : null,
-    decisionNote: b.decisionNote ?? null,
+    approvalRequestedAt: canViewPrivate ? (b.approvalRequestedAt ?? null) : null,
+    decidedAt: canViewPrivate ? (b.decidedAt ?? null) : null,
+    decidedBy:
+      canViewPrivate && b.decidedBy
+        ? `${b.decidedBy.name} (@${b.decidedBy.username})`
+        : null,
+    decisionNote: canViewPrivate ? (b.decisionNote ?? null) : null,
   };
 }
 
@@ -221,15 +258,14 @@ async function conflictDetails(
     if (startIdx < slotIndex(bEnd, b.endMin) && endIdx > slotIndex(b.date, b.startMin)) {
       const pending = b.status === "PENDING_APPROVAL";
       return {
-        // A request that is still waiting is somebody else's business: the
-        // person who asked is not named to whoever ran into it.
-        booker: pending
-          ? null
-          : b.forUser?.name
-            ? `${b.forUser.name} (@${b.forUser.username})`
-            : b.user?.name
-              ? `${b.user.name} (@${b.user.username})`
-              : null,
+        // Who holds the slot — the one thing every signed-in user may see. A
+        // request still waiting for a decision names the person who asked for
+        // it as well (the message says it is not confirmed yet).
+        booker: b.forUser?.name
+          ? `${b.forUser.name} (@${b.forUser.username})`
+          : b.user?.name
+            ? `${b.user.name} (@${b.user.username})`
+            : null,
         pending,
         date: b.date,
         endDate: bEnd,
@@ -301,6 +337,7 @@ export async function GET(request: NextRequest) {
   }
 
   const pocMap = new Map<string, boolean>();
+  const approverMap = new Map<string, boolean>();
   const codeCache = new Map<string, string | null>();
 
   if (all) {
@@ -310,7 +347,7 @@ export async function GET(request: NextRequest) {
       orderBy: [{ date: "desc" }, { startMin: "desc" }],
       select: BOOKING_LIST_SELECT,
     });
-    const bookings = await Promise.all(rows.map((r) => formatBookingForViewer(r, user, pocMap, codeCache)));
+    const bookings = await Promise.all(rows.map((r) => formatBookingForViewer(r, user, pocMap, codeCache, approverMap)));
     return NextResponse.json({ bookings });
   }
 
@@ -321,7 +358,7 @@ export async function GET(request: NextRequest) {
       orderBy: [{ date: "asc" }, { startMin: "asc" }],
       select: BOOKING_LIST_SELECT,
     });
-    const bookings = await Promise.all(rows.map((r) => formatBookingForViewer(r, user, pocMap, codeCache)));
+    const bookings = await Promise.all(rows.map((r) => formatBookingForViewer(r, user, pocMap, codeCache, approverMap)));
     return NextResponse.json({ bookings });
   }
 
@@ -343,7 +380,7 @@ export async function GET(request: NextRequest) {
       const bEnd = endDayOf(b.date, b.endDate);
       return slotIndex(b.date, b.startMin) < toIdx && slotIndex(bEnd, b.endMin) > fromIdx;
     });
-    const bookings = await Promise.all(filtered.map((r) => formatBookingForViewer(r, user, pocMap)));
+    const bookings = await Promise.all(filtered.map((r) => formatBookingForViewer(r, user, pocMap, undefined, approverMap)));
     return NextResponse.json({ bookings });
   }
 
@@ -354,7 +391,7 @@ export async function GET(request: NextRequest) {
     orderBy: { startMin: "asc" },
     select: BOOKING_LIST_SELECT,
   });
-  const bookings = await Promise.all(rows.map((r) => formatBookingForViewer(r, user, pocMap)));
+  const bookings = await Promise.all(rows.map((r) => formatBookingForViewer(r, user, pocMap, undefined, approverMap)));
   return NextResponse.json({ bookings });
 }
 
@@ -420,7 +457,7 @@ export async function POST(request: NextRequest) {
     body.isPublicAttachment === true ||
     body.isPublicAttachment === "true" ||
     body.isPublicAttachment === "1";
-  const needAvSupport =
+  const needAvSupportRequested =
     body.needAvSupport === true ||
     body.needAvSupport === "true" ||
     body.needAvSupport === "1";
@@ -459,8 +496,31 @@ export async function POST(request: NextRequest) {
     return bad("This facility is not available for booking");
   }
 
+  // --- Bookable availability -----------------------------------------------
+  // The facility's own hours and closed days (set by the app admin or its
+  // approval people). The calendar hides these slots too, but the server rules.
+  const outsideAvailability = availabilityError(
+    facility,
+    startDate,
+    startMin,
+    endDate,
+    endMin
+  );
+  if (outsideAvailability) return bad(outsideAvailability);
+
+  // On an AV-required facility EVERY booking needs the AV technician, whether
+  // the booker asked for it or not.
+  const needAvSupport = facility.avSupportRequired || needAvSupportRequested;
+
   // POC = POC of this facility OR of its building (or an app ADMIN).
-  const pocHere = user.role === "ADMIN" || (await isPocOfFacility(user.id, facilityId));
+  const access = await facilityAccess(facilityId, user.id, user.role);
+  const pocHere = access.isAdmin || access.isPoc;
+  // Who may block a slot for SOMEBODY ELSE: a POC of the facility / its
+  // building, an app admin — and the facility's approval people, because
+  // blocking a slot for a person is exactly the direct, no-approval block an
+  // approval person must be able to make (it is how they hold a room for
+  // somebody while they sort the details out).
+  const mayBlockFor = pocHere || access.isApprover;
   let type: "SELF" | "ON_BEHALF" | "LONG" = "SELF";
 
   // Eligibility — which SSO primary roles may book this facility.
@@ -469,8 +529,11 @@ export async function POST(request: NextRequest) {
   let resolvedForUserId: string | null = null;
   if (forUserId) {
     type = "ON_BEHALF";
-    if (!pocHere) {
-      return bad("Only a POC of this facility / building (or an app ADMIN) can block a slot for another user", 403);
+    if (!mayBlockFor) {
+      return bad(
+        "Only a POC of this facility / its building, one of its approval people, or an app ADMIN can block a slot for another user",
+        403
+      );
     }
     let forUser = await prisma.appUser.findFirst({
       where: { OR: [{ ssoUserId: forUserId }, { id: forUserId }, { username: forUserId }] },
@@ -548,11 +611,16 @@ export async function POST(request: NextRequest) {
   }
 
   // --- Approval gate (facilities with requiresApproval) --------------------
-  // A regular user's request is created as PENDING_APPROVAL: the slot is held
-  // while an approval person of the facility decides. App ADMINs, the
-  // facility's approval people and its POCs (who are the ones making ON_BEHALF
-  // and LONG blocks) book directly — they are the deciders themselves.
-  const approval = await approvalContext(facilityId, user.id, user.role);
+  // EVERY booking of one's own is created as PENDING_APPROVAL: the slot is held
+  // while an approval person of the facility decides, and it is confirmed only
+  // when they do. That includes an app ADMIN's and an approval person's own
+  // booking — the gate is never skipped silently, so the requester cannot
+  // confirm their own slot. The only booking that is confirmed at once is the
+  // ON_BEHALF block a decider makes for SOMEBODY ELSE: blocking the slot for
+  // that person is the approval act, not a request.
+  const approval = await approvalContext(facilityId, user.id, user.role, {
+    onBehalfOf: type === "ON_BEHALF",
+  });
   const needsApproval = approval.needsApproval;
 
   // The slot must not be in the past (server time is IST).
@@ -803,10 +871,24 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
+  // --- Bookable availability (the facility's hours and closed days) --------
+  const outsideAvailability = availabilityError(
+    facility,
+    startDate,
+    startMin,
+    endDate,
+    endMin
+  );
+  if (outsideAvailability) return bad(outsideAvailability);
+
   // Moving or re-timing a slot of an approval facility has to be approved
   // again: the decision covered the time range that was requested, not a new
   // one. Without this, a request could be approved and then quietly moved.
-  const approval = await approvalContext(facility.id, user.id, user.role);
+  // Editing the block a decider made for SOMEBODY ELSE stays direct (see the
+  // create path): it is the same approval act, only re-timed.
+  const approval = await approvalContext(facility.id, user.id, user.role, {
+    onBehalfOf: booking.type === "ON_BEHALF",
+  });
   const needsApproval = approval.needsApproval;
 
   const CONFLICT_MSG = "That time slot is already booked — please pick a free slot";
@@ -877,6 +959,8 @@ export async function PATCH(request: NextRequest) {
           body.needAvSupport === "true" ||
           body.needAvSupport === "1";
       }
+      // An AV-required facility keeps AV support on every one of its bookings.
+      if (facility.avSupportRequired) data.needAvSupport = true;
       if (pdf && pdfName) {
         const b = new Uint8Array(pdf.byteLength);
         b.set(pdf);

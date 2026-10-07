@@ -55,6 +55,12 @@ export type BookingBlock = {
   needAvSupport?: boolean;
   /** CONFIRMED, PENDING_APPROVAL, … — decides how the block is drawn. */
   status?: string;
+  /**
+   * The server redacted this slot for this viewer: only its time, who booked it
+   * and its state were sent. The details modal says so instead of pretending the
+   * description is empty.
+   */
+  redacted?: boolean;
 };
 
 export type RangeSelection = {
@@ -140,6 +146,9 @@ export function TimeGrid({
   onAutoAdvance,
   ignoreBookingId = null,
   onUpdateRange,
+  openMin = 0,
+  closeMin = 1440,
+  closedDays = [],
 }: {
   days: string[];
   bookings: BookingBlock[];
@@ -177,6 +186,12 @@ export function TimeGrid({
    * it, its top/bottom edge to resize). Return a message to reject the change.
    */
   onUpdateRange?: (index: number, range: RangeSelection) => string | null;
+  /** First bookable minute of a day (IST) — 0 means midnight. */
+  openMin?: number;
+  /** First NON-bookable minute of a day — 1440 means midnight. */
+  closeMin?: number;
+  /** Days within `days` the facility is closed (recurring or one-off). */
+  closedDays?: string[];
 }) {
   const [zoomKey, setZoomKey] = useState("1h");
   const zoom = ZOOMS.find((z) => z.key === zoomKey) ?? ZOOMS[1];
@@ -362,6 +377,22 @@ export function TimeGrid({
   // Stop any running auto-scroll when the component unmounts.
   useEffect(() => () => stopAutoScroll(), []);
 
+  /**
+   * Why this cell cannot be booked on this facility, or null when it can: the
+   * hours it is bookable and the days it is closed (set by the app admin or the
+   * facility's approval people). The grid also shades these cells, and the
+   * server refuses them whatever the client does.
+   */
+  function whyUnavailable(date: string, min: number): string | null {
+    if (closedDays.includes(date)) {
+      return "This facility is closed on that day — please pick one of the open days.";
+    }
+    if (min < openMin || min >= closeMin) {
+      return `This facility is bookable ${fmtMin(openMin)}–${fmtMin(closeMin)} IST only — pick a slot inside those hours.`;
+    }
+    return null;
+  }
+
   function isDisabled(date: string, min: number): boolean {
     if (date === todayKey && min < nowMin) return true;
     const t = idx(date, min);
@@ -530,6 +561,11 @@ export function TimeGrid({
       onReject?.("You cannot book a slot in the past (Indian Standard Time).");
       return;
     }
+    const why = whyUnavailable(cell.date, cell.min);
+    if (why) {
+      onReject?.(why);
+      return;
+    }
     if (isDisabled(cell.date, cell.min)) {
       onReject?.("That slot is already booked or unavailable.");
       return;
@@ -587,6 +623,21 @@ export function TimeGrid({
     if (!range) return;
     if (range.startDate < todayKey || (range.startDate === todayKey && range.startMin < nowMin)) {
       onReject?.("You cannot book a slot in the past (Indian Standard Time).");
+      return;
+    }
+    // The facility's own hours and closed days: a drag that ends up outside
+    // them is rejected with the reason, exactly like a blocked cell.
+    const closed = closedDays.find((d) => d >= range.startDate && d <= range.endDate);
+    if (closed) {
+      onReject?.(`This facility is closed on ${closed} — please pick another day.`);
+      return;
+    }
+    if (range.startMin < openMin) {
+      onReject?.(`This facility is bookable from ${fmtMin(openMin)} IST only.`);
+      return;
+    }
+    if (range.endMin > closeMin) {
+      onReject?.(`A booking on this facility must end by ${fmtMin(closeMin)} IST.`);
       return;
     }
     if (conflict(range)) {
@@ -893,7 +944,7 @@ export function TimeGrid({
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="inline-block h-3 w-3 rounded-sm border border-dashed border-amber-500 bg-amber-500/20" />
-            Approval requested — held, not confirmed
+            Awaiting approval — held, not confirmed
           </span>
         </p>
         <div className="flex flex-wrap items-center gap-1 pb-0.5 min-w-0">
@@ -1023,6 +1074,28 @@ export function TimeGrid({
                     }}
                   />
                 ))}
+                {/* Outside the facility's bookable hours — shaded, never selectable. */}
+                {openMin > 0 && (
+                  <div
+                    className="absolute left-0 right-0 top-0 pointer-events-none border-b border-dashed fb-unavailable"
+                    style={{ height: (openMin / (24 * 60)) * colHeight }}
+                  />
+                )}
+                {closeMin < 24 * 60 && (
+                  <div
+                    className="absolute left-0 right-0 bottom-0 pointer-events-none border-t border-dashed fb-unavailable"
+                    style={{ height: ((24 * 60 - closeMin) / (24 * 60)) * colHeight }}
+                  />
+                )}
+                {/* A day the facility is closed on: the whole column is out of play. */}
+                {closedDays.includes(d) && (
+                  <div className="absolute inset-0 pointer-events-none fb-closed flex items-start justify-center pt-3">
+                    <span className="rounded border bg-background px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                      Closed
+                    </span>
+                  </div>
+                )}
+
                 {/* Current time marker on today's column */}
                 {d === todayKey && nowMin < 24 * 60 && (
                   <div
@@ -1072,7 +1145,7 @@ export function TimeGrid({
                     e.stopPropagation();
                     setSelectedBooking(b);
                   }}
-                  title={`${isPending ? "Approval requested — the slot is held, not confirmed yet" : "Booked"}: ${fmtSlotRange(b.startDate, b.startMin, b.endDate, b.endMin)} (${durDisplay})\nBooked by: ${b.bookerName || "User"}${b.forName ? ` on behalf of ${b.forName}` : ""}${isPending ? "\nWaiting for the facility's approval person to confirm it" : ""}\nClick to view booking details`}
+                  title={`${isPending ? "Awaiting approval — the slot is held, not confirmed yet" : "Booked"}: ${fmtSlotRange(b.startDate, b.startMin, b.endDate, b.endMin)} (${durDisplay})\nBooked by: ${b.bookerName || "User"}${b.forName ? ` on behalf of ${b.forName}` : ""}${isPending ? "\nWaiting for the facility's approval person to confirm it" : ""}\nClick to view booking details`}
                   style={{
                     left: days.indexOf(f.date) * colW + 2,
                     width: colW - 4,
@@ -1125,10 +1198,10 @@ export function TimeGrid({
                       )}
                       {isPending && (
                         <span
-                          title="Approval requested — the slot is held until the facility's approval person confirms it"
+                          title="Awaiting approval — the slot is held until the facility's approval person confirms it"
                           className="shrink-0 rounded border border-amber-500/40 bg-amber-500/20 px-1 py-0.5 text-[9px] font-bold leading-none text-amber-800 dark:text-amber-200"
                         >
-                          {isShort ? "Approval" : "Approval requested"}
+                          {isShort ? "Awaiting" : "Awaiting approval"}
                         </span>
                       )}
                     </div>
@@ -1292,7 +1365,18 @@ export function TimeGrid({
                 </div>
               )}
 
-              {/* Description / Purpose */}
+              {/* A redacted slot shows nothing but its time, booker and state. */}
+              {selectedBooking.redacted && (
+                <div className="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
+                  Only the time, who booked the slot and its state are shown to other users. The
+                  description, the attachment and the AV request stay private to the booker, the
+                  facility&apos;s approval people, its POCs and the app administrators.
+                </div>
+              )}
+
+              {/* Description / Purpose — not sent to a viewer without access. */}
+              {!selectedBooking.redacted && (
+                <>
               <div className="rounded-lg border p-3 space-y-1.5 bg-card">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
@@ -1354,6 +1438,8 @@ export function TimeGrid({
                   </p>
                 )}
               </div>
+                </>
+              )}
             </div>
           )}
 

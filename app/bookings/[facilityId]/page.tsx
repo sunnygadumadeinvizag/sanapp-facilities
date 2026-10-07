@@ -9,7 +9,8 @@ import { BookingClient, type SlotItem } from "../../components/BookingClient";
 import { Badge } from "@/components/ui/badge";
 import { istDateKey, istMinute, SLOT_MAX_MINUTES } from "@/lib/ist";
 import { capLabel } from "@/lib/limits";
-import { isPocOfFacility } from "@/lib/poc";
+import { facilityAccess } from "@/lib/approval";
+import { availabilityLines, isFullDay } from "@/lib/availability";
 
 export const dynamic = "force-dynamic";
 
@@ -120,21 +121,45 @@ export default async function BookPage({
   const today = istDateKey();
   const nowMin = istMinute();
 
-  const slots: SlotItem[] = facility.bookings.map((b) => ({
-    id: b.id,
-    startDate: b.date,
-    endDate: b.endDate || b.date,
-    startMin: b.startMin,
-    endMin: b.endMin,
-    bookerName: b.user.name,
-    bookerUsername: b.user.username,
-    bookerPrimaryRole: b.user.primaryRole,
-    forName: b.forUser?.name ?? null,
-    forUsername: b.forUser?.username ?? null,
-    forPrimaryRole: b.forUser?.primaryRole ?? null,
-    needAvSupport: b.needAvSupport,
-    status: b.status,
-  }));
+  // What this user may do on this facility, in one place: decide requests, book
+  // without asking (app admin / approval person), and manage its availability.
+  const access = await facilityAccess(facility.id, local?.id ?? "", local?.role ?? "USER");
+
+  // The facility's bookable hours and closed days, shown on the calendar.
+  const availability = {
+    openMin: facility.openMin,
+    closeMin: facility.closeMin,
+    closedWeekdays: facility.closedWeekdays,
+    closedDates: facility.closedDates,
+  };
+
+  // Today's slots carry their details only to the people who may see them (the
+  // booker, the facility's approval people and POCs, app admins). Everyone else
+  // gets the time, who booked it and its state — nothing more.
+  const detailedFor = (b: (typeof facility.bookings)[number]): boolean =>
+    access.isAdmin ||
+    access.isApprover ||
+    access.isPoc ||
+    (local ? b.userId === local.id || b.forUserId === local.id : false);
+
+  const slots: SlotItem[] = facility.bookings.map((b) => {
+    const detailed = detailedFor(b);
+    return {
+      id: b.id,
+      startDate: b.date,
+      endDate: b.endDate || b.date,
+      startMin: b.startMin,
+      endMin: b.endMin,
+      bookerName: b.user.name,
+      bookerUsername: b.user.username,
+      bookerPrimaryRole: detailed ? b.user.primaryRole : null,
+      forName: detailed ? (b.forUser?.name ?? null) : null,
+      forUsername: detailed ? (b.forUser?.username ?? null) : null,
+      forPrimaryRole: detailed ? (b.forUser?.primaryRole ?? null) : null,
+      needAvSupport: detailed ? b.needAvSupport : false,
+      status: b.status,
+    };
+  });
 
   // ADMINs can book any facility (the server bypasses restrictions).
   const effectivePrimaryRole = local?.primaryRole || me.primaryRole || "";
@@ -180,6 +205,16 @@ export default async function BookPage({
               Max {capLabel(facility.maxMinutes ?? facility.building.maxMinutes)} per booking
             </span>
           )}
+          {facility.isLab && (
+            <Badge variant="outline" className="border-sky-400 bg-sky-50 text-sky-900">
+              LAB facility
+            </Badge>
+          )}
+          {!isFullDay(availability) && (
+            <span className="text-right text-xs text-muted-foreground">
+              {availabilityLines(availability).join(" · ")}
+            </span>
+          )}
         </div>
       </div>
 
@@ -200,10 +235,17 @@ export default async function BookPage({
           role: local?.role ?? "USER",
           // POC of THIS facility or its building (or an app ADMIN) — the
           // per-building / per-facility POC model.
-          isPocHere:
-            isAdmin ||
-            (local ? await isPocOfFacility(local.id, facility.id) : false),
+          isPocHere: isAdmin || access.isPoc,
+          // Books a slot directly, with no approval request: an app admin or one
+          // of this facility's approval people. Everyone else submits a request.
+          booksDirectly: access.booksDirectly,
+          // May block a slot for SOMEBODY ELSE — a POC, an app admin, and now
+          // the facility's approval people (their direct block).
+          mayBlockForOthers: access.isAdmin || access.isPoc || access.isApprover,
         }}
+        availability={availability}
+        avSupportRequired={facility.avSupportRequired}
+        canManage={access.manages}
         eligible={eligible}
         nowMin={nowMin}
         maxMinutes={facility.maxMinutes}

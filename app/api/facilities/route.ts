@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { currentUser, isAdmin } from "@/lib/auth";
 import { resolveUserByUsername } from "@/lib/poc";
+import { normaliseAvailability } from "@/lib/availability";
 
 export async function GET(request: NextRequest) {
   const user = await currentUser();
@@ -40,6 +41,7 @@ export async function GET(request: NextRequest) {
           notifyOnAvChange: true,
           notifyBookingUser: true,
           notifyForUser: true,
+          notifyApproverOnRequest: true,
           notifyEmails: true,
         },
       },
@@ -186,6 +188,11 @@ export async function POST(request: NextRequest) {
   const notifyOnAvChange = Boolean((body as { notifyOnAvChange?: unknown }).notifyOnAvChange);
   const notifyBookingUser = Boolean((body as { notifyBookingUser?: unknown }).notifyBookingUser);
   const notifyForUser = Boolean((body as { notifyForUser?: unknown }).notifyForUser);
+  // "The approval people are emailed the moment a request is initiated."
+  const notifyApproverOnRequest =
+    (body as { notifyApproverOnRequest?: unknown }).notifyApproverOnRequest === undefined
+      ? true
+      : Boolean((body as { notifyApproverOnRequest?: unknown }).notifyApproverOnRequest);
 
   // Approval workflow + per-facility dashboard access. Both person lists are
   // resolved up front: an unknown username refuses the whole create, so a
@@ -199,6 +206,28 @@ export async function POST(request: NextRequest) {
   );
   const unresolved = [...approvers.unknown, ...viewers.unknown];
   if (unresolved.length > 0) return unknownUserError(unresolved);
+
+  // Bookable availability — optional at creation time (the defaults are the
+  // whole day, never closed, which is how every facility behaved before).
+  const availability =
+    (body as { openMin?: unknown }).openMin === undefined &&
+    (body as { closeMin?: unknown }).closeMin === undefined
+      ? null
+      : normaliseAvailability(body as Record<string, unknown>);
+  if (availability && !availability.ok) {
+    return NextResponse.json({ error: availability.error }, { status: 400 });
+  }
+
+  const hasAv = Boolean((body as { hasAvSupport?: unknown }).hasAvSupport);
+  if (!hasAv && (body as { avSupportRequired?: unknown }).avSupportRequired) {
+    return NextResponse.json(
+      {
+        error:
+          "\u201cAV support required\u201d is only available on an AV facility — tick \u201cAV facility\u201d first",
+      },
+      { status: 400 }
+    );
+  }
 
   const facility = await prisma.facility.create({
     data: {
@@ -214,7 +243,11 @@ export async function POST(request: NextRequest) {
           : null,
       allowedRoles,
       maxMinutes,
-      hasAvSupport: Boolean((body as { hasAvSupport?: unknown }).hasAvSupport),
+      hasAvSupport: hasAv,
+      isLab: Boolean((body as { isLab?: unknown }).isLab),
+      // AV support can only be *required* on an AV facility.
+      avSupportRequired: hasAv && Boolean((body as { avSupportRequired?: unknown }).avSupportRequired),
+      ...(availability && availability.ok ? availability.value : {}),
       requiresApproval,
       approvers: { create: approvers.ids.map((userId) => ({ userId })) },
       dashboardViewers: { create: viewers.ids.map((userId) => ({ userId })) },
@@ -225,6 +258,7 @@ export async function POST(request: NextRequest) {
           notifyOnAvChange,
           notifyBookingUser,
           notifyForUser,
+          notifyApproverOnRequest,
           notifyEmails,
         },
       },
@@ -236,6 +270,7 @@ export async function POST(request: NextRequest) {
           notifyOnAvChange: true,
           notifyBookingUser: true,
           notifyForUser: true,
+          notifyApproverOnRequest: true,
           notifyEmails: true,
         },
       },
@@ -270,6 +305,34 @@ export async function PATCH(request: NextRequest) {
   if (typeof b.active === "boolean") data.active = b.active;
   if (typeof b.hasAvSupport === "boolean") data.hasAvSupport = b.hasAvSupport;
   if (typeof b.requiresApproval === "boolean") data.requiresApproval = b.requiresApproval;
+  if (typeof b.isLab === "boolean") data.isLab = b.isLab;
+  // "AV support required" is only meaningful on an AV facility: turning the AV
+  // facility off clears it, and it cannot be set while AV support is off.
+  if (typeof b.avSupportRequired === "boolean") {
+    const avOn = typeof b.hasAvSupport === "boolean" ? b.hasAvSupport : undefined;
+    if (avOn === false && b.avSupportRequired) {
+      return NextResponse.json(
+        {
+          error:
+            "\u201cAV support required\u201d is only available on an AV facility — tick \u201cAV facility\u201d first",
+        },
+        { status: 400 }
+      );
+    }
+    data.avSupportRequired = b.avSupportRequired;
+  } else if (b.hasAvSupport === false) {
+    data.avSupportRequired = false;
+  }
+  // The bookable window / closed days may also be set from the admin form; the
+  // approval people use /api/facilities/availability instead.
+  if (b.openMin !== undefined || b.closeMin !== undefined || b.closedWeekdays !== undefined || b.closedDates !== undefined) {
+    const av = normaliseAvailability(b);
+    if (!av.ok) return NextResponse.json({ error: av.error }, { status: 400 });
+    data.openMin = av.value.openMin;
+    data.closeMin = av.value.closeMin;
+    data.closedWeekdays = av.value.closedWeekdays;
+    data.closedDates = av.value.closedDates;
+  }
 
   // Notify configuration — upserted so both create and edit forms manage it.
   // Only the fields actually supplied are written, so a partial PATCH can never
@@ -279,6 +342,9 @@ export async function PATCH(request: NextRequest) {
   if (b.notifyOnAvChange !== undefined) notifyUpdate.notifyOnAvChange = Boolean(b.notifyOnAvChange);
   if (b.notifyBookingUser !== undefined) notifyUpdate.notifyBookingUser = Boolean(b.notifyBookingUser);
   if (b.notifyForUser !== undefined) notifyUpdate.notifyForUser = Boolean(b.notifyForUser);
+  if (b.notifyApproverOnRequest !== undefined) {
+    notifyUpdate.notifyApproverOnRequest = Boolean(b.notifyApproverOnRequest);
+  }
   if (b.notifyEmails !== undefined) notifyUpdate.notifyEmails = normalizeNotifyEmails(b.notifyEmails);
 
   // Resolve any submitted person lists BEFORE writing anything, so a typo
@@ -352,6 +418,7 @@ export async function PATCH(request: NextRequest) {
           notifyOnAvChange: true,
           notifyBookingUser: true,
           notifyForUser: true,
+          notifyApproverOnRequest: true,
           notifyEmails: true,
         },
       },

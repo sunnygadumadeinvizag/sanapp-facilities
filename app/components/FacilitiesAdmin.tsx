@@ -13,6 +13,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Textarea } from "@/components/ui/textarea";
 import { PocManager } from "./PocManager";
 import { capLabel } from "@/lib/limits";
+import { minuteLabel } from "@/lib/availability";
 import { PRIMARY_ROLE_LABELS } from "@/lib/labels";
 
 const PRIMARY_ROLES = ["STAFF_TEACHING", "STAFF_NON_TEACHING", "STUDENT", "SCHOLAR", "GUEST"];
@@ -26,6 +27,8 @@ type NotifyConfig = {
   notifyOnAvChange: boolean;
   notifyBookingUser?: boolean;
   notifyForUser?: boolean;
+  /** Email the approval people the moment a request is initiated. */
+  notifyApproverOnRequest?: boolean;
   notifyEmails: string[];
 };
 
@@ -38,6 +41,15 @@ type Facility = {
   maxMinutes: number | null;
   roleLimits: RoleLimit[];
   hasAvSupport: boolean;
+  /** LAB facility — a teaching / computer lab. */
+  isLab: boolean;
+  /** Every booking on this AV facility needs an AV technician. */
+  avSupportRequired: boolean;
+  /** The bookable hours and closed days (set here or on the Approvals page). */
+  openMin: number;
+  closeMin: number;
+  closedWeekdays: number[];
+  closedDates: string[];
   /** A booking on this facility waits for an approval person's decision. */
   requiresApproval: boolean;
   active: boolean;
@@ -169,6 +181,12 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                 maxMinutes: f.maxMinutes ?? null,
                 roleLimits: Array.isArray(f.roleLimits) ? f.roleLimits : [],
                 hasAvSupport: Boolean(f.hasAvSupport),
+                isLab: Boolean(f.isLab),
+                avSupportRequired: Boolean(f.avSupportRequired),
+                openMin: Number(f.openMin ?? 0),
+                closeMin: Number(f.closeMin ?? 1440),
+                closedWeekdays: Array.isArray(f.closedWeekdays) ? f.closedWeekdays : [],
+                closedDates: Array.isArray(f.closedDates) ? f.closedDates : [],
                 requiresApproval: Boolean(f.requiresApproval),
                 active: f.active !== false,
                 pocs: Array.isArray(f.pocs) ? f.pocs : [],
@@ -193,6 +211,11 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
   const [maxMinutes, setMaxMinutes] = useState("");
   const [roleLimits, setRoleLimits] = useState<Record<string, string>>({});
   const [hasAvSupport, setHasAvSupport] = useState(false);
+  const [isLab, setIsLab] = useState(false);
+  const [avSupportRequired, setAvSupportRequired] = useState(false);
+  // The approval people are emailed the moment a request is initiated, unless
+  // the admin turns this off.
+  const [notifyApproverOnRequest, setNotifyApproverOnRequest] = useState(true);
   const [notifyOnSlotBooked, setNotifyOnSlotBooked] = useState(false);
   const [notifyOnAvChange, setNotifyOnAvChange] = useState(false);
   const [notifyBookingUser, setNotifyBookingUser] = useState(false);
@@ -247,6 +270,9 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
         allowedRoles,
         maxMinutes: maxMinutes === "" ? null : Number(maxMinutes),
         hasAvSupport,
+        isLab,
+        // "AV support required" only exists on an AV facility.
+        avSupportRequired: hasAvSupport && avSupportRequired,
         requiresApproval,
         approverUsernames,
         dashboardViewerUsernames: viewerUsernames,
@@ -254,6 +280,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
         notifyOnAvChange,
         notifyBookingUser,
         notifyForUser,
+        notifyApproverOnRequest,
         notifyEmails,
         roleLimits: Object.entries(roleLimits)
           .filter(([, v]) => v !== "" && Number(v) > 0)
@@ -264,8 +291,9 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
     if (!res.ok) return setError(data.error ?? "Could not create facility");
     setError(null);
     setName(""); setDescription(""); setCapacity(""); setAllowedRoles([]); setMaxMinutes(""); setRoleLimits({}); setHasAvSupport(false);
+    setIsLab(false); setAvSupportRequired(false);
     setNotifyOnSlotBooked(false); setNotifyOnAvChange(false);
-    setNotifyBookingUser(false); setNotifyForUser(false); setNotifyEmails("");
+    setNotifyBookingUser(false); setNotifyForUser(false); setNotifyApproverOnRequest(true); setNotifyEmails("");
     setRequiresApproval(false); setApproverUsernames([]); setViewerUsernames([]);
     await reload();
   }
@@ -318,6 +346,8 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       allowedRoles: f.allowedRoles,
       maxMinutes: f.maxMinutes ? String(f.maxMinutes) : "",
       hasAvSupport: f.hasAvSupport,
+      isLab: f.isLab,
+      avSupportRequired: f.avSupportRequired,
       requiresApproval: f.requiresApproval,
       approverUsernames: f.approvers.map((a) => a.user.username),
       dashboardViewerUsernames: f.dashboardViewers.map((v) => v.user.username),
@@ -326,6 +356,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       notifyOnAvChange: f.notifyConfig?.notifyOnAvChange ?? false,
       notifyBookingUser: f.notifyConfig?.notifyBookingUser ?? false,
       notifyForUser: f.notifyConfig?.notifyForUser ?? false,
+      notifyApproverOnRequest: f.notifyConfig?.notifyApproverOnRequest ?? true,
       notifyEmails: (f.notifyConfig?.notifyEmails ?? []).join(", "),
     });
   }
@@ -338,6 +369,9 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       allowedRoles: Array.isArray(editForm.allowedRoles) ? editForm.allowedRoles : f.allowedRoles,
       maxMinutes: editForm.maxMinutes === "" || editForm.maxMinutes === null ? null : Number(editForm.maxMinutes),
       hasAvSupport: Boolean(editForm.hasAvSupport),
+      isLab: Boolean(editForm.isLab),
+      avSupportRequired:
+        Boolean(editForm.hasAvSupport) && Boolean(editForm.avSupportRequired),
       requiresApproval: Boolean(editForm.requiresApproval),
       approverUsernames: (editForm.approverUsernames as string[]) ?? [],
       dashboardViewerUsernames: (editForm.dashboardViewerUsernames as string[]) ?? [],
@@ -348,6 +382,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       notifyOnAvChange: Boolean(editForm.notifyOnAvChange),
       notifyBookingUser: Boolean(editForm.notifyBookingUser),
       notifyForUser: Boolean(editForm.notifyForUser),
+      notifyApproverOnRequest: Boolean(editForm.notifyApproverOnRequest),
       notifyEmails: String(editForm.notifyEmails ?? ""),
     });
     setEditingId(null);
@@ -429,20 +464,58 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                 ))}
               </div>
             </div>
-            <div className="rounded-md border p-3 bg-muted/20">
+            <div className="rounded-md border p-3 bg-muted/20 grid gap-3">
               <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
                 <Checkbox
-                  checked={hasAvSupport}
-                  onCheckedChange={(v) => setHasAvSupport(v === true)}
+                  checked={isLab}
+                  onCheckedChange={(v) => setIsLab(v === true)}
                   className="mt-0.5"
                 />
                 <div>
-                  <span>Allow AV Technician Support Requests</span>
+                  <span>LAB facility</span>
                   <p className="text-xs text-muted-foreground font-normal mt-0.5">
-                    When enabled, users booking this facility can request on-site AV technician support.
+                    A teaching / computer lab. Shown as a “LAB facility” badge wherever this facility
+                    is listed.
                   </p>
                 </div>
               </label>
+              <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
+                <Checkbox
+                  checked={hasAvSupport}
+                  onCheckedChange={(v) => {
+                    const on = v === true;
+                    setHasAvSupport(on);
+                    // Taking the AV facility away takes "AV support required" with it.
+                    if (!on) setAvSupportRequired(false);
+                  }}
+                  className="mt-0.5"
+                />
+                <div>
+                  <span>AV facility</span>
+                  <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                    This facility has an AV setup, so users booking it can request on-site AV
+                    technician support.
+                  </p>
+                </div>
+              </label>
+              {/* Only offered on an AV facility — the second checkbox appears
+                  the moment "AV facility" is ticked. */}
+              {hasAvSupport && (
+                <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer pl-6">
+                  <Checkbox
+                    checked={avSupportRequired}
+                    onCheckedChange={(v) => setAvSupportRequired(v === true)}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <span>AV support required</span>
+                    <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                      Every booking on this AV facility needs the AV technician — the booker cannot
+                      turn the support request off.
+                    </p>
+                  </div>
+                </label>
+              )}
             </div>
             <div className="rounded-md border p-3 bg-muted/20 grid gap-3">
               <div className="text-sm font-semibold">Approval before a slot is confirmed</div>
@@ -455,13 +528,32 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                 <div>
                   <span>Require approval before a slot is confirmed</span>
                   <p className="text-xs text-muted-foreground font-normal mt-0.5">
-                    A slot requested on this facility is held as “Approval requested” (shown in amber
-                    on the calendar) until one of the approval people confirms it. They are emailed
-                    the moment a request is made, and the person who asked is emailed the decision.
-                    Facility POCs, building POCs and app admins keep booking directly.
+                    A slot requested on this facility is held as “Awaiting approval” (amber, and a
+                    different colour from a confirmed booking) until one of the approval people
+                    confirms it — the slot is blocked for everybody else meanwhile, and it is freed
+                    again if the request is declined. The approval people are emailed the moment a
+                    request is made, and the person who asked is emailed the decision. Only the app
+                    administrator and this facility&apos;s approval people book a slot directly;
+                    everybody else, POCs included, submits a request.
                   </p>
                 </div>
               </label>
+              {requiresApproval && (
+                <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
+                  <Checkbox
+                    checked={notifyApproverOnRequest}
+                    onCheckedChange={(v) => setNotifyApproverOnRequest(v === true)}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <span>Approver will be notified when a slot request is initiated</span>
+                    <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                      The moment somebody submits a slot request, this facility&apos;s approval people
+                      are emailed automatically.
+                    </p>
+                  </div>
+                </label>
+              )}
               <div className="grid gap-1.5">
                 <Label>Approval people</Label>
                 <PeoplePicker
@@ -589,6 +681,29 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                         AV Support Allowed
                       </Badge>
                     )}
+                    {f.isLab && (
+                      <Badge variant="outline" className="border-sky-400 bg-sky-50 text-sky-900 font-medium">
+                        LAB facility
+                      </Badge>
+                    )}
+                    {f.avSupportRequired && (
+                      <Badge variant="outline" className="border-amber-500 bg-amber-100 text-amber-950 font-medium">
+                        AV support required
+                      </Badge>
+                    )}
+                    {(f.openMin > 0 || f.closeMin < 1440 || f.closedWeekdays.length > 0 || f.closedDates.length > 0) && (
+                      <Badge variant="outline" className="border-sky-400 bg-sky-50 text-sky-900 font-medium">
+                        {f.openMin > 0 || f.closeMin < 1440
+                          ? `Bookable ${minuteLabel(f.openMin)}–${minuteLabel(f.closeMin)}`
+                          : "Bookable all day"}
+                        {f.closedWeekdays.length > 0
+                          ? ` · ${f.closedWeekdays.length} closed weekday${f.closedWeekdays.length === 1 ? "" : "s"}`
+                          : ""}
+                        {f.closedDates.length > 0
+                          ? ` · ${f.closedDates.length} closed date${f.closedDates.length === 1 ? "" : "s"}`
+                          : ""}
+                      </Badge>
+                    )}
                     {f.requiresApproval && (
                       <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-900 font-medium">
                         Approval required
@@ -685,22 +800,56 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                           ))}
                         </div>
                       </div>
-                      <div className="rounded-md border p-2.5 bg-muted/20">
+                      <div className="rounded-md border p-2.5 bg-muted/20 grid gap-2">
+                        <label className="flex items-start gap-2 text-xs font-medium cursor-pointer">
+                          <Checkbox
+                            checked={Boolean(editForm.isLab)}
+                            onCheckedChange={(v) => setEditForm((p) => ({ ...p, isLab: v === true }))}
+                            className="mt-0.5"
+                          />
+                          <div>
+                            <span>LAB facility</span>
+                            <p className="text-[11px] text-muted-foreground font-normal">
+                              A teaching / computer lab.
+                            </p>
+                          </div>
+                        </label>
                         <label className="flex items-start gap-2 text-xs font-medium cursor-pointer">
                           <Checkbox
                             checked={Boolean(editForm.hasAvSupport)}
                             onCheckedChange={(v) =>
-                              setEditForm((p) => ({ ...p, hasAvSupport: v === true }))
+                              setEditForm((p) => ({
+                                ...p,
+                                hasAvSupport: v === true,
+                                ...(v === true ? {} : { avSupportRequired: false }),
+                              }))
                             }
                             className="mt-0.5"
                           />
                           <div>
-                            <span>Allow AV Technician Support Requests</span>
+                            <span>AV facility</span>
                             <p className="text-[11px] text-muted-foreground font-normal">
-                              Users booking this facility will have the option to request AV technician assistance.
+                              Users booking this facility can request AV technician assistance.
                             </p>
                           </div>
                         </label>
+                        {Boolean(editForm.hasAvSupport) && (
+                          <label className="flex items-start gap-2 text-xs font-medium cursor-pointer pl-5">
+                            <Checkbox
+                              checked={Boolean(editForm.avSupportRequired)}
+                              onCheckedChange={(v) =>
+                                setEditForm((p) => ({ ...p, avSupportRequired: v === true }))
+                              }
+                              className="mt-0.5"
+                            />
+                            <div>
+                              <span>AV support required</span>
+                              <p className="text-[11px] text-muted-foreground font-normal">
+                                Every booking on this AV facility needs the AV technician.
+                              </p>
+                            </div>
+                          </label>
+                        )}
                       </div>
                       <div className="rounded-md border p-2.5 bg-muted/20 grid gap-3">
                         <div className="text-xs font-semibold">Approval before a slot is confirmed</div>
@@ -713,13 +862,33 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                           <div>
                             <span>Require approval before a slot is confirmed</span>
                             <p className="text-[11px] text-muted-foreground font-normal">
-                              Requested slots are held as “Approval requested” until an approval person
-                              confirms them. The approval people are emailed each request, the requester
-                              is emailed the decision, and moving an already-confirmed slot on this
-                              facility asks for approval again.
+                              Requested slots are held as “Awaiting approval” until an approval person
+                              confirms them — the slot is blocked for everybody else meanwhile. The
+                              approval people are emailed each request (when the switch below is on),
+                              the requester is emailed the decision, and moving an already-confirmed
+                              slot on this facility asks for approval again. Only the app administrator
+                              and the approval people book directly; POCs must request too.
                             </p>
                           </div>
                         </label>
+                        {Boolean(editForm.requiresApproval) && (
+                          <label className="flex items-start gap-2 text-xs font-medium cursor-pointer">
+                            <Checkbox
+                              checked={editForm.notifyApproverOnRequest !== false}
+                              onCheckedChange={(v) =>
+                                setEditForm((p) => ({ ...p, notifyApproverOnRequest: v === true }))
+                              }
+                              className="mt-0.5"
+                            />
+                            <div>
+                              <span>Approver will be notified when a slot request is initiated</span>
+                              <p className="text-[11px] text-muted-foreground font-normal">
+                                Emails this facility&apos;s approval people automatically when somebody
+                                submits a slot request.
+                              </p>
+                            </div>
+                          </label>
+                        )}
                         <div className="grid gap-1">
                           <Label className="text-xs">Approval people</Label>
                           <PeoplePicker

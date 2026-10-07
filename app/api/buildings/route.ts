@@ -24,12 +24,25 @@ export async function GET(request: NextRequest) {
                 include: { user: { select: { id: true, name: true, username: true } } },
                 orderBy: { createdAt: "asc" },
               },
+              // The facilities editor shows (and edits) the approval people and
+              // the extra dashboard viewers, so the admin reload MUST carry them
+              // — without these two the editor silently re-rendered both lists
+              // as empty and a saved approver looked like it had not been saved.
+              approvers: {
+                include: { user: { select: { id: true, name: true, username: true } } },
+                orderBy: { createdAt: "asc" },
+              },
+              dashboardViewers: {
+                include: { user: { select: { id: true, name: true, username: true } } },
+                orderBy: { createdAt: "asc" },
+              },
               notifyConfig: {
                 select: {
                   notifyOnSlotBooked: true,
                   notifyOnAvChange: true,
                   notifyBookingUser: true,
                   notifyForUser: true,
+                  notifyApproverOnRequest: true,
                   notifyEmails: true,
                 },
               },

@@ -44,12 +44,24 @@ export default async function AdminFacilitiesPage() {
               include: { user: { select: { id: true, name: true, username: true } } },
               orderBy: { createdAt: "asc" },
             },
+            // The approval people and the extra dashboard viewers MUST be here
+            // too: the form renders them straight from this payload, so leaving
+            // them out made a saved approver look unsaved.
+            approvers: {
+              include: { user: { select: { id: true, name: true, username: true } } },
+              orderBy: { createdAt: "asc" },
+            },
+            dashboardViewers: {
+              include: { user: { select: { id: true, name: true, username: true } } },
+              orderBy: { createdAt: "asc" },
+            },
             notifyConfig: {
               select: {
                 notifyOnSlotBooked: true,
                 notifyOnAvChange: true,
                 notifyBookingUser: true,
                 notifyForUser: true,
+                notifyApproverOnRequest: true,
                 notifyEmails: true,
               },
             },

@@ -5,6 +5,7 @@ import { currentUser } from "@/lib/auth";
 import { decidableFacilityIds, listPendingApprovals, listRecentDecisions } from "@/lib/approval";
 import { AppShell } from "../components/AppShell";
 import { ApprovalsClient } from "../components/ApprovalsClient";
+import { AvailabilityEditor } from "../components/AvailabilityEditor";
 import { Card, CardContent } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
@@ -58,6 +59,29 @@ export default async function ApprovalsPage() {
     }),
   ]);
 
+  // Availability is set by the very same people who decide the requests: the
+  // hours a facility may be booked on, the days it is closed and the longest
+  // booking it accepts.
+  const availabilityRows = await prisma.facility.findMany({
+    where: scope === "all" ? {} : { id: { in: scope } },
+    select: {
+      id: true,
+      name: true,
+      openMin: true,
+      closeMin: true,
+      closedWeekdays: true,
+      closedDates: true,
+      maxMinutes: true,
+      requiresApproval: true,
+      isLab: true,
+      hasAvSupport: true,
+      avSupportRequired: true,
+      active: true,
+      building: { select: { name: true, maxMinutes: true } },
+    },
+    orderBy: [{ building: { name: "asc" } }, { name: "asc" }],
+  });
+
   return (
     <AppShell me={me} active="approvals">
       <h1 className="iipe-page-title">Approvals</h1>
@@ -75,6 +99,36 @@ export default async function ApprovalsPage() {
           buildingName: f.building.name,
         }))}
       />
+
+      {/* Availability — closing days, bookable hours and the booking caps. */}
+      <div className="mt-8 flex flex-col gap-3">
+        <div>
+          <h2 className="text-lg font-semibold">Facility availability</h2>
+          <p className="text-sm text-muted-foreground">
+            The hours a facility may be booked on, the days it is closed (every week or just once),
+            and the longest booking it accepts. The booking calendar follows these values at once,
+            and every booking that already exists is kept as it is.
+          </p>
+        </div>
+        <AvailabilityEditor
+          initial={availabilityRows.map((f) => ({
+            id: f.id,
+            name: f.name,
+            buildingName: f.building.name,
+            openMin: f.openMin,
+            closeMin: f.closeMin,
+            closedWeekdays: f.closedWeekdays,
+            closedDates: f.closedDates,
+            maxMinutes: f.maxMinutes,
+            requiresApproval: f.requiresApproval,
+            isLab: f.isLab,
+            hasAvSupport: f.hasAvSupport,
+            avSupportRequired: f.avSupportRequired,
+            active: f.active,
+            buildingMaxMinutes: f.building.maxMinutes,
+          }))}
+        />
+      </div>
     </AppShell>
   );
 }

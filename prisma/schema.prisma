@@ -113,11 +113,27 @@ model Facility {
   maxMinutes   Int?
   // Per-primary-role maximums (role -> maxMinutes), overriding maxMinutes.
   roleLimits   FacilityRoleLimit[]
-  // Whether AV technician support requests are allowed for this facility
+  // The "AV facility" checkbox: the facility has an AV setup, so a booking on
+  // it may request on-site AV technician support.
   hasAvSupport Boolean   @default(false)
+  // The "LAB facility" checkbox: a teaching / computer lab.
+  isLab        Boolean   @default(false)
+  // Only offered on an AV facility: every booking on it NEEDS an AV technician,
+  // so the booker cannot turn the support request off.
+  avSupportRequired Boolean @default(false)
+  // ---- Bookable availability (app admin / the facility's approval people) ---
+  // The bookable window of a day, in minutes from midnight IST: a booking must
+  // start at/after openMin and end at/before closeMin on its end day.
+  // 0 / 1440 (the defaults) mean the whole day, exactly as before.
+  openMin      Int       @default(0)
+  closeMin     Int       @default(1440)
+  // Recurring closures — 0 = Sunday … 6 = Saturday. Never bookable.
+  closedWeekdays Int[]   @default([])
+  // One-off closures — plain YYYY-MM-DD (IST) dates the facility is closed.
+  closedDates  String[]  @default([])
   // When true, a booking by a regular user is created as PENDING_APPROVAL and
   // only becomes CONFIRMED once an approval person of this facility decides in
-  // its favour. App ADMINs and POCs of the facility/building book directly.
+  // its favour. The facility's approval people and app ADMINs book directly.
   requiresApproval Boolean @default(false)
   active       Boolean   @default(true)
   createdAt    DateTime  @default(now())
@@ -290,6 +306,11 @@ model FacilityNotifyConfig {
   // Email the person a slot was blocked FOR whenever a POC / app admin books
   // on their behalf.
   notifyForUser      Boolean  @default(false)
+  // Email the facility's approval people the moment a slot request is
+  // initiated (the "notify the approver when a slot request is initiated"
+  // checkbox on the facility form). Defaults on, so a facility that requires
+  // an approval still mails its deciders until an admin turns it off.
+  notifyApproverOnRequest Boolean @default(true)
   // Notifier email addresses (comma / newline separated in the admin UI).
   notifyEmails       String[] @default([])
   createdAt          DateTime @default(now())

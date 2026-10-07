@@ -259,7 +259,7 @@ export function ApprovalsClient({
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge variant="outline" className="border-amber-400 bg-amber-100 text-amber-900 gap-1">
                         <Clock className="h-3 w-3" />
-                        Approval requested
+                        Awaiting approval
                       </Badge>
                       <span className="font-semibold text-sm">
                         {group.buildingName} — {group.facilityName}

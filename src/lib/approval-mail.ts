@@ -176,6 +176,24 @@ async function emailOf(username: string | null | undefined): Promise<string | nu
 /* -------------------------------------------------------------------------- */
 
 /**
+ * The facility's "notify the approver when a slot request is initiated" switch.
+ * A facility with no configuration row at all keeps the default (notify), so an
+ * approval request is never silently dropped.
+ */
+async function notifiesApprovers(facilityId: string): Promise<boolean> {
+  try {
+    const cfg = await prisma.facilityNotifyConfig.findUnique({
+      where: { facilityId },
+      select: { notifyApproverOnRequest: true },
+    });
+    return cfg ? cfg.notifyApproverOnRequest : true;
+  } catch (e) {
+    console.error("approval notify: could not read the facility's notify config:", e);
+    return true;
+  }
+}
+
+/**
  * One approval mail per request, not per slot.
  *
  * A multi-range request is posted as one call per range, all sharing a batchId,
@@ -197,7 +215,13 @@ export function queueApprovalRequestMail(booking: NotifyBooking): void {
   if (existing) clearTimeout(existing);
   const timer = setTimeout(() => {
     pending.delete(key);
-    void sendApprovalMail({ booking, kind: "request" });
+    void (async () => {
+      // The facility decides whether its approval people hear about a request
+      // the moment it is made ("approver will be notified when a slot request
+      // is initiated"). Absent configuration means the default: notify.
+      if (!(await notifiesApprovers(booking.facilityId))) return;
+      await sendApprovalMail({ booking, kind: "request" });
+    })();
   }, COALESCE_MS);
   // Never hold the process open just for a notification.
   timer.unref?.();

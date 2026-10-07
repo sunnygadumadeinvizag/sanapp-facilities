@@ -399,7 +399,7 @@ export function AdminBookingsTab({
                             variant="outline"
                             className="border-amber-400 bg-amber-100 text-amber-900 gap-1 text-[11px]"
                           >
-                            <Clock className="h-3 w-3" /> Approval requested
+                            <Clock className="h-3 w-3" /> Awaiting approval
                           </Badge>
                         )}
                         {b.status === "REJECTED" && (

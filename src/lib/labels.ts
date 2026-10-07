@@ -31,7 +31,7 @@ export function roleLabel(role: string): string {
 // is held, but the requester has not been given it yet.
 export const BOOKING_STATUS_LABELS: Record<string, string> = {
   CONFIRMED: "Confirmed",
-  PENDING_APPROVAL: "Approval requested",
+  PENDING_APPROVAL: "Awaiting approval",
   REJECTED: "Declined",
   CANCELLED: "Cancelled",
 };
