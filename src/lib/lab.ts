@@ -7,10 +7,16 @@
 // institute directory instead of a list duplicated in this app.
 
 export const FACULTY_PRIMARY_ROLE = "STAFF_TEACHING";
+export const SCHOLAR_PRIMARY_ROLE = "SCHOLAR";
 
 /** True when this person may supervise a lab session (a teaching staff member). */
 export function isFaculty(primaryRole?: string | null): boolean {
   return (primaryRole ?? "") === FACULTY_PRIMARY_ROLE;
+}
+
+/** True when this booking's effective booker is a scholar. */
+export function isScholar(primaryRole?: string | null): boolean {
+  return (primaryRole ?? "") === SCHOLAR_PRIMARY_ROLE;
 }
 
 /** A value trimmed to the stored string, or null when it is empty. */
@@ -36,6 +42,28 @@ export function labDetailsError(
   }
   if (!department) {
     return "Choose the department this lab session belongs to before confirming.";
+  }
+  return null;
+}
+
+/**
+ * Why a scholar's lab booking may not be sent yet, or null when it is complete.
+ * Scholars must state the roll number and admission category of the lab session;
+ * this applies to lab facilities only, and to no other primary role.
+ */
+export function scholarLabDetailsError(
+  isLab: boolean,
+  primaryRole: string | null | undefined,
+  details: { admissionCategory?: unknown; rollNumber?: unknown }
+): string | null {
+  if (!isLab || !isScholar(primaryRole)) return null;
+  const rollNumber = String(details.rollNumber ?? "").trim();
+  const admissionCategory = String(details.admissionCategory ?? "").trim();
+  if (!rollNumber) {
+    return "Enter the scholar's roll number before confirming.";
+  }
+  if (!admissionCategory) {
+    return "Enter the scholar's admission category before confirming.";
   }
   return null;
 }

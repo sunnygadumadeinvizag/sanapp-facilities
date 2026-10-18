@@ -213,6 +213,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
   const [hasAvSupport, setHasAvSupport] = useState(false);
   const [isLab, setIsLab] = useState(false);
   const [avSupportRequired, setAvSupportRequired] = useState(false);
+  const [active, setActive] = useState(true);
   // The approval people are emailed the moment a request is initiated, unless
   // the admin turns this off.
   const [notifyApproverOnRequest, setNotifyApproverOnRequest] = useState(true);
@@ -271,6 +272,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
         maxMinutes: maxMinutes === "" ? null : Number(maxMinutes),
         hasAvSupport,
         isLab,
+        active,
         // "AV support required" only exists on an AV facility.
         avSupportRequired: hasAvSupport && avSupportRequired,
         requiresApproval,
@@ -291,7 +293,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
     if (!res.ok) return setError(data.error ?? "Could not create facility");
     setError(null);
     setName(""); setDescription(""); setCapacity(""); setAllowedRoles([]); setMaxMinutes(""); setRoleLimits({}); setHasAvSupport(false);
-    setIsLab(false); setAvSupportRequired(false);
+    setIsLab(false); setAvSupportRequired(false); setActive(true);
     setNotifyOnSlotBooked(false); setNotifyOnAvChange(false);
     setNotifyBookingUser(false); setNotifyForUser(false); setNotifyApproverOnRequest(true); setNotifyEmails("");
     setRequiresApproval(false); setApproverUsernames([]); setViewerUsernames([]);
@@ -348,6 +350,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       hasAvSupport: f.hasAvSupport,
       isLab: f.isLab,
       avSupportRequired: f.avSupportRequired,
+      active: f.active,
       requiresApproval: f.requiresApproval,
       approverUsernames: f.approvers.map((a) => a.user.username),
       dashboardViewerUsernames: f.dashboardViewers.map((v) => v.user.username),
@@ -370,6 +373,7 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
       maxMinutes: editForm.maxMinutes === "" || editForm.maxMinutes === null ? null : Number(editForm.maxMinutes),
       hasAvSupport: Boolean(editForm.hasAvSupport),
       isLab: Boolean(editForm.isLab),
+      active: Boolean(editForm.active),
       avSupportRequired:
         Boolean(editForm.hasAvSupport) && Boolean(editForm.avSupportRequired),
       requiresApproval: Boolean(editForm.requiresApproval),
@@ -468,7 +472,15 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
               <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
                 <Checkbox
                   checked={isLab}
-                  onCheckedChange={(v) => setIsLab(v === true)}
+                  onCheckedChange={(v) => {
+                    const on = v === true;
+                    setIsLab(on);
+                    // LAB and AV are mutually exclusive — a facility is one or the other.
+                    if (on) {
+                      setHasAvSupport(false);
+                      setAvSupportRequired(false);
+                    }
+                  }}
                   className="mt-0.5"
                 />
                 <div>
@@ -487,6 +499,8 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                     setHasAvSupport(on);
                     // Taking the AV facility away takes "AV support required" with it.
                     if (!on) setAvSupportRequired(false);
+                    // LAB and AV are mutually exclusive — a facility is one or the other.
+                    if (on) setIsLab(false);
                   }}
                   className="mt-0.5"
                 />
@@ -516,6 +530,19 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                   </div>
                 </label>
               )}
+              <label className="flex items-start gap-2.5 text-sm font-medium cursor-pointer">
+                <Checkbox
+                  checked={active}
+                  onCheckedChange={(v) => setActive(v === true)}
+                  className="mt-0.5"
+                />
+                <div>
+                  <span>Active</span>
+                  <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                    Inactive facilities are hidden from bookers and cannot be booked.
+                  </p>
+                </div>
+              </label>
             </div>
             <div className="rounded-md border p-3 bg-muted/20 grid gap-3">
               <div className="text-sm font-semibold">Approval before a slot is confirmed</div>
@@ -804,7 +831,14 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                         <label className="flex items-start gap-2 text-xs font-medium cursor-pointer">
                           <Checkbox
                             checked={Boolean(editForm.isLab)}
-                            onCheckedChange={(v) => setEditForm((p) => ({ ...p, isLab: v === true }))}
+                            onCheckedChange={(v) =>
+                              setEditForm((p) => ({
+                                ...p,
+                                isLab: v === true,
+                                // LAB and AV are mutually exclusive.
+                                ...(v === true ? { hasAvSupport: false, avSupportRequired: false } : {}),
+                              }))
+                            }
                             className="mt-0.5"
                           />
                           <div>
@@ -821,7 +855,9 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                               setEditForm((p) => ({
                                 ...p,
                                 hasAvSupport: v === true,
-                                ...(v === true ? {} : { avSupportRequired: false }),
+                                ...(v === true
+                                  ? { isLab: false }
+                                  : { avSupportRequired: false }),
                               }))
                             }
                             className="mt-0.5"
@@ -850,6 +886,19 @@ export function FacilitiesAdmin({ initialBuildings }: { initialBuildings: Buildi
                             </div>
                           </label>
                         )}
+                        <label className="flex items-start gap-2 text-xs font-medium cursor-pointer">
+                          <Checkbox
+                            checked={editForm.active !== false}
+                            onCheckedChange={(v) => setEditForm((p) => ({ ...p, active: v === true }))}
+                            className="mt-0.5"
+                          />
+                          <div>
+                            <span>Active</span>
+                            <p className="text-[11px] text-muted-foreground font-normal">
+                              Inactive facilities are hidden from bookers and cannot be booked.
+                            </p>
+                          </div>
+                        </label>
                       </div>
                       <div className="rounded-md border p-2.5 bg-muted/20 grid gap-3">
                         <div className="text-xs font-semibold">Approval before a slot is confirmed</div>

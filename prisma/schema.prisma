@@ -240,6 +240,12 @@ model Booking {
   supervisorUsername String?
   supervisorName     String?
   department         String?
+  // A SCHOLAR booking a LAB facility must also state the admission category
+  // (funded / self-funded / project / …) and the scholar's roll number. Free
+  // text, so the institute can word its own categories. NULL for every other
+  // booking — AV and general facilities never ask for them.
+  admissionCategory  String?
+  rollNumber         String?
   createdAt  DateTime      @default(now())
   // Audit trail — life-cycle events (created / edited / cancelled).
   events      BookingEvent[]

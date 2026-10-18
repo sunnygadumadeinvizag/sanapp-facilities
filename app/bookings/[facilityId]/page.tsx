@@ -77,6 +77,8 @@ export default async function BookPage({
     supervisorUsername: string | null;
     supervisorName: string | null;
     department: string | null;
+    admissionCategory: string | null;
+    rollNumber: string | null;
   } | null = null;
   if (editId) {
     const b = await prisma.booking.findUnique({
@@ -100,6 +102,8 @@ export default async function BookPage({
         supervisorUsername: true,
         supervisorName: true,
         department: true,
+        admissionCategory: true,
+        rollNumber: true,
       },
     });
     if (
@@ -124,6 +128,8 @@ export default async function BookPage({
         supervisorUsername: b.supervisorUsername,
         supervisorName: b.supervisorName,
         department: b.department,
+        admissionCategory: b.admissionCategory,
+        rollNumber: b.rollNumber,
       };
     }
   }

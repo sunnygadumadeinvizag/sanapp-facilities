@@ -24,6 +24,9 @@ export type DashSlot = {
   isLab: boolean;
   supervisor: string | null;
   department: string | null;
+  /** SCHOLAR lab bookings: the scholar's roll number and admission category. */
+  admissionCategory: string | null;
+  rollNumber: string | null;
   bookedBy: string;
 };
 
@@ -255,6 +258,18 @@ export function DashboardGrid({
                                       {s.supervisor ? `Supervisor: ${s.supervisor}` : null}
                                       {s.supervisor && s.department ? " · " : null}
                                       {s.department ? `Dept: ${s.department}` : null}
+                                    </div>
+                                  )}
+                                  {(s.rollNumber || s.admissionCategory) && (
+                                    <div
+                                      className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted-foreground"
+                                      title={`${s.rollNumber ?? ""}${
+                                        s.rollNumber && s.admissionCategory ? " · " : ""
+                                      }${s.admissionCategory ?? ""}`}
+                                    >
+                                      {s.rollNumber ? `Roll: ${s.rollNumber}` : null}
+                                      {s.rollNumber && s.admissionCategory ? " · " : null}
+                                      {s.admissionCategory ? `Category: ${s.admissionCategory}` : null}
                                     </div>
                                   )}
                                   {s.purpose && (

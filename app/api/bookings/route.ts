@@ -16,7 +16,7 @@ import {
 } from "@/lib/ist";
 import { effectiveMaxMinutes } from "@/lib/limits";
 import { availabilityError, facilityAvailability } from "@/lib/availability";
-import { cleanText, labDetailsError } from "@/lib/lab";
+import { cleanText, isScholar, labDetailsError, scholarLabDetailsError } from "@/lib/lab";
 import { nextBookingCode, recordEvent, sendBookingDigest, type NotifyBooking } from "@/lib/notify";
 import { approvalContext } from "@/lib/approval";
 import { queueApprovalRequestMail } from "@/lib/approval-mail";
@@ -62,6 +62,10 @@ const BOOKING_LIST_SELECT = {
   supervisorUsername: true,
   supervisorName: true,
   department: true,
+  // LAB facilities + SCHOLAR bookers: the scholar's roll number and admission
+  // category, treated like the rest of a booking's detail (hidden from others).
+  admissionCategory: true,
+  rollNumber: true,
   userId: true,
   forUserId: true,
   facility: {
@@ -187,6 +191,8 @@ async function formatBookingForViewer(
     supervisorUsername: canViewPrivate ? (b.supervisorUsername ?? null) : null,
     supervisorName: canViewPrivate ? (b.supervisorName ?? null) : null,
     department: canViewPrivate ? (b.department ?? null) : null,
+    admissionCategory: canViewPrivate ? (b.admissionCategory ?? null) : null,
+    rollNumber: canViewPrivate ? (b.rollNumber ?? null) : null,
     /** True for a facility marked "LAB facility" (public: it is a label only). */
     isLab: Boolean(b.facility.isLab),
     /** True when the viewer is seeing a redacted slot (time + booker + state). */
@@ -440,6 +446,8 @@ export async function POST(request: NextRequest) {
       "supervisorUsername",
       "supervisorName",
       "department",
+      "admissionCategory",
+      "rollNumber",
     ]) {
       const v = form.get(key);
       if (v !== null && v !== undefined && typeof v === "string") body[key] = v;
@@ -545,6 +553,12 @@ export async function POST(request: NextRequest) {
   });
   if (labError) return bad(labError);
 
+  // LAB facilities booked by a SCHOLAR must also name the scholar's roll number
+  // and admission category. Parsed here; validated once the effective booker
+  // (self or the person a slot is blocked for) is known.
+  const scholarAdmissionCategory = cleanText(body.admissionCategory, 120);
+  const scholarRollNumber = cleanText(body.rollNumber, 60);
+
   // POC = POC of this facility OR of its building (or an app ADMIN).
   const access = await facilityAccess(facilityId, user.id, user.role);
   const pocHere = access.isAdmin || access.isPoc;
@@ -595,6 +609,22 @@ export async function POST(request: NextRequest) {
     }
     resolvedForUserId = forUser.id;
   }
+
+  // Effective primary role: the person the slot is funded/booked for on an
+  // ON_BEHALF block, otherwise the booker themselves.
+  let effectivePrimaryRole: string | null = user.primaryRole ?? null;
+  if (type === "ON_BEHALF" && resolvedForUserId) {
+    const forUser = await prisma.appUser.findUnique({
+      where: { id: resolvedForUserId },
+      select: { primaryRole: true },
+    });
+    effectivePrimaryRole = forUser?.primaryRole ?? null;
+  }
+  const scholarError = scholarLabDetailsError(facility.isLab, effectivePrimaryRole, {
+    admissionCategory: scholarAdmissionCategory,
+    rollNumber: scholarRollNumber,
+  });
+  if (scholarError) return bad(scholarError);
 
   if (facility.allowedRoles.length > 0 && user.role !== "ADMIN") {
     let eligibleRole: string | null = null;
@@ -713,6 +743,10 @@ export async function POST(request: NextRequest) {
           supervisorUsername: facility.isLab ? labSupervisorUsername : null,
           supervisorName: facility.isLab ? labSupervisorName : null,
           department: facility.isLab ? labDepartment : null,
+          // LAB facilities + SCHOLAR bookers only: the scholar's roll number
+          // and admission category.
+          admissionCategory: facility.isLab && isScholar(effectivePrimaryRole) ? scholarAdmissionCategory : null,
+          rollNumber: facility.isLab && isScholar(effectivePrimaryRole) ? scholarRollNumber : null,
           // Buffer -> Uint8Array<ArrayBuffer> for Prisma Bytes.
           pdf: pdf ? (() => { const b = new Uint8Array(pdf.byteLength); b.set(pdf); return b; })() : undefined,
           pdfName: pdfName ?? undefined,
@@ -808,6 +842,8 @@ export async function PATCH(request: NextRequest) {
       "supervisorUsername",
       "supervisorName",
       "department",
+      "admissionCategory",
+      "rollNumber",
     ]) {
       const v = form.get(key);
       if (v !== null && v !== undefined && typeof v === "string") body[key] = v;
@@ -932,6 +968,25 @@ export async function PATCH(request: NextRequest) {
   });
   if (labPatchError) return bad(labPatchError);
 
+  // A scholar's lab booking keeps its roll number and admission category too.
+  const scholarPatchCategory =
+    body.admissionCategory === undefined ? undefined : cleanText(body.admissionCategory, 120);
+  const scholarPatchRoll =
+    body.rollNumber === undefined ? undefined : cleanText(body.rollNumber, 60);
+  let patchPrimaryRole: string | null = user.primaryRole ?? null;
+  if (booking.type === "ON_BEHALF" && booking.forUserId) {
+    const forUser = await prisma.appUser.findUnique({
+      where: { id: booking.forUserId },
+      select: { primaryRole: true },
+    });
+    patchPrimaryRole = forUser?.primaryRole ?? null;
+  }
+  const scholarPatchError = scholarLabDetailsError(facility.isLab, patchPrimaryRole, {
+    admissionCategory: scholarPatchCategory ?? booking.admissionCategory,
+    rollNumber: scholarPatchRoll ?? booking.rollNumber,
+  });
+  if (scholarPatchError) return bad(scholarPatchError);
+
   // Moving or re-timing a slot of an approval facility has to be approved
   // again: the decision covered the time range that was requested, not a new
   // one. Without this, a request could be approved and then quietly moved.
@@ -976,6 +1031,8 @@ export async function PATCH(request: NextRequest) {
         ...(labPatchUsername !== undefined ? { supervisorUsername: labPatchUsername } : {}),
         ...(labPatchName !== undefined ? { supervisorName: labPatchName } : {}),
         ...(labPatchDepartment !== undefined ? { department: labPatchDepartment } : {}),
+        ...(scholarPatchCategory !== undefined ? { admissionCategory: scholarPatchCategory } : {}),
+        ...(scholarPatchRoll !== undefined ? { rollNumber: scholarPatchRoll } : {}),
       };
       if (needsApproval && booking.status === "CONFIRMED") {
         // Back to waiting: the slot is held again and the approval people

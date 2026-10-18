@@ -67,7 +67,7 @@ import {
   slotDurationMin,
   slotIndex,
 } from "@/lib/ist";
-import { labDetailsError } from "@/lib/lab";
+import { labDetailsError, scholarLabDetailsError } from "@/lib/lab";
 
 export type SlotItem = {
   id: string;
@@ -191,6 +191,9 @@ export type EditBookingInfo = {
   supervisorUsername?: string | null;
   supervisorName?: string | null;
   department?: string | null;
+  /** SCHOLAR lab bookings: the scholar's roll number and admission category. */
+  admissionCategory?: string | null;
+  rollNumber?: string | null;
 };
 
 export function BookingClient({
@@ -310,8 +313,13 @@ export function BookingClient({
   const [rejectMsg, setRejectMsg] = useState<string | null>(null);
   const [forOther, setForOther] = useState(editBooking ? editBooking.type === "ON_BEHALF" : false);
   const [forQuery, setForQuery] = useState("");
-  const [forResults, setForResults] = useState<{ id: string; username: string; name: string }[]>([]);
+  const [forResults, setForResults] = useState<
+    { id: string; username: string; name: string; primaryRole?: string | null }[]
+  >([]);
   const [forUserId, setForUserId] = useState(editBooking?.forUserId ?? "");
+  // Role of the user a block is for — a SCHOLAR needs roll number + admission
+  // category on a lab booking, exactly like a scholar booking for themselves.
+  const [forPrimaryRole, setForPrimaryRole] = useState<string | null>(null);
 
   // On a facility that requires an approval, only an app admin or one of its
   // approval people books a slot directly — their own slot, and the slot they
@@ -344,6 +352,9 @@ export function BookingClient({
   >([]);
   const [department, setDepartment] = useState(editBooking?.department ?? "");
   const [departments, setDepartments] = useState<string[]>([]);
+  // SCHOLAR lab bookings only: the scholar's roll number and admission category.
+  const [admissionCategory, setAdmissionCategory] = useState(editBooking?.admissionCategory ?? "");
+  const [rollNumber, setRollNumber] = useState(editBooking?.rollNumber ?? "");
   const [purpose, setPurpose] = useState(editBooking?.purpose ?? "");
   const [isPublicPurpose, setIsPublicPurpose] = useState(editBooking?.isPublicPurpose ?? false);
   // On an AV-required facility the AV technician is always requested, and the
@@ -622,6 +633,10 @@ export function BookingClient({
   });
   const isOnBehalf = forOther;
   const needPurpose = anyLong || isOnBehalf;
+  // A lab booking for a scholar — the booker themselves, or the person a block
+  // is for — must also state the scholar's roll number and admission category.
+  const scholarBooker =
+    isLabFacility && (me.primaryRole === "SCHOLAR" || (isOnBehalf && forPrimaryRole === "SCHOLAR"));
 
   // The one-slot form saves a slot when creating a booking and replaces the
   // slot when editing one. Naming the action once ("Save Slot") keeps the
@@ -719,6 +734,13 @@ export function BookingClient({
       department,
     });
     if (labMissing) return labMissing;
+    if (scholarBooker) {
+      const scholarMissing = scholarLabDetailsError(true, "SCHOLAR", {
+        admissionCategory,
+        rollNumber,
+      });
+      if (scholarMissing) return scholarMissing;
+    }
     return null;
   }
 
@@ -758,6 +780,10 @@ export function BookingClient({
             payload.set("supervisorUsername", supervisor?.username ?? "");
             payload.set("supervisorName", supervisor?.name ?? "");
             payload.set("department", department);
+            if (scholarBooker) {
+              payload.set("admissionCategory", admissionCategory);
+              payload.set("rollNumber", rollNumber);
+            }
           }
           if (pdfClear && !pdf) payload.set("pdfClear", "1");
           if (pdf) payload.set("pdf", pdf, pdf.name);
@@ -783,6 +809,7 @@ export function BookingClient({
                         supervisorUsername: supervisor?.username ?? "",
                         supervisorName: supervisor?.name ?? "",
                         department,
+                        ...(scholarBooker ? { admissionCategory, rollNumber } : {}),
                       }
                     : {}),
                 }),
@@ -849,6 +876,10 @@ export function BookingClient({
         form.set("supervisorUsername", supervisor?.username ?? "");
         form.set("supervisorName", supervisor?.name ?? "");
         form.set("department", department);
+        if (scholarBooker) {
+          form.set("admissionCategory", admissionCategory);
+          form.set("rollNumber", rollNumber);
+        }
       }
       if (isOnBehalf && forUserId) form.set("forUserId", forUserId);
       if (pdf) form.set("pdf", pdf, pdf.name);
@@ -914,6 +945,7 @@ export function BookingClient({
     setPdfName("");
     setPdfClear(false);
     setForUserId("");
+    setForPrimaryRole(null);
     setForQuery("");
     setForResults([]);
     applyRanges([]);
@@ -1318,10 +1350,36 @@ export function BookingClient({
                   )}
                 </div>
 
+                {scholarBooker && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="grid gap-1 max-w-md">
+                      <Label htmlFor="lab-roll">Roll number</Label>
+                      <Input
+                        id="lab-roll"
+                        value={rollNumber}
+                        placeholder="Scholar roll number"
+                        onChange={(e) => setRollNumber(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-1 max-w-md">
+                      <Label htmlFor="lab-adm-category">Admission category</Label>
+                      <Input
+                        id="lab-adm-category"
+                        value={admissionCategory}
+                        placeholder="e.g. GENERAL, OBC, SC, ST"
+                        onChange={(e) => setAdmissionCategory(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                )}
+
                 <p className="text-[11px] text-sky-900">
                   The supervisor is the faculty member responsible for the lab session; the department
                   is whose work it belongs to. Both are shown to this facility&apos;s approval people
                   and on the bookings dashboard, and both appear in the CSV export.
+                  {scholarBooker
+                    ? " As this is a scholar's booking, the roll number and admission category are required too."
+                    : ""}
                 </p>
               </div>
             )}
@@ -1336,6 +1394,7 @@ export function BookingClient({
                   onChange={(e) => {
                     setForQuery(e.target.value);
                     setForUserId("");
+                    setForPrimaryRole(null);
                     void searchUsers(e.target.value);
                   }}
                 />
@@ -1350,6 +1409,7 @@ export function BookingClient({
                         className="justify-start text-xs"
                         onClick={() => {
                           setForUserId(u.id);
+                          setForPrimaryRole(u.primaryRole ?? null);
                           setForQuery(`${u.name} (@${u.username})`);
                           setForResults([]);
                         }}

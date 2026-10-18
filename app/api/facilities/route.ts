@@ -219,6 +219,14 @@ export async function POST(request: NextRequest) {
   }
 
   const hasAv = Boolean((body as { hasAvSupport?: unknown }).hasAvSupport);
+  const isLab = Boolean((body as { isLab?: unknown }).isLab);
+  // Facility type is mutually exclusive: LAB, AV or neither (a plain facility).
+  if (hasAv && isLab) {
+    return NextResponse.json(
+      { error: "A facility is either a LAB facility or an AV facility — not both" },
+      { status: 400 }
+    );
+  }
   if (!hasAv && (body as { avSupportRequired?: unknown }).avSupportRequired) {
     return NextResponse.json(
       {
@@ -244,7 +252,11 @@ export async function POST(request: NextRequest) {
       allowedRoles,
       maxMinutes,
       hasAvSupport: hasAv,
-      isLab: Boolean((body as { isLab?: unknown }).isLab),
+      isLab,
+      active:
+        (body as { active?: unknown }).active === undefined
+          ? true
+          : Boolean((body as { active: unknown }).active),
       // AV support can only be *required* on an AV facility.
       avSupportRequired: hasAv && Boolean((body as { avSupportRequired?: unknown }).avSupportRequired),
       ...(availability && availability.ok ? availability.value : {}),
@@ -322,6 +334,23 @@ export async function PATCH(request: NextRequest) {
     data.avSupportRequired = b.avSupportRequired;
   } else if (b.hasAvSupport === false) {
     data.avSupportRequired = false;
+  }
+  // Facility type is mutually exclusive: LAB, AV or neither. Reject any change
+  // that would leave the facility both a LAB and an AV facility at once.
+  if (typeof b.isLab === "boolean" || typeof b.hasAvSupport === "boolean") {
+    const current = await prisma.facility.findUnique({
+      where: { id },
+      select: { isLab: true, hasAvSupport: true },
+    });
+    if (!current) return NextResponse.json({ error: "Facility not found" }, { status: 404 });
+    const finalLab = typeof b.isLab === "boolean" ? b.isLab : current.isLab;
+    const finalAv = typeof b.hasAvSupport === "boolean" ? b.hasAvSupport : current.hasAvSupport;
+    if (finalLab && finalAv) {
+      return NextResponse.json(
+        { error: "A facility is either a LAB facility or an AV facility — not both" },
+        { status: 400 }
+      );
+    }
   }
   // The bookable window / closed days may also be set from the admin form; the
   // approval people use /api/facilities/availability instead.
