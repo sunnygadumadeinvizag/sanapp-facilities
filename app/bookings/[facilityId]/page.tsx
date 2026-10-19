@@ -223,7 +223,7 @@ export default async function BookPage({
         />
       </div>
 
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+      <div className="mb-2 flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
         <div className="min-w-0">
           <h1 className="iipe-page-title">{editBooking ? `Edit booking — ${facility.name}` : `Book ${facility.name}`}</h1>
           <p className="iipe-page-sub">
@@ -232,7 +232,7 @@ export default async function BookPage({
             {facility.description ? ` · ${facility.description}` : ""}
           </p>
         </div>
-        <div className="flex flex-col items-end gap-1">
+        <div className="flex flex-col items-end gap-1 pt-0 sm:pt-[26px]">
           <Badge variant={eligible ? "default" : "secondary"}>
             {eligible ? "You can book this facility" : "Restricted to specific roles"}
           </Badge>
@@ -256,13 +256,14 @@ export default async function BookPage({
               LAB facility
             </Badge>
           )}
-          {!isFullDay(availability) && (
-            <span className="text-right text-xs text-muted-foreground">
-              {availabilityLines(availability).join(" · ")}
-            </span>
-          )}
         </div>
       </div>
+
+      {!isFullDay(availability) && (
+        <p className="mb-4 text-xs text-muted-foreground">
+          {availabilityLines(availability).join(" · ")}
+        </p>
+      )}
 
       <BookingClient
         facility={{
