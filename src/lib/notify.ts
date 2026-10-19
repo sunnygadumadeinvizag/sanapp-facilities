@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { istDateKey } from "@/lib/ist";
 import type { Prisma } from "@/generated/prisma/client";
 
 /**
@@ -77,17 +78,27 @@ export type ChangeEntry = { field: string; before: string; after: string };
 /* -------------------------------------------------------------------------- */
 
 /**
- * The next human-readable booking reference, e.g. "FACLTY-BKG-R1".
+ * The next human-readable booking reference, e.g. "FACLTY-BKG-19102026-R41".
  *
- * The number comes from the `booking_code_seq` Postgres sequence instead of a
- * MAX()/count query, so two bookings created at the same instant can never be
- * handed the same reference. Called inside the transaction that inserts the
- * slot, so a rolled-back booking also releases its number.
+ * The reference carries the IST day the booking was made and a number that
+ * restarts each day, so the day a booking belongs to is readable at a glance
+ * and the counter never runs away. The number comes from an atomic upsert on
+ * the per-day counter row instead of a MAX()/count query, so two bookings
+ * created at the same instant can never be handed the same reference. Called
+ * inside the transaction that inserts the slot, so a rolled-back booking also
+ * releases its number.
  */
 export async function nextBookingCode(tx: Prisma.TransactionClient): Promise<string> {
-  const [row] = await tx.$queryRaw<{ n: bigint }[]>`SELECT nextval('booking_code_seq') AS n`;
-  if (!row) throw new Error("booking_code_seq returned no value");
-  return `FACLTY-BKG-R${row.n}`;
+  const [y, m, d] = istDateKey().split("-");
+  const day = `${d}${m}${y}`;
+  const [row] = await tx.$queryRaw<{ n: number }[]>`
+    INSERT INTO "BookingCodeCounter" ("day", "n")
+    VALUES (${day}, 1)
+    ON CONFLICT ("day") DO UPDATE SET "n" = "BookingCodeCounter"."n" + 1
+    RETURNING "n"
+  `;
+  if (!row) throw new Error("BookingCodeCounter returned no value");
+  return `FACLTY-BKG-${day}-R${String(row.n).padStart(2, "0")}`;
 }
 
 /** The booking's display code: the shared batch code, or the slot id fallback. */

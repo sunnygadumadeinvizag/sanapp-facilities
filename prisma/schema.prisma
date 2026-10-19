@@ -367,3 +367,12 @@ model DashboardConfig {
   allowedUsernames String[] @default([])
   updatedAt        DateTime @updatedAt
 }
+
+// Per-IST-day counter behind the human-readable booking references. The code
+// carries its booking day, so the number restarts every day:
+// FACLTY-BKG-DDMMYYYY-R01, -R02, ... and tomorrow -R01 again. The upsert is
+// atomic, so two bookings created at the same instant never share a number.
+model BookingCodeCounter {
+  day String @id
+  n   Int    @default(0)
+}
