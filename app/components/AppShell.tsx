@@ -30,6 +30,7 @@ export async function AppShell({
     | "home"
     | "my-bookings"
     | "approvals"
+    | "availability"
     | "admin"
     | "admin-buildings"
     | "admin-facilities"
@@ -76,6 +77,13 @@ export async function AppShell({
             label: waitingApprovals > 0 ? `Approvals (${waitingApprovals})` : "Approvals",
             href: "/approvals",
             active: active === "approvals",
+          },
+          // Same people, same scope as Approvals: the ones who run a facility
+          // set its bookable hours, its closed days and its booking caps.
+          {
+            label: "Facility Availability",
+            href: "/availability",
+            active: active === "availability",
           },
         ]
       : []),
