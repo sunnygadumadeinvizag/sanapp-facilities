@@ -42,6 +42,11 @@ export type SsoUser = {
   primaryRole: string;
   /** The person's department in the central registry, when they have one. */
   departmentName: string | null;
+  /** Scholar details from the central registry (NULL for everybody else). */
+  rollNo: string | null;
+  natureOfAdmission: string | null;
+  /** The registry calls the scholar's chosen specialization "discipline". */
+  discipline: string | null;
   isActive: boolean;
 };
 
@@ -72,6 +77,9 @@ export async function listSsoUsers(): Promise<SsoUser[]> {
       email: u.email ?? null,
       primaryRole: u.primaryRole || "",
       departmentName: u.department?.name ?? null,
+      rollNo: u.rollNo ?? null,
+      natureOfAdmission: u.natureOfAdmission ?? null,
+      discipline: u.discipline ?? null,
       isActive: u.isActive !== false,
     }));
     ssoUsersCache = { at: Date.now(), users };

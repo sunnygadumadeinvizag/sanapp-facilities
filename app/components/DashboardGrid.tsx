@@ -24,9 +24,10 @@ export type DashSlot = {
   isLab: boolean;
   supervisor: string | null;
   department: string | null;
-  /** SCHOLAR lab bookings: the scholar's roll number and admission category. */
-  admissionCategory: string | null;
+  /** SCHOLAR lab bookings: the scholar details taken from the registry. */
   rollNumber: string | null;
+  natureOfAdmission: string | null;
+  specialization: string | null;
   bookedBy: string;
 };
 
@@ -260,16 +261,26 @@ export function DashboardGrid({
                                       {s.department ? `Dept: ${s.department}` : null}
                                     </div>
                                   )}
-                                  {(s.rollNumber || s.admissionCategory) && (
+                                  {(s.rollNumber || s.natureOfAdmission || s.specialization) && (
                                     <div
                                       className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted-foreground"
-                                      title={`${s.rollNumber ?? ""}${
-                                        s.rollNumber && s.admissionCategory ? " · " : ""
-                                      }${s.admissionCategory ?? ""}`}
+                                      title={[
+                                        s.rollNumber ? `Roll: ${s.rollNumber}` : null,
+                                        s.natureOfAdmission
+                                          ? `Nature of admission: ${s.natureOfAdmission}`
+                                          : null,
+                                        s.specialization ? `Specialization: ${s.specialization}` : null,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(" · ")}
                                     >
                                       {s.rollNumber ? `Roll: ${s.rollNumber}` : null}
-                                      {s.rollNumber && s.admissionCategory ? " · " : null}
-                                      {s.admissionCategory ? `Category: ${s.admissionCategory}` : null}
+                                      {s.rollNumber && (s.natureOfAdmission || s.specialization)
+                                        ? " · "
+                                        : null}
+                                      {s.natureOfAdmission ? `Nature: ${s.natureOfAdmission}` : null}
+                                      {s.natureOfAdmission && s.specialization ? " · " : null}
+                                      {s.specialization ? `Specialization: ${s.specialization}` : null}
                                     </div>
                                   )}
                                   {s.purpose && (

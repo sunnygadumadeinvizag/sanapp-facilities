@@ -62,10 +62,11 @@ const BOOKING_LIST_SELECT = {
   supervisorUsername: true,
   supervisorName: true,
   department: true,
-  // LAB facilities + SCHOLAR bookers: the scholar's roll number and admission
-  // category, treated like the rest of a booking's detail (hidden from others).
-  admissionCategory: true,
+  // LAB facilities + SCHOLAR bookers: the scholar details taken from the central
+  // registry, treated like the rest of a booking's detail (hidden from others).
   rollNumber: true,
+  natureOfAdmission: true,
+  specialization: true,
   userId: true,
   forUserId: true,
   facility: {
@@ -191,8 +192,9 @@ async function formatBookingForViewer(
     supervisorUsername: canViewPrivate ? (b.supervisorUsername ?? null) : null,
     supervisorName: canViewPrivate ? (b.supervisorName ?? null) : null,
     department: canViewPrivate ? (b.department ?? null) : null,
-    admissionCategory: canViewPrivate ? (b.admissionCategory ?? null) : null,
     rollNumber: canViewPrivate ? (b.rollNumber ?? null) : null,
+    natureOfAdmission: canViewPrivate ? (b.natureOfAdmission ?? null) : null,
+    specialization: canViewPrivate ? (b.specialization ?? null) : null,
     /** True for a facility marked "LAB facility" (public: it is a label only). */
     isLab: Boolean(b.facility.isLab),
     /** True when the viewer is seeing a redacted slot (time + booker + state). */
@@ -446,8 +448,9 @@ export async function POST(request: NextRequest) {
       "supervisorUsername",
       "supervisorName",
       "department",
-      "admissionCategory",
       "rollNumber",
+      "natureOfAdmission",
+      "specialization",
     ]) {
       const v = form.get(key);
       if (v !== null && v !== undefined && typeof v === "string") body[key] = v;
@@ -553,11 +556,12 @@ export async function POST(request: NextRequest) {
   });
   if (labError) return bad(labError);
 
-  // LAB facilities booked by a SCHOLAR must also name the scholar's roll number
-  // and admission category. Parsed here; validated once the effective booker
-  // (self or the person a slot is blocked for) is known.
-  const scholarAdmissionCategory = cleanText(body.admissionCategory, 120);
+  // LAB facilities booked by a SCHOLAR carry the details already held in the
+  // central registry. Parsed here; validated once the effective booker (self or
+  // the person a slot is blocked for) is known.
   const scholarRollNumber = cleanText(body.rollNumber, 60);
+  const scholarNatureOfAdmission = cleanText(body.natureOfAdmission, 120);
+  const scholarSpecialization = cleanText(body.specialization, 120);
 
   // POC = POC of this facility OR of its building (or an app ADMIN).
   const access = await facilityAccess(facilityId, user.id, user.role);
@@ -621,7 +625,6 @@ export async function POST(request: NextRequest) {
     effectivePrimaryRole = forUser?.primaryRole ?? null;
   }
   const scholarError = scholarLabDetailsError(facility.isLab, effectivePrimaryRole, {
-    admissionCategory: scholarAdmissionCategory,
     rollNumber: scholarRollNumber,
   });
   if (scholarError) return bad(scholarError);
@@ -743,10 +746,13 @@ export async function POST(request: NextRequest) {
           supervisorUsername: facility.isLab ? labSupervisorUsername : null,
           supervisorName: facility.isLab ? labSupervisorName : null,
           department: facility.isLab ? labDepartment : null,
-          // LAB facilities + SCHOLAR bookers only: the scholar's roll number
-          // and admission category.
-          admissionCategory: facility.isLab && isScholar(effectivePrimaryRole) ? scholarAdmissionCategory : null,
+          // LAB facilities + SCHOLAR bookers only: the scholar details from the
+          // central registry.
           rollNumber: facility.isLab && isScholar(effectivePrimaryRole) ? scholarRollNumber : null,
+          natureOfAdmission:
+            facility.isLab && isScholar(effectivePrimaryRole) ? scholarNatureOfAdmission : null,
+          specialization:
+            facility.isLab && isScholar(effectivePrimaryRole) ? scholarSpecialization : null,
           // Buffer -> Uint8Array<ArrayBuffer> for Prisma Bytes.
           pdf: pdf ? (() => { const b = new Uint8Array(pdf.byteLength); b.set(pdf); return b; })() : undefined,
           pdfName: pdfName ?? undefined,
@@ -842,8 +848,9 @@ export async function PATCH(request: NextRequest) {
       "supervisorUsername",
       "supervisorName",
       "department",
-      "admissionCategory",
       "rollNumber",
+      "natureOfAdmission",
+      "specialization",
     ]) {
       const v = form.get(key);
       if (v !== null && v !== undefined && typeof v === "string") body[key] = v;
@@ -968,11 +975,13 @@ export async function PATCH(request: NextRequest) {
   });
   if (labPatchError) return bad(labPatchError);
 
-  // A scholar's lab booking keeps its roll number and admission category too.
-  const scholarPatchCategory =
-    body.admissionCategory === undefined ? undefined : cleanText(body.admissionCategory, 120);
+  // A scholar's lab booking keeps the registry details too.
   const scholarPatchRoll =
     body.rollNumber === undefined ? undefined : cleanText(body.rollNumber, 60);
+  const scholarPatchNature =
+    body.natureOfAdmission === undefined ? undefined : cleanText(body.natureOfAdmission, 120);
+  const scholarPatchSpecialization =
+    body.specialization === undefined ? undefined : cleanText(body.specialization, 120);
   let patchPrimaryRole: string | null = user.primaryRole ?? null;
   if (booking.type === "ON_BEHALF" && booking.forUserId) {
     const forUser = await prisma.appUser.findUnique({
@@ -982,7 +991,6 @@ export async function PATCH(request: NextRequest) {
     patchPrimaryRole = forUser?.primaryRole ?? null;
   }
   const scholarPatchError = scholarLabDetailsError(facility.isLab, patchPrimaryRole, {
-    admissionCategory: scholarPatchCategory ?? booking.admissionCategory,
     rollNumber: scholarPatchRoll ?? booking.rollNumber,
   });
   if (scholarPatchError) return bad(scholarPatchError);
@@ -1031,8 +1039,11 @@ export async function PATCH(request: NextRequest) {
         ...(labPatchUsername !== undefined ? { supervisorUsername: labPatchUsername } : {}),
         ...(labPatchName !== undefined ? { supervisorName: labPatchName } : {}),
         ...(labPatchDepartment !== undefined ? { department: labPatchDepartment } : {}),
-        ...(scholarPatchCategory !== undefined ? { admissionCategory: scholarPatchCategory } : {}),
         ...(scholarPatchRoll !== undefined ? { rollNumber: scholarPatchRoll } : {}),
+        ...(scholarPatchNature !== undefined ? { natureOfAdmission: scholarPatchNature } : {}),
+        ...(scholarPatchSpecialization !== undefined
+          ? { specialization: scholarPatchSpecialization }
+          : {}),
       };
       if (needsApproval && booking.status === "CONFIRMED") {
         // Back to waiting: the slot is held again and the approval people

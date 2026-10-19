@@ -49,7 +49,20 @@ export async function GET(request: NextRequest) {
             u.name.toLowerCase().includes(q)
         )
       : users;
-    return NextResponse.json({ users: filtered.slice(0, 25) });
+    // Scholar fields travel too: choosing a scholar for a blocked LAB slot fills
+    // the booking's roll number, department and admission details automatically.
+    return NextResponse.json({
+      users: filtered.slice(0, 25).map((u) => ({
+        id: u.id,
+        username: u.username,
+        name: u.name,
+        primaryRole: u.primaryRole,
+        departmentName: u.departmentName,
+        rollNo: u.rollNo,
+        natureOfAdmission: u.natureOfAdmission,
+        discipline: u.discipline,
+      })),
+    });
   }
 
   // kind === "all" — every person the app administrator may add to the

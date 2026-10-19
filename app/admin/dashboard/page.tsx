@@ -85,8 +85,9 @@ export default async function FacilitiesDashboardPage({
             supervisorName: true,
             supervisorUsername: true,
             department: true,
-            admissionCategory: true,
             rollNumber: true,
+            natureOfAdmission: true,
+            specialization: true,
             facility: { select: { isLab: true } },
             user: { select: { name: true, username: true } },
             forUser: { select: { name: true, username: true } },
@@ -141,10 +142,11 @@ export default async function FacilitiesDashboardPage({
           : b.supervisorName
         : null,
       department: b.department,
-      // A scholar's lab session also carries the roll number and admission
-      // category, so the watchers can tell which scholar the slot belongs to.
-      admissionCategory: b.admissionCategory,
+      // A scholar's lab session also carries the registry details, so the
+      // watchers can tell which scholar the slot belongs to.
       rollNumber: b.rollNumber,
+      natureOfAdmission: b.natureOfAdmission,
+      specialization: b.specialization,
       bookedBy: b.forUser ? `${b.forUser.name} (@${b.forUser.username})` : b.user ? `${b.user.name} (@${b.user.username})` : "—",
     }));
 

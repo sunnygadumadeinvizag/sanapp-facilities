@@ -240,12 +240,16 @@ model Booking {
   supervisorUsername String?
   supervisorName     String?
   department         String?
-  // A SCHOLAR booking a LAB facility must also state the admission category
-  // (funded / self-funded / project / …) and the scholar's roll number. Free
-  // text, so the institute can word its own categories. NULL for every other
-  // booking — AV and general facilities never ask for them.
-  admissionCategory  String?
+  // A SCHOLAR booking a LAB facility also carries the scholar details from the
+  // central registry: roll number, nature of admission and choice of
+  // specialization. They are snapshotted so the record stays readable if the
+  // registry entry changes later. NULL for every other booking.
   rollNumber         String?
+  natureOfAdmission  String?
+  specialization     String?
+  // Legacy column: admission category is no longer collected. Kept so existing
+  // bookings retain whatever was recorded before the field was dropped.
+  admissionCategory  String?
   createdAt  DateTime      @default(now())
   // Audit trail — life-cycle events (created / edited / cancelled).
   events      BookingEvent[]

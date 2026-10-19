@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { istDateKey, istMinute, SLOT_MAX_MINUTES } from "@/lib/ist";
 import { capLabel } from "@/lib/limits";
 import { facilityAccess } from "@/lib/approval";
+import { listSsoUsers } from "@/lib/auth";
 import { availabilityLines, dayWindowsFromDb, isFullDay } from "@/lib/availability";
 import { AvailabilityEditor } from "../../components/AvailabilityEditor";
 
@@ -77,8 +78,10 @@ export default async function BookPage({
     supervisorUsername: string | null;
     supervisorName: string | null;
     department: string | null;
-    admissionCategory: string | null;
     rollNumber: string | null;
+    natureOfAdmission: string | null;
+    specialization: string | null;
+    forPrimaryRole: string | null;
   } | null = null;
   if (editId) {
     const b = await prisma.booking.findUnique({
@@ -102,8 +105,10 @@ export default async function BookPage({
         supervisorUsername: true,
         supervisorName: true,
         department: true,
-        admissionCategory: true,
         rollNumber: true,
+        natureOfAdmission: true,
+        specialization: true,
+        forUser: { select: { primaryRole: true } },
       },
     });
     if (
@@ -128,8 +133,10 @@ export default async function BookPage({
         supervisorUsername: b.supervisorUsername,
         supervisorName: b.supervisorName,
         department: b.department,
-        admissionCategory: b.admissionCategory,
         rollNumber: b.rollNumber,
+        natureOfAdmission: b.natureOfAdmission,
+        specialization: b.specialization,
+        forPrimaryRole: b.forUser?.primaryRole ?? null,
       };
     }
   }
@@ -187,6 +194,21 @@ export default async function BookPage({
     isAdmin ||
     facility.allowedRoles.length === 0 ||
     (effectivePrimaryRole ? facility.allowedRoles.includes(effectivePrimaryRole) : false);
+
+  // A SCHOLAR's own lab bookings carry the registry details automatically, so
+  // the form only has to ask for the supervisor.
+  const selfSso =
+    effectivePrimaryRole === "SCHOLAR"
+      ? (await listSsoUsers()).find((u) => u.username === me.username) ?? null
+      : null;
+  const scholarProfile = selfSso
+    ? {
+        rollNumber: selfSso.rollNo,
+        department: selfSso.departmentName,
+        natureOfAdmission: selfSso.natureOfAdmission,
+        specialization: selfSso.discipline,
+      }
+    : null;
 
   return (
     <AppShell me={me} active="home">
@@ -258,6 +280,7 @@ export default async function BookPage({
           name: me.name,
           primaryRole: effectivePrimaryRole,
           role: local?.role ?? "USER",
+          scholarProfile,
           // POC of THIS facility or its building (or an app ADMIN) — the
           // per-building / per-facility POC model.
           isPocHere: isAdmin || access.isPoc,

@@ -86,10 +86,20 @@ export type SlotItem = {
   status?: string;
 };
 
+/** A scholar's registry details, filled in automatically on a LAB booking. */
+export type ScholarProfile = {
+  rollNumber: string | null;
+  department: string | null;
+  natureOfAdmission: string | null;
+  specialization: string | null;
+};
+
 export type BookingMe = {
   name: string;
   primaryRole: string;
   role: string;
+  /** Present for a SCHOLAR: roll number, department and admission details. */
+  scholarProfile?: ScholarProfile | null;
   /** POC of this facility or its building (or an app ADMIN). */
   isPocHere: boolean;
   /**
@@ -191,9 +201,12 @@ export type EditBookingInfo = {
   supervisorUsername?: string | null;
   supervisorName?: string | null;
   department?: string | null;
-  /** SCHOLAR lab bookings: the scholar's roll number and admission category. */
-  admissionCategory?: string | null;
+  /** SCHOLAR lab bookings: the registry details stored on the booking. */
   rollNumber?: string | null;
+  natureOfAdmission?: string | null;
+  specialization?: string | null;
+  /** Primary role of the person an ON_BEHALF booking was made for. */
+  forPrimaryRole?: string | null;
 };
 
 export function BookingClient({
@@ -314,12 +327,24 @@ export function BookingClient({
   const [forOther, setForOther] = useState(editBooking ? editBooking.type === "ON_BEHALF" : false);
   const [forQuery, setForQuery] = useState("");
   const [forResults, setForResults] = useState<
-    { id: string; username: string; name: string; primaryRole?: string | null }[]
+    {
+      id: string;
+      username: string;
+      name: string;
+      primaryRole?: string | null;
+      departmentName?: string | null;
+      rollNo?: string | null;
+      natureOfAdmission?: string | null;
+      discipline?: string | null;
+    }[]
   >([]);
   const [forUserId, setForUserId] = useState(editBooking?.forUserId ?? "");
-  // Role of the user a block is for — a SCHOLAR needs roll number + admission
-  // category on a lab booking, exactly like a scholar booking for themselves.
-  const [forPrimaryRole, setForPrimaryRole] = useState<string | null>(null);
+  // Role and registry details of the person a block is for — a SCHOLAR's lab
+  // booking carries the same details whether booked for themselves or by a POC.
+  const [forPrimaryRole, setForPrimaryRole] = useState<string | null>(
+    editBooking?.forPrimaryRole ?? null
+  );
+  const [forProfile, setForProfile] = useState<ScholarProfile | null>(null);
 
   // On a facility that requires an approval, only an app admin or one of its
   // approval people books a slot directly — their own slot, and the slot they
@@ -352,9 +377,6 @@ export function BookingClient({
   >([]);
   const [department, setDepartment] = useState(editBooking?.department ?? "");
   const [departments, setDepartments] = useState<string[]>([]);
-  // SCHOLAR lab bookings only: the scholar's roll number and admission category.
-  const [admissionCategory, setAdmissionCategory] = useState(editBooking?.admissionCategory ?? "");
-  const [rollNumber, setRollNumber] = useState(editBooking?.rollNumber ?? "");
   const [purpose, setPurpose] = useState(editBooking?.purpose ?? "");
   const [isPublicPurpose, setIsPublicPurpose] = useState(editBooking?.isPublicPurpose ?? false);
   // On an AV-required facility the AV technician is always requested, and the
@@ -634,9 +656,36 @@ export function BookingClient({
   const isOnBehalf = forOther;
   const needPurpose = anyLong || isOnBehalf;
   // A lab booking for a scholar — the booker themselves, or the person a block
-  // is for — must also state the scholar's roll number and admission category.
+  // is for — carries the scholar's registry details automatically. Only the
+  // supervisor is chosen on the form.
   const scholarBooker =
     isLabFacility && (me.primaryRole === "SCHOLAR" || (isOnBehalf && forPrimaryRole === "SCHOLAR"));
+
+  // Details stored on the booking being edited win over the registry, so an
+  // old record stays exactly as it was recorded.
+  const storedScholarProfile: ScholarProfile | null =
+    editBooking &&
+    (editBooking.rollNumber ||
+      editBooking.department ||
+      editBooking.natureOfAdmission ||
+      editBooking.specialization)
+      ? {
+          rollNumber: editBooking.rollNumber ?? null,
+          department: editBooking.department ?? null,
+          natureOfAdmission: editBooking.natureOfAdmission ?? null,
+          specialization: editBooking.specialization ?? null,
+        }
+      : null;
+  const scholarProfile: ScholarProfile | null = scholarBooker
+    ? isOnBehalf
+      ? (forProfile ?? storedScholarProfile)
+      : (storedScholarProfile ?? me.scholarProfile ?? null)
+    : null;
+  const scholarRollNumber = scholarProfile?.rollNumber ?? "";
+  const scholarDepartment = scholarProfile?.department ?? "";
+  // A scholar's department comes from the registry and is not editable; every
+  // other lab booker still chooses the department the work belongs to.
+  const bookingDepartment = scholarBooker ? scholarDepartment || department : department;
 
   // The one-slot form saves a slot when creating a booking and replaces the
   // slot when editing one. Naming the action once ("Save Slot") keeps the
@@ -731,13 +780,12 @@ export function BookingClient({
     const labMissing = labDetailsError(isLabFacility, {
       supervisorUsername: supervisor?.username,
       supervisorName: supervisor?.name,
-      department,
+      department: bookingDepartment,
     });
     if (labMissing) return labMissing;
     if (scholarBooker) {
       const scholarMissing = scholarLabDetailsError(true, "SCHOLAR", {
-        admissionCategory,
-        rollNumber,
+        rollNumber: scholarRollNumber,
       });
       if (scholarMissing) return scholarMissing;
     }
@@ -779,10 +827,11 @@ export function BookingClient({
           if (isLabFacility) {
             payload.set("supervisorUsername", supervisor?.username ?? "");
             payload.set("supervisorName", supervisor?.name ?? "");
-            payload.set("department", department);
+            payload.set("department", bookingDepartment);
             if (scholarBooker) {
-              payload.set("admissionCategory", admissionCategory);
-              payload.set("rollNumber", rollNumber);
+              payload.set("rollNumber", scholarProfile?.rollNumber ?? "");
+              payload.set("natureOfAdmission", scholarProfile?.natureOfAdmission ?? "");
+              payload.set("specialization", scholarProfile?.specialization ?? "");
             }
           }
           if (pdfClear && !pdf) payload.set("pdfClear", "1");
@@ -808,8 +857,14 @@ export function BookingClient({
                     ? {
                         supervisorUsername: supervisor?.username ?? "",
                         supervisorName: supervisor?.name ?? "",
-                        department,
-                        ...(scholarBooker ? { admissionCategory, rollNumber } : {}),
+                        department: bookingDepartment,
+                        ...(scholarBooker
+                          ? {
+                              rollNumber: scholarProfile?.rollNumber ?? "",
+                              natureOfAdmission: scholarProfile?.natureOfAdmission ?? "",
+                              specialization: scholarProfile?.specialization ?? "",
+                            }
+                          : {}),
                       }
                     : {}),
                 }),
@@ -875,10 +930,11 @@ export function BookingClient({
       if (isLabFacility) {
         form.set("supervisorUsername", supervisor?.username ?? "");
         form.set("supervisorName", supervisor?.name ?? "");
-        form.set("department", department);
+        form.set("department", bookingDepartment);
         if (scholarBooker) {
-          form.set("admissionCategory", admissionCategory);
-          form.set("rollNumber", rollNumber);
+          form.set("rollNumber", scholarProfile?.rollNumber ?? "");
+          form.set("natureOfAdmission", scholarProfile?.natureOfAdmission ?? "");
+          form.set("specialization", scholarProfile?.specialization ?? "");
         }
       }
       if (isOnBehalf && forUserId) form.set("forUserId", forUserId);
@@ -946,6 +1002,7 @@ export function BookingClient({
     setPdfClear(false);
     setForUserId("");
     setForPrimaryRole(null);
+    setForProfile(null);
     setForQuery("");
     setForResults([]);
     applyRanges([]);
@@ -1276,7 +1333,9 @@ export function BookingClient({
                   >
                     LAB
                   </Badge>
-                  Lab session details — both are required
+                  {scholarBooker
+                    ? "Lab session details — the supervisor is required"
+                    : "Lab session details — both are required"}
                 </div>
 
                 <div className="grid gap-1 max-w-md">
@@ -1307,7 +1366,11 @@ export function BookingClient({
                             setSupervisorResults([]);
                             // The supervisor's own department is usually the one
                             // the session belongs to, so offer it as the default.
-                            if (u.departmentName) setDepartment((prev) => prev || u.departmentName!);
+                            // A scholar's department comes from the registry and
+                            // is never overridden.
+                            if (u.departmentName && !scholarBooker) {
+                              setDepartment((prev) => prev || u.departmentName!);
+                            }
                           }}
                         >
                           {u.name} (@{u.username})
@@ -1325,51 +1388,63 @@ export function BookingClient({
                   ) : null}
                 </div>
 
-                <div className="grid gap-1 max-w-md">
-                  <Label htmlFor="lab-department">Department</Label>
-                  {departments.length > 0 ? (
-                    <Select value={department} onValueChange={setDepartment}>
-                      <SelectTrigger id="lab-department">
-                        <SelectValue placeholder="Choose the department" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {departments.map((d) => (
-                          <SelectItem key={d} value={d}>
-                            {d}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Input
-                      id="lab-department"
-                      value={department}
-                      placeholder="Type the department"
-                      onChange={(e) => setDepartment(e.target.value)}
-                    />
-                  )}
-                </div>
-
-                {scholarBooker && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="grid gap-1 max-w-md">
-                      <Label htmlFor="lab-roll">Roll number</Label>
+                {scholarBooker ? (
+                  <div className="grid gap-2 rounded-md border border-sky-200 bg-white/70 p-3 sm:grid-cols-2">
+                    {[
+                      { id: "lab-roll", label: "Roll number", value: scholarProfile?.rollNumber },
+                      { id: "lab-department", label: "Department", value: scholarProfile?.department },
+                      {
+                        id: "lab-nature",
+                        label: "Nature of admission",
+                        value: scholarProfile?.natureOfAdmission,
+                      },
+                      {
+                        id: "lab-specialization",
+                        label: "Choice of specialization",
+                        value: scholarProfile?.specialization,
+                      },
+                    ].map((f) => (
+                      <div key={f.id} className="grid gap-1">
+                        <Label htmlFor={f.id} className="text-[11px] text-sky-900">
+                          {f.label}
+                        </Label>
+                        <Input
+                          id={f.id}
+                          value={f.value || "—"}
+                          readOnly
+                          tabIndex={-1}
+                          className="h-8 bg-muted/60 text-xs"
+                        />
+                      </div>
+                    ))}
+                    <p className="text-[11px] text-sky-900 sm:col-span-2">
+                      These details come from the central registry and cannot be edited here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid gap-1 max-w-md">
+                    <Label htmlFor="lab-department">Department</Label>
+                    {departments.length > 0 ? (
+                      <Select value={department} onValueChange={setDepartment}>
+                        <SelectTrigger id="lab-department">
+                          <SelectValue placeholder="Choose the department" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {departments.map((d) => (
+                            <SelectItem key={d} value={d}>
+                              {d}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
                       <Input
-                        id="lab-roll"
-                        value={rollNumber}
-                        placeholder="Scholar roll number"
-                        onChange={(e) => setRollNumber(e.target.value)}
+                        id="lab-department"
+                        value={department}
+                        placeholder="Type the department"
+                        onChange={(e) => setDepartment(e.target.value)}
                       />
-                    </div>
-                    <div className="grid gap-1 max-w-md">
-                      <Label htmlFor="lab-adm-category">Admission category</Label>
-                      <Input
-                        id="lab-adm-category"
-                        value={admissionCategory}
-                        placeholder="e.g. GENERAL, OBC, SC, ST"
-                        onChange={(e) => setAdmissionCategory(e.target.value)}
-                      />
-                    </div>
+                    )}
                   </div>
                 )}
 
@@ -1378,7 +1453,7 @@ export function BookingClient({
                   is whose work it belongs to. Both are shown to this facility&apos;s approval people
                   and on the bookings dashboard, and both appear in the CSV export.
                   {scholarBooker
-                    ? " As this is a scholar's booking, the roll number and admission category are required too."
+                    ? " The scholar's roll number, department, nature of admission and specialization are filled in from the central registry."
                     : ""}
                 </p>
               </div>
@@ -1395,6 +1470,7 @@ export function BookingClient({
                     setForQuery(e.target.value);
                     setForUserId("");
                     setForPrimaryRole(null);
+                    setForProfile(null);
                     void searchUsers(e.target.value);
                   }}
                 />
@@ -1410,6 +1486,16 @@ export function BookingClient({
                         onClick={() => {
                           setForUserId(u.id);
                           setForPrimaryRole(u.primaryRole ?? null);
+                          setForProfile(
+                            u.primaryRole === "SCHOLAR"
+                              ? {
+                                  rollNumber: u.rollNo ?? null,
+                                  department: u.departmentName ?? null,
+                                  natureOfAdmission: u.natureOfAdmission ?? null,
+                                  specialization: u.discipline ?? null,
+                                }
+                              : null
+                          );
                           setForQuery(`${u.name} (@${u.username})`);
                           setForResults([]);
                         }}

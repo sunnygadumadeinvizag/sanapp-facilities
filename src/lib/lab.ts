@@ -48,22 +48,19 @@ export function labDetailsError(
 
 /**
  * Why a scholar's lab booking may not be sent yet, or null when it is complete.
- * Scholars must state the roll number and admission category of the lab session;
- * this applies to lab facilities only, and to no other primary role.
+ * The scholar's other details come from the central registry; only the roll
+ * number has to be present on the record. Applies to lab facilities booked for
+ * a scholar, and to no other primary role.
  */
 export function scholarLabDetailsError(
   isLab: boolean,
   primaryRole: string | null | undefined,
-  details: { admissionCategory?: unknown; rollNumber?: unknown }
+  details: { rollNumber?: unknown }
 ): string | null {
   if (!isLab || !isScholar(primaryRole)) return null;
   const rollNumber = String(details.rollNumber ?? "").trim();
-  const admissionCategory = String(details.admissionCategory ?? "").trim();
   if (!rollNumber) {
-    return "Enter the scholar's roll number before confirming.";
-  }
-  if (!admissionCategory) {
-    return "Enter the scholar's admission category before confirming.";
+    return "The scholar's roll number is missing from the central registry — contact the app administrator before confirming.";
   }
   return null;
 }
