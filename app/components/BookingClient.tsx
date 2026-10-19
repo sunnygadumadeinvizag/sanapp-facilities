@@ -654,7 +654,9 @@ export function BookingClient({
     return effMax !== null ? dur > effMax : false;
   });
   const isOnBehalf = forOther;
-  const needPurpose = anyLong || isOnBehalf;
+  // A LAB booking always needs a description and a PDF attachment, on top of
+  // the long/on-behalf rule that already forces a description.
+  const needPurpose = anyLong || isOnBehalf || isLabFacility;
   // A lab booking for a scholar — the booker themselves, or the person a block
   // is for — carries the scholar's registry details automatically. Only the
   // supervisor is chosen on the form.
@@ -774,7 +776,7 @@ export function BookingClient({
     if (isOnBehalf && !forUserId) {
       return "Choose the user you are blocking these slots for before confirming.";
     }
-    if ((liveAnyLong() || isOnBehalf) && !purpose.trim()) {
+    if ((liveAnyLong() || isOnBehalf || isLabFacility) && !purpose.trim()) {
       return "A description is required for this booking.";
     }
     const labMissing = labDetailsError(isLabFacility, {
@@ -788,6 +790,12 @@ export function BookingClient({
         rollNumber: scholarRollNumber,
       });
       if (scholarMissing) return scholarMissing;
+    }
+    if (isLabFacility) {
+      const hasAttachment = pdf !== null || (!pdfClear && Boolean(existingPdfName));
+      if (!hasAttachment) {
+        return "Attach the PDF for this lab session before confirming.";
+      }
     }
     return null;
   }
@@ -1546,7 +1554,11 @@ export function BookingClient({
                   onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
                 />
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  {editBooking ? "Optional" : "Optional — applies to all slots in this booking"}
+                  {isLabFacility
+                    ? "Required for a LAB facility — applies to all slots in this booking"
+                    : editBooking
+                      ? "Optional"
+                      : "Optional — applies to all slots in this booking"}
                 </p>
                 <div className="flex flex-wrap items-center gap-2 mt-1.5">
                   {pdfName && (

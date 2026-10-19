@@ -694,6 +694,13 @@ export async function POST(request: NextRequest) {
   if ((type === "ON_BEHALF" || type === "LONG") && !purpose) {
     return bad("A description is required for this type of booking");
   }
+  // A LAB booking always needs a description and the session's PDF attachment.
+  if (facility.isLab && !purpose) {
+    return bad("A description is required for a lab booking");
+  }
+  if (facility.isLab && !pdf) {
+    return bad("A PDF attachment is required for a lab booking");
+  }
 
   const CONFLICT_MSG =
     "That time range is already booked — please pick a free range in the calendar";
@@ -926,6 +933,13 @@ export async function PATCH(request: NextRequest) {
   });
   if (!facility || !facility.active || !facility.building.active) {
     return bad("This facility is not available for booking");
+  }
+
+  // A LAB booking keeps its description and the session's PDF attachment.
+  if (facility.isLab) {
+    if (!purpose) return bad("A description is required for a lab booking");
+    const keepsAttachment = Boolean((pdf && pdfName) || (booking.pdfName && !pdfClear));
+    if (!keepsAttachment) return bad("A PDF attachment is required for a lab booking");
   }
 
   // Duration limits use the FOR-user's role for on-behalf blocks.
