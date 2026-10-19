@@ -241,9 +241,6 @@ function AvailabilityForm({ facility }: { facility: AvailabilityFacility }) {
                   if (m !== null) setCloseMin(m);
                 }}
               />
-              <span className="text-[11px] text-muted-foreground">
-                {closeLabel(closeMin)} · 00:00 means midnight
-              </span>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {[
@@ -271,9 +268,9 @@ function AvailabilityForm({ facility }: { facility: AvailabilityFacility }) {
             </div>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            A slot must start at or after the opening time and end by the closing time. Slots outside
-            these hours cannot be selected on the booking calendar, and the server refuses them even
-            if one is forced.
+            Closes at {closeLabel(closeMin)} · 00:00 means midnight. A slot must start at or after the
+            opening time and end by the closing time. Slots outside these hours cannot be selected on
+            the booking calendar, and the server refuses them even if one is forced.
           </p>
         </div>
 
