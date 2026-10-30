@@ -381,7 +381,9 @@ export function BookingClient({
   const [department, setDepartment] = useState(editBooking?.department ?? "");
   const [departments, setDepartments] = useState<string[]>([]);
   const [purpose, setPurpose] = useState(editBooking?.purpose ?? "");
-  const [isPublicPurpose, setIsPublicPurpose] = useState(editBooking?.isPublicPurpose ?? false);
+  // Description and attachment are visible to everyone by default; the
+  // "Hide" checkboxes flip the flag off for this booking.
+  const [isPublicPurpose, setIsPublicPurpose] = useState(editBooking?.isPublicPurpose ?? true);
   // On an AV-required facility the AV technician is always requested, and the
   // booker cannot turn it off.
   const [needAvSupport, setNeedAvSupport] = useState(
@@ -390,7 +392,7 @@ export function BookingClient({
   const [pdfName, setPdfName] = useState("");
   const [pdf, setPdf] = useState<File | null>(null);
   const [pdfClear, setPdfClear] = useState(false);
-  const [isPublicAttachment, setIsPublicAttachment] = useState(editBooking?.isPublicAttachment ?? false);
+  const [isPublicAttachment, setIsPublicAttachment] = useState(editBooking?.isPublicAttachment ?? true);
   const existingPdfName = editBooking?.pdfName ?? null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1565,15 +1567,16 @@ export function BookingClient({
                 <div className="mt-2.5 flex items-start gap-2">
                   <Checkbox
                     id={`public-purpose-${facility.id}`}
-                    checked={isPublicPurpose}
-                    onCheckedChange={(v) => setIsPublicPurpose(v === true)}
+                    checked={!isPublicPurpose}
+                    onCheckedChange={(v) => setIsPublicPurpose(v !== true)}
                   />
                   <div className="grid gap-0.5 leading-none">
                     <Label htmlFor={`public-purpose-${facility.id}`} className="text-xs font-medium cursor-pointer">
-                      Description can be viewed by all
+                      Hide description from everyone
                     </Label>
                     <p className="text-[11px] text-muted-foreground">
-                      If unchecked, only you, facility POCs, and app administrators can view the description.
+                      By default the description is visible to everyone on the calendar. Tick this to
+                      restrict it to you, facility POCs, and app administrators.
                     </p>
                   </div>
                 </div>
@@ -1634,15 +1637,16 @@ export function BookingClient({
                 <div className="mt-2.5 flex items-start gap-2">
                   <Checkbox
                     id={`public-attachment-${facility.id}`}
-                    checked={isPublicAttachment}
-                    onCheckedChange={(v) => setIsPublicAttachment(v === true)}
+                    checked={!isPublicAttachment}
+                    onCheckedChange={(v) => setIsPublicAttachment(v !== true)}
                   />
                   <div className="grid gap-0.5 leading-none">
                     <Label htmlFor={`public-attachment-${facility.id}`} className="text-xs font-medium cursor-pointer">
-                      Attachment can be viewed by all
+                      Hide attachment from everyone
                     </Label>
                     <p className="text-[11px] text-muted-foreground">
-                      If unchecked, only you, facility POCs, and app administrators can download the attachment.
+                      By default the attachment can be downloaded by everyone who can see the calendar.
+                      Tick this to restrict it to you, facility POCs, and app administrators.
                     </p>
                   </div>
                 </div>

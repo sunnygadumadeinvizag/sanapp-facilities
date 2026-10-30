@@ -479,14 +479,18 @@ export async function POST(request: NextRequest) {
   const startMin = Number(body.startMin);
   const endMin = Number(body.endMin);
   const purpose = String(body.purpose ?? "").trim();
-  const isPublicPurpose =
-    body.isPublicPurpose === true ||
-    body.isPublicPurpose === "true" ||
-    body.isPublicPurpose === "1";
-  const isPublicAttachment =
-    body.isPublicAttachment === true ||
-    body.isPublicAttachment === "true" ||
-    body.isPublicAttachment === "1";
+  // Description and attachment are public by default; the booking form only
+  // sends these flags when the booker chose to hide one of them.
+  const isPublicPurpose = body.isPublicPurpose === undefined
+    ? true
+    : body.isPublicPurpose === true ||
+      body.isPublicPurpose === "true" ||
+      body.isPublicPurpose === "1";
+  const isPublicAttachment = body.isPublicAttachment === undefined
+    ? true
+    : body.isPublicAttachment === true ||
+      body.isPublicAttachment === "true" ||
+      body.isPublicAttachment === "1";
   const needAvSupportRequested =
     body.needAvSupport === true ||
     body.needAvSupport === "true" ||
