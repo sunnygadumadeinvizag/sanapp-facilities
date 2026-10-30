@@ -12,7 +12,6 @@ import { capLabel } from "@/lib/limits";
 import { facilityAccess } from "@/lib/approval";
 import { listSsoUsers } from "@/lib/auth";
 import { availabilityLines, dayWindowsFromDb, isFullDay } from "@/lib/availability";
-import { AvailabilityEditor } from "../../components/AvailabilityEditor";
 
 export const dynamic = "force-dynamic";
 
@@ -301,43 +300,6 @@ export default async function BookPage({
         buildingMaxMinutes={facility.building.maxMinutes}
         roleLimits={facility.roleLimits}
       />
-
-      {/* The people who run this facility — its approval people, its POCs and
-          the app administrator — set its closed days and bookable hours right
-          here, on the facility itself. */}
-      {access.manages && (
-        <div className="mt-8 flex flex-col gap-3">
-          <div>
-            <h2 className="text-lg font-semibold">This facility&apos;s availability</h2>
-            <p className="text-sm text-muted-foreground">
-              Which weekdays this facility is closed, its bookable hours (or the hours of one
-              particular weekday) and the longest booking it accepts. Changes apply to this facility
-              only, and every booking that already exists is kept as it is.
-            </p>
-          </div>
-          <AvailabilityEditor
-            initial={[
-              {
-                id: facility.id,
-                name: facility.name,
-                buildingName: facility.building.name,
-                openMin: facility.openMin,
-                closeMin: facility.closeMin,
-                closedWeekdays: facility.closedWeekdays,
-                closedDates: facility.closedDates,
-                dayWindows,
-                maxMinutes: facility.maxMinutes,
-                requiresApproval: facility.requiresApproval,
-                isLab: facility.isLab,
-                hasAvSupport: facility.hasAvSupport,
-                avSupportRequired: facility.avSupportRequired,
-                active: facility.active,
-                buildingMaxMinutes: facility.building.maxMinutes,
-              },
-            ]}
-          />
-        </div>
-      )}
 
       <p className="mt-4 text-xs text-muted-foreground">
         All times are Indian Standard Time (server time). Drag on the calendar to select a slot —

@@ -1711,8 +1711,8 @@ export function BookingClient({
                 {canManage && (
                   <span className="block text-[11px] text-sky-800 mt-0.5">
                     You can change these on the{" "}
-                    <a href={apiPath("/approvals")} className="font-semibold underline underline-offset-2">
-                      Approvals
+                    <a href={apiPath("/availability")} className="font-semibold underline underline-offset-2">
+                      Facility Availability
                     </a>{" "}
                     page.
                   </span>
