@@ -225,6 +225,7 @@ export function BookingClient({
   roleLimits = [],
   editBooking = null,
   onEdited,
+  approverNames = [],
 }: {
   facility: {
     id: string;
@@ -247,6 +248,8 @@ export function BookingClient({
   availability?: Availability;
   /** An AV facility whose bookings always need an AV technician. */
   avSupportRequired?: boolean;
+  /** Names shown in the "approval required" notes (empty = unnamed POC/admin). */
+  approverNames?: string[];
   /** May change the facility's availability (admin / approval person / POC). */
   canManage?: boolean;
   editBooking?: EditBookingInfo | null;
@@ -1715,12 +1718,16 @@ export function BookingClient({
 
             {needsApproval && (
               <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                <strong className="font-semibold">This facility requires an approval.</strong> Your slot is
-                SUBMITTED AS A REQUEST (amber “Awaiting approval” on the calendar) instead of being
-                confirmed. It is held for you, nobody else can take it, and it is confirmed only when
-                the facility&apos;s approval person confirms it. The approval person is emailed the
-                moment you submit, and you are emailed the decision — a declined request frees the
-                slot again.
+                <strong className="font-semibold">
+                  {approverNames.length > 0
+                    ? `Approval of ${approverNames.join(", ")} is required on this facility.`
+                    : "This facility requires an approval."}
+                </strong>{" "}
+                Your slot is SUBMITTED AS A REQUEST (amber “Awaiting approval” on the calendar)
+                instead of being confirmed. It is held for you, nobody else can take it, and it is
+                confirmed only when {approverNames.length > 0 ? `${approverNames.join(" or ")} or a POC` : "the facility's approval person"} confirms
+                it. The approval person is emailed the moment you submit, and you are emailed the
+                decision — a declined request frees the slot again.
               </div>
             )}
 

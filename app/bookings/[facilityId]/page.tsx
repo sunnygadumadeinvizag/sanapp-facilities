@@ -44,6 +44,9 @@ export default async function BookPage({
     include: {
       building: true,
       roleLimits: { select: { role: true, maxMinutes: true } },
+      // The people whose approval a requested slot waits on (named for the
+      // booker when the facility requires approval).
+      approvers: { select: { user: { select: { name: true, username: true } } } },
       bookings: {
         // Today's held requests are shown too — they occupy the slot.
         where: { date: istDateKey(), status: { in: OCCUPYING_STATUSES } },
@@ -59,6 +62,11 @@ export default async function BookPage({
   if (!facility) {
     notFound();
   }
+
+  // Names shown in the "approval required" note, in appointment order, deduped.
+  const approverNames = Array.from(
+    new Set(facility.approvers.map((a) => a.user.name).filter(Boolean))
+  );
 
   // Edit mode: ?edit=<bookingId> pre-fills the range/details on the calendar.
   let editBooking: {
@@ -242,7 +250,9 @@ export default async function BookPage({
               </Badge>
             ) : (
               <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-900">
-                Approval required before a slot is confirmed
+                {approverNames.length > 0
+                  ? `Approval required — ${approverNames.join(", ")} will approve your booking`
+                  : "Approval required — the facility's POCs or app admins will approve your booking"}
               </Badge>
             ))}
           {(facility.maxMinutes ?? facility.building.maxMinutes) !== null && (facility.maxMinutes ?? facility.building.maxMinutes)! > 0 && (
@@ -269,9 +279,10 @@ export default async function BookPage({
           id: facility.id,
           name: facility.name,
           hasAvSupport: facility.hasAvSupport,
-          requiresApproval: facility.requiresApproval,
-          isLab: facility.isLab,
-        }}
+        requiresApproval: facility.requiresApproval,
+        isLab: facility.isLab,
+      }}
+      approverNames={approverNames}
         editBooking={editBooking}
         buildingName={facility.building.name}
         today={today}
