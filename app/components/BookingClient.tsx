@@ -565,14 +565,18 @@ export function BookingClient({
    */
   function commitRange(range: RangeSelection, mergeIndices?: number[]): boolean {
     // The facility's own hours and closed days come first: a slot outside them
-    // is rejected whether it was dragged, tapped or typed.
-    const outside = availabilityError(
-      availability,
-      range.startDate,
-      range.startMin,
-      range.endDate,
-      range.endMin
-    );
+    // is rejected whether it was dragged, tapped or typed. The slot a booking
+    // already holds is exempt - it was valid when it was made, and an edit must
+    // stay possible after the hours were narrowed.
+    const outside = isOriginalRange(range)
+      ? null
+      : availabilityError(
+          availability,
+          range.startDate,
+          range.startMin,
+          range.endDate,
+          range.endMin
+        );
     if (outside) {
       rejectRange(outside);
       return false;
@@ -616,14 +620,16 @@ export function BookingClient({
   function updateRange(id: number, next: RangeSelection): string | null {
     const dur = slotDurationMin(next.startDate, next.startMin, next.endDate, next.endMin);
     if (dur < 15) return "End must be at least 15 minutes after start.";
-    const outside = availabilityError(
-      availability,
-      next.startDate,
-      next.startMin,
-      next.endDate,
-      next.endMin
-    );
-    if (outside) return outside;
+    if (!isOriginalRange(next)) {
+      const outside = availabilityError(
+        availability,
+        next.startDate,
+        next.startMin,
+        next.endDate,
+        next.endMin
+      );
+      if (outside) return outside;
+    }
     if (slotIndex(next.startDate, next.startMin) <= slotIndex(clock.today, clock.nowMin)) {
       return "Start must be in the future.";
     }
@@ -649,7 +655,29 @@ export function BookingClient({
     return null;
   }
 
+  // The slot the booking already has. In edit mode that slot keeps the hours /
+  // caps it was booked under: narrowing availability later must not stop the
+  // booker from editing its description or AV choice. Only a NEW range is held
+  // to today's rules (the server enforces the same rule).
+  const originalRange: RangeSelection | null = editBooking
+    ? {
+        startDate: editBooking.date,
+        startMin: editBooking.startMin,
+        endDate: editBooking.endDate || editBooking.date,
+        endMin: editBooking.endMin,
+      }
+    : null;
+  const isOriginalRange = (r: RangeSelection) =>
+    Boolean(
+      originalRange &&
+        r.startDate === originalRange.startDate &&
+        r.endDate === originalRange.endDate &&
+        r.startMin === originalRange.startMin &&
+        r.endMin === originalRange.endMin
+    );
+
   const anyLong = ranges.some((p) => {
+    if (isOriginalRange(p.range)) return false;
     const dur = slotDurationMin(p.range.startDate, p.range.startMin, p.range.endDate, p.range.endMin);
     return effMax !== null ? dur > effMax : false;
   });
@@ -697,7 +725,7 @@ export function BookingClient({
   const slotFormAction = "Save Slot";
 
   function overCap(r: RangeSelection): boolean {
-    if (isAdmin || effMax === null) return false;
+    if (isAdmin || effMax === null || isOriginalRange(r)) return false;
     return slotDurationMin(r.startDate, r.startMin, r.endDate, r.endMin) > effMax;
   }
   const hasOverCap = ranges.some((p) => overCap(p.range));
@@ -748,7 +776,9 @@ export function BookingClient({
   function liveAnyLong(): boolean {
     if (effMax === null) return false;
     return rangesRef.current.some(
-      (p) => slotDurationMin(p.range.startDate, p.range.startMin, p.range.endDate, p.range.endMin) > effMax
+      (p) =>
+        !isOriginalRange(p.range) &&
+        slotDurationMin(p.range.startDate, p.range.startMin, p.range.endDate, p.range.endMin) > effMax
     );
   }
 

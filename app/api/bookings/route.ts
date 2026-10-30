@@ -825,9 +825,11 @@ export async function POST(request: NextRequest) {
 
 
 /**
- * PATCH — edit a future booking: change the time range and/or description.
- * Allowed for the booker or an app ADMIN. Re-validates duration limits and
- * conflicts (ignoring this booking itself).
+ * PATCH - edit a future booking: change the time range and/or description.
+ * Allowed for the booker or an app ADMIN. A moved range is re-validated
+ * against the current availability, duration limits and conflicts (ignoring
+ * this booking itself); the slot a booking already holds stays editable even
+ * when the facility's hours or caps were narrowed afterwards.
  */
 export async function PATCH(request: NextRequest) {
   const user = await currentUser();
@@ -927,6 +929,16 @@ export async function PATCH(request: NextRequest) {
     return bad("You cannot move a booking into the past (times are Indian Standard Time)");
   }
 
+  // A booking that already exists keeps the slot it was given. Narrowing a
+  // facility's hours or caps later must not freeze that booking: its
+  // description, AV flag and attachment stay editable. Only a slot that
+  // actually MOVES is held to the availability and limits in force today.
+  const rangeChanged =
+    booking.date !== startDate ||
+    endDayOf(booking.date, booking.endDate) !== endDate ||
+    booking.startMin !== startMin ||
+    booking.endMin !== endMin;
+
   const facility = await prisma.facility.findUnique({
     where: { id: booking.facilityId },
     include: { building: true, roleLimits: true },
@@ -954,7 +966,7 @@ export async function PATCH(request: NextRequest) {
     capRole,
     facility.building.maxMinutes
   );
-  if (effMax !== null && duration > effMax && user.role !== "ADMIN") {
+  if (rangeChanged && effMax !== null && duration > effMax && user.role !== "ADMIN") {
     const fmtMax =
       effMax % 60 === 0
         ? `${effMax / 60} hour${effMax === 60 ? "" : "s"}`
@@ -965,14 +977,19 @@ export async function PATCH(request: NextRequest) {
   }
 
   // --- Bookable availability (the facility's hours and closed days) --------
-  const outsideAvailability = availabilityError(
-    facilityAvailability(facility),
-    startDate,
-    startMin,
-    endDate,
-    endMin
-  );
-  if (outsideAvailability) return bad(outsideAvailability);
+  // Only for a range that is being moved - see rangeChanged above. An existing
+  // booking that sits outside today's hours because they were narrowed later
+  // can still be edited, exactly as it was promised when it was made.
+  if (rangeChanged) {
+    const outsideAvailability = availabilityError(
+      facilityAvailability(facility),
+      startDate,
+      startMin,
+      endDate,
+      endMin
+    );
+    if (outsideAvailability) return bad(outsideAvailability);
+  }
 
   // A LAB facility keeps its supervisor and department: an edit may change them,
   // and a lab booking that somehow has none may not be left without them.
