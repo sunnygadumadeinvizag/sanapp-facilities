@@ -149,12 +149,19 @@ export async function approverContacts(facilityId: string): Promise<ApproverCont
 }
 
 /**
- * The facilities whose approval queue this user may open: all of them for an
- * app ADMIN, otherwise the facilities they approve for (as an approval person,
- * a facility POC, or a POC of the facility's building).
+ * The facilities whose approval queue (and whose availability) this user may
+ * manage: all of them for an app ADMIN or a central SUPER_ADMIN, otherwise the
+ * facilities they approve for (as an approval person, a facility POC, or a POC
+ * of the facility's building). Read live from the database on every request, so
+ * a POC / approval person added a moment ago sees the page at once - nobody is
+ * granted access by hand.
  */
-export async function decidableFacilityIds(userId: string, role: string): Promise<"all" | string[]> {
-  if (role === "ADMIN") return "all";
+export async function decidableFacilityIds(
+  userId: string,
+  role: string,
+  ssoRole?: string | null
+): Promise<"all" | string[]> {
+  if (role === "ADMIN" || ssoRole === "SUPER_ADMIN") return "all";
 
   const [approverRows, facilityPocRows, buildingPocRows] = await Promise.all([
     prisma.facilityApprover.findMany({ where: { userId }, select: { facilityId: true } }),
@@ -329,8 +336,12 @@ export async function listRecentDecisions(
 }
 
 /** How many requests are waiting for this user's decision (sidebar badge). */
-export async function pendingApprovalCount(userId: string, role: string): Promise<number> {
-  const scope = await decidableFacilityIds(userId, role);
+export async function pendingApprovalCount(
+  userId: string,
+  role: string,
+  ssoRole?: string | null
+): Promise<number> {
+  const scope = await decidableFacilityIds(userId, role, ssoRole);
   if (scope !== "all" && scope.length === 0) return 0;
   return prisma.booking.count({
     where: {

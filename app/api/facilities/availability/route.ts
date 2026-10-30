@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { currentUser } from "@/lib/auth";
+import { currentUser, isAdminSession } from "@/lib/auth";
 import { decidableFacilityIds, facilityAccess } from "@/lib/approval";
 import { availabilityError, normaliseAvailability } from "@/lib/availability";
 import { istDateKey } from "@/lib/ist";
@@ -41,7 +41,8 @@ export async function GET() {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
-  const scope = await decidableFacilityIds(user.id, user.role);
+  const admin = await isAdminSession();
+  const scope = await decidableFacilityIds(user.id, user.role, admin ? "SUPER_ADMIN" : undefined);
   if (scope !== "all" && scope.length === 0) {
     return NextResponse.json({ facilities: [], canManage: false });
   }
@@ -70,7 +71,8 @@ export async function PATCH(request: NextRequest) {
   const id = String(body.id ?? "").trim();
   if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
 
-  const access = await facilityAccess(id, user.id, user.role);
+  const admin = await isAdminSession();
+  const access = await facilityAccess(id, user.id, admin ? "ADMIN" : user.role);
   if (!access.manages) {
     return NextResponse.json(
       {

@@ -53,11 +53,15 @@ export async function AppShell({
   // never missed without the mail being read.
   const local = await currentUser();
   const approvalScope = local
-    ? await decidableFacilityIds(local.id, local.role).catch(() => [] as string[])
+    ? await decidableFacilityIds(local.id, local.role, ssoRole).catch(() => [] as string[])
     : [];
-  const canDecide = approvalScope === "all" || approvalScope.length > 0;
+  // App admins (local ADMIN or central SUPER_ADMIN) always qualify; the rest of
+  // the scope is the live POC / approval-person assignment.
+  const canDecide = isAdmin || approvalScope === "all" || approvalScope.length > 0;
   const waitingApprovals =
-    canDecide && local ? await pendingApprovalCount(local.id, local.role).catch(() => 0) : 0;
+    canDecide && local
+      ? await pendingApprovalCount(local.id, local.role, ssoRole).catch(() => 0)
+      : 0;
 
   const appName = await lookupAppName({
     mainBaseUrl: MAIN_BASE_URL,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { currentUser } from "@/lib/auth";
+import { currentUser, isAdminSession } from "@/lib/auth";
 import {
   decideBooking,
   decidableFacilityIds,
@@ -26,7 +26,12 @@ export async function GET(request: NextRequest) {
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const facilityFilter = (request.nextUrl.searchParams.get("facilityId") ?? "").trim();
-  const scope = await decidableFacilityIds(user.id, user.role);
+  const admin = await isAdminSession();
+  const scope = await decidableFacilityIds(
+    user.id,
+    user.role,
+    admin ? "SUPER_ADMIN" : undefined
+  );
   if (scope !== "all" && scope.length === 0) {
     return NextResponse.json({ pending: [], decided: [], facilities: [], canDecide: false });
   }
@@ -68,11 +73,17 @@ export async function POST(request: NextRequest) {
       ? [body.bookingId]
       : [];
 
+  const admin = await isAdminSession();
   const result = await decideBooking({
     bookingIds,
     decision,
     note,
-    actor: { id: user.id, name: user.name, username: user.username, role: user.role },
+    actor: {
+      id: user.id,
+      name: user.name,
+      username: user.username,
+      role: admin ? "ADMIN" : user.role,
+    },
   });
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status });

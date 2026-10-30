@@ -27,7 +27,7 @@ export default async function AvailabilityPage() {
     return <p className="iipe-container">Session not found.</p>;
   }
 
-  const scope = await decidableFacilityIds(local.id, local.role);
+  const scope = await decidableFacilityIds(local.id, local.role, me.ssoRole);
   const canManage = scope === "all" || scope.length > 0;
 
   if (!canManage) {

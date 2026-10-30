@@ -23,7 +23,7 @@ export default async function ApprovalsPage() {
     return <p className="iipe-container">Session not found.</p>;
   }
 
-  const scope = await decidableFacilityIds(local.id, local.role);
+  const scope = await decidableFacilityIds(local.id, local.role, me.ssoRole);
   const canDecide = scope === "all" || scope.length > 0;
 
   if (!canDecide) {
